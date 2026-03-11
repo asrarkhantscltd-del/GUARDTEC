@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#060d1a">
+<title>GuardTec Security</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;background:#060d1a;color:#f1f5f9;min-height:100vh}
+.header{background:linear-gradient(135deg,#1a0808,#2a0d0d);border-bottom:3px solid #c0392b;padding:14px 16px;display:flex;align-items:center;justify-content:space-between}
+.nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:#0c0f1a;border-top:1px solid #1e293b;z-index:99}
+.nav button{flex:1;padding:10px 4px;border:none;background:transparent;color:#64748b;font-size:10px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px}
+.nav button.active{color:#e74c3c}
+.ni{font-size:20px}
+.page{padding:16px;padding-bottom:80px;max-width:900px;margin:0 auto}
+.stat{background:#0f172a;border-radius:12px;padding:18px;border:1px solid #1e293b}
+.card{background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:18px;margin-bottom:12px;cursor:pointer}
+.av{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#c0392b,#e74c3c);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:16px;color:#fff;flex-shrink:0}
+.site-row{background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:16px;margin-bottom:10px;display:flex;align-items:center;gap:14px;cursor:pointer}
+.abox{background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:18px;margin-bottom:14px}
+.atitle{font-size:15px;font-weight:900;letter-spacing:2px;margin-bottom:14px}
+.btn{background:#c0392b;border:none;color:#fff;padding:10px 18px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer}
+.bsm{background:#c0392b;border:none;color:#fff;padding:7px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer}
+.bgh{background:transparent;border:1px solid #334155;color:#94a3b8;padding:9px 14px;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer}
+.inp{background:#0f172a;border:1px solid #334155;border-radius:8px;color:#f1f5f9;padding:10px 12px;font-size:14px;width:100%;outline:none;font-family:inherit}
+.inp:focus{border-color:#c0392b}
+.lbl{font-size:11px;color:#94a3b8;font-weight:700;letter-spacing:1px;margin-bottom:4px;display:block}
+.mbg{position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:flex-start;justify-content:center;z-index:200;padding:16px;overflow-y:auto}
+.mbox{background:#0f172a;border:1px solid #1e293b;border-radius:16px;padding:22px;width:100%;max-width:520px;margin:auto}
+.ss{background:#060d1a;border-radius:10px;padding:14px;margin-bottom:10px}
+.stitle{font-size:12px;font-weight:900;letter-spacing:1px;margin-bottom:10px;color:#e87b6f}
+</style>
+</head>
+<body>
+<div class="header">
+  <div style="display:flex;align-items:center;gap:10px">
+    <div style="width:36px;height:36px;background:linear-gradient(135deg,#c0392b,#e74c3c);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:18px;color:#fff">G</div>
+    <div>
+      <div style="font-weight:900;font-size:16px;letter-spacing:2px">GUARDTEC</div>
+      <div style="font-size:9px;color:#e87b6f;letter-spacing:2px">SECURITY &amp; PATROL UK</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:6px">
+    <div style="width:7px;height:7px;border-radius:50%;background:#22c55e"></div>
+    <span id="sc" style="font-size:11px;color:#64748b"></span>
+  </div>
+</div>
+<div id="page" class="page"></div>
+<nav class="nav">
+  <button id="t-dashboard" class="active" onclick="setTab('dashboard')"><span class="ni">&#128202;</span>Dashboard</button>
+  <button id="t-staff" onclick="setTab('staff')"><span class="ni">&#128110;</span>Staff</button>
+  <button id="t-sites" onclick="setTab('sites')"><span class="ni">&#128205;</span>Sites</button>
+</nav>
+<div id="mc"></div>
+<script>
+var staff=JSON.parse(localStorage.getItem('gt_staff')||'null')||[{"id":1,"name":"James Carter","role":"Security Guard","phone":"07700900001","email":"j.carter@guardtec.co.uk","uniform":{"issued":true,"size":"L","issuedDate":"2024-01-15"},"idCard":{"issued":true,"expiry":"2026-01-15"},"cscs":{"issued":true,"number":"CSCS123456","expiry":"2025-11-30"},"sia":{"issued":true,"number":"SIA987654","expiry":"2025-08-20"},"assignedSite":"Canary Wharf Tower"},{"id":2,"name":"Maria Santos","role":"Supervisor","phone":"07700900002","email":"m.santos@guardtec.co.uk","uniform":{"issued":true,"size":"S","issuedDate":"2024-02-10"},"idCard":{"issued":true,"expiry":"2026-02-10"},"cscs":{"issued":false,"number":"","expiry":""},"sia":{"issued":true,"number":"SIA112233","expiry":"2026-03-15"},"assignedSite":"Notting Hill Carnival"},{"id":3,"name":"Daniel Osei","role":"Security Guard","phone":"07700900003","email":"d.osei@guardtec.co.uk","uniform":{"issued":false,"size":"","issuedDate":""},"idCard":{"issued":false,"expiry":""},"cscs":{"issued":true,"number":"CSCS654321","expiry":"2027-05-01"},"sia":{"issued":true,"number":"SIA445566","expiry":"2025-06-10"},"assignedSite":""}];
+var sites=JSON.parse(localStorage.getItem('gt_sites')||'null')||[{"id":1,"name":"Canary Wharf Tower","type":"site","address":"1 Canada Square, London E14 5AB","status":"active","startDate":"2024-01-01","endDate":"","guards":[1],"notes":"24/7 front desk and patrol"},{"id":2,"name":"Westfield Stratford","type":"site","address":"Stratford, London E20 1EJ","status":"active","startDate":"2024-03-01","endDate":"","guards":[],"notes":"Retail security"},{"id":3,"name":"Notting Hill Carnival","type":"event","address":"Notting Hill, London W11","status":"upcoming","startDate":"2025-08-24","endDate":"2025-08-25","guards":[2],"notes":"Annual carnival event"},{"id":4,"name":"Reading Festival","type":"event","address":"Richfield Avenue, Reading RG1 8EQ","status":"upcoming","startDate":"2025-08-22","endDate":"2025-08-25","guards":[],"notes":"Music festival"},{"id":5,"name":"Old Street Office","type":"site","address":"Old Street, London EC1V 9NR","status":"completed","startDate":"2023-06-01","endDate":"2024-12-31","guards":[],"notes":"Contract ended"}];
+function save(){localStorage.setItem('gt_staff',JSON.stringify(staff));localStorage.setItem('gt_sites',JSON.stringify(sites));}
+function es(d){if(!d)return'missing';var diff=(new Date(d)-new Date())/86400000;return diff<0?'expired':diff<60?'warning':'ok';}
+function ec(x){return x==='ok'?'#22c55e':x==='warning'?'#f59e0b':x==='expired'?'#ef4444':'#94a3b8';}
+function scolor(x){return x==='active'?'#22c55e':x==='upcoming'?'#f59e0b':'#64748b';}
+function av(n){return n.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase();}
+function getAlerts(){
+  var a=[];
+  staff.forEach(function(s){
+    ['idCard','cscs','sia'].forEach(function(k){
+      if(!s[k].issued){a.push({t:'info',m:s.name+' - '+k.toUpperCase()+' not issued'});}
+      else{var x=es(s[k].expiry);if(x==='expired')a.push({t:'danger',m:s.name+' - '+k.toUpperCase()+' EXPIRED'});else if(x==='warning')a.push({t:'warn',m:s.name+' - '+k.toUpperCase()+' expiring soon'});}
+    });
+    if(!s.uniform.issued)a.push({t:'info',m:s.name+' - Uniform not issued'});
+  });
+  return a;
+}
+var curtab='dashboard',selStaff=null,selSite=null,srch='',filt='all';
+function setTab(t){
+  curtab=t;selStaff=null;selSite=null;
+  document.querySelectorAll('.nav button').forEach(function(b){b.classList.remove('active');});
+  var el=document.getElementById('t-'+t);if(el)el.classList.add('active');
+  rp();
+}
+function rp(){
+  document.getElementById('sc').textContent=staff.length+' Staff';
+  var p=document.getElementById('page');
+  if(curtab==='dashboard')p.innerHTML=dashH();
+  else if(curtab==='staff')p.innerHTML=selStaff?staffDetH(selStaff):staffH();
+  else p.innerHTML=selSite?siteDetH(selSite):sitesH();
+}
+function dashH(){
+  var al=getAlerts();var tot=staff.length||1;
+  var sh=['TOTAL STAFF:'+staff.length+':#e74c3c','ACTIVE SITES:'+sites.filter(function(s){return s.status==='active';}).length+':#22c55e','UPCOMING:'+sites.filter(function(s){return s.status==='upcoming';}).length+':#f59e0b','ALERTS:'+al.filter(function(a){return a.t!=='info';}).length+':#ef4444'].map(function(x){var p=x.split(':');return '<div class="stat" style="border-color:'+p[2]+'44"><div style="font-size:10px;color:#64748b;font-weight:700;letter-spacing:1px">'+p[0]+'</div><div style="font-size:36px;font-weight:900;color:'+p[2]+'">'+p[1]+'</div></div>';}).join('');
+  var ah=al.length===0?'<div style="color:#22c55e;font-size:13px">All clear - no issues</div>':al.slice(0,8).map(function(a){var c=a.t==='danger'?'#ef4444':a.t==='warn'?'#f59e0b':'#3b82f6';return '<div class="alertitem" style="background:'+c+'15;border-left:3px solid '+c+';padding:8px 10px;border-radius:6px;margin-bottom:6px;font-size:12px;color:'+c+'">'+a.m+'</div>';}).join('');
+  var cd=[{l:'Uniform',n:staff.filter(function(s){return s.uniform.issued;}).length},{l:'ID Card',n:staff.filter(function(s){return s.idCard.issued&&es(s.idCard.expiry)==='ok';}).length},{l:'CSCS',n:staff.filter(function(s){return s.cscs.issued&&es(s.cscs.expiry)==='ok';}).length},{l:'SIA',n:staff.filter(function(s){return s.sia.issued&&es(s.sia.expiry)==='ok';}).length}];
+  var ch=cd.map(function(c){var pct=(c.n/tot)*100;var col=c.n===staff.length?'#22c55e':c.n>tot/2?'#f59e0b':'#ef4444';return '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="font-size:12px;color:#94a3b8">'+c.l+' Valid</span><span style="font-size:12px;font-weight:700">'+c.n+'/'+staff.length+'</span></div><div style="height:6px;background:#1e293b;border-radius:3px"><div style="height:100%;width:'+pct+'%;background:'+col+';border-radius:3px"></div></div></div>';}).join('');
+  return '<div style="font-size:24px;font-weight:900;letter-spacing:2px;margin-bottom:4px">DASHBOARD</div><div style="color:#64748b;font-size:13px;margin-bottom:20px">Live overview</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">'+sh+'</div><div class="abox"><div class="atitle">ALERTS</div>'+ah+'</div><div class="abox"><div class="atitle">COMPLIANCE</div>'+ch+'</div>';
+}
+function cb(issued,date,lbl){
+  var x=issued?es(date):'missing';var c=ec(x);
+  var icon=issued?(x==='ok'?'V':x==='warning'?'!':'X'):'-';
+  var ds=!issued?'NONE':x==='expired'?'EXP':x==='warning'?'DUE':(date?date.slice(2):'--');
+  return '<div style="display:flex;flex-direction:column;align-items:center;gap:3px"><span style="font-size:9px;color:#94a3b8;font-weight:700">'+lbl+'</span><span style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:'+c+'22;border:2px solid '+c+';font-size:11px;font-weight:700;color:'+c+'">'+icon+'</span><span style="font-size:9px;font-weight:700;color:'+c+'">'+ds+'</span></div>';
+}
+function dots(s){return ['idCard','cscs','sia'].map(function(k){return '<span style="width:10px;height:10px;border-radius:50%;display:inline-block;margin:0 2px;background:'+ec(s[k].issued?es(s[k].expiry):'missing')+'"></span>';}).join('');}
+function staffH(){
+  var fl=staff.filter(function(s){return !srch||s.name.toLowerCase().indexOf(srch.toLowerCase())>-1||s.role.toLowerCase().indexOf(srch.toLowerCase())>-1;});
+  var cards=fl.map(function(s){
+    var site=s.assignedSite?'<div style="margin-top:10px;padding:6px 10px;background:#1e293b;border-radius:6px;font-size:11px;color:#94a3b8">'+s.assignedSite+'</div>':'';
+    return '<div class="card" onclick="vs('+s.id+')"><div style="display:flex;align-items:center;gap:12px;margin-bottom:12px"><div class="av">'+av(s.name)+'</div><div style="flex:1"><div style="font-weight:700;font-size:15px">'+s.name+'</div><div style="font-size:11px;color:#e87b6f;font-weight:600">'+s.role.toUpperCase()+'</div></div><div>'+dots(s)+'</div></div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;border-top:1px solid #1e293b;padding-top:12px">'+cb(s.uniform.issued,s.uniform.issuedDate,'UNIFORM')+cb(s.idCard.issued,s.idCard.expiry,'ID')+cb(s.cscs.issued,s.cscs.expiry,'CSCS')+cb(s.sia.issued,s.sia.expiry,'SIA')+'</div>'+site+'</div>';
+  }).join('');
+  return '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><div style="font-size:24px;font-weight:900;letter-spacing:2px">STAFF</div><button class="bsm" onclick="openAS()">+ ADD</button></div><div style="color:#64748b;font-size:13px;margin-bottom:16px">Track credentials</div><input class="inp" placeholder="Search..." value="'+srch+'" oninput="srch=this.value;rp()" style="margin-bottom:16px"/>'+cards+(fl.length===0?'<p style="color:#64748b;text-align:center;padding:32px">No staff found</p>':'');
+}
+function vs(id){selStaff=staff.filter(function(s){return s.id===id;})[0];rp();}
+function staffDetH(s){
+  function dr(l,v,isb){return '<div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:11px;color:#64748b">'+l+'</span><span style="font-size:11px;font-weight:600;color:'+(isb?(v?'#22c55e':'#ef4444'):'#f1f5f9')+'">'+(isb?(v?'Yes':'No'):(v||'--'))+'</span></div>';}
+  function sb(key,label){
+    var d=s[key];var x=key!=='uniform'?(d.issued?es(d.expiry):'missing'):null;var c=x?ec(x):'#334155';
+    var rows='';
+    if(key==='uniform'){rows=dr('Issued',d.issued,true)+dr('Size',d.size,false)+dr('Issue Date',d.issuedDate,false);}
+    else if(key==='idCard'){rows=dr('Issued',d.issued,true)+dr('Expiry',d.expiry,false);}
+    else{rows=dr('Issued',d.issued,true)+dr('Number',d.number,false)+dr('Expiry',d.expiry,false);}
+    return '<div style="background:#060d1a;border:1px solid '+c+'44;border-radius:12px;padding:14px;margin-bottom:10px"><div style="display:flex;justify-content:space-between;margin-bottom:8px"><span style="font-weight:900;font-size:13px;letter-spacing:1px">'+label+'</span>'+(x?'<span style="font-size:10px;font-weight:700;color:'+c+'">'+x.toUpperCase()+'</span>':'')+'</div>'+rows+'</div>';
+  }
+  return '<button class="bgh" onclick="selStaff=null;rp()" style="margin-bottom:16px">Back</button><div class="card"><div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid #1e293b"><div class="av" style="width:54px;height:54px;font-size:20px">'+av(s.name)+'</div><div><div style="font-size:20px;font-weight:900">'+s.name+'</div><div style="font-size:12px;color:#e87b6f;font-weight:600">'+s.role.toUpperCase()+'</div><div style="font-size:11px;color:#64748b;margin-top:4px">'+s.phone+'</div><div style="font-size:11px;color:#64748b">'+s.email+'</div></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+sb('uniform','UNIFORM')+sb('idCard','ID CARD')+sb('cscs','CSCS CARD')+sb('sia','SIA LICENCE')+'</div>'+(s.assignedSite?'<div style="padding:12px;background:#060d1a;border-radius:10px;margin-top:4px"><div style="font-size:11px;color:#64748b">Deployed At</div><div style="font-size:14px;font-weight:700;color:#e87b6f;margin-top:2px">'+s.assignedSite+'</div></div>':'')+'</div>';
+}
+function sitesH(){
+  var ftypes=[['all','All'],['site','Sites'],['event','Events'],['active','Active'],['upcoming','Upcoming'],['completed','Done']];
+  var fl=sites.filter(function(s){return filt==='all'||s.type===filt||s.status===filt;});
+  var fb=ftypes.map(function(f){var on=filt===f[0];return '<button style="padding:5px 12px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid '+(on?'#c0392b':'#334155')+';background:'+(on?'#c0392b':'#0f172a')+';color:'+(on?'#fff':'#94a3b8')+'" onclick="filt='+JSON.stringify(f[0])+';rp()">'+f[1]+'</button>';}).join('');
+  var rows=fl.map(function(s){
+    var gc=staff.filter(function(g){return s.guards.indexOf(g.id)>-1;}).length;var c=scolor(s.status);
+    return '<div class="site-row" onclick="vsi('+s.id+')"><div style="width:44px;height:44px;border-radius:10px;background:'+(s.type==='event'?'#f59e0b22':'#c0392b22')+';display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">'+(s.type==='event'?'&#127914;':'&#127970;')+'</div><div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px"><span style="font-weight:700;font-size:14px">'+s.name+'</span><span style="display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;color:'+c+';background:'+c+'22;border:1px solid '+c+'44">'+s.status.toUpperCase()+'</span></div><div style="font-size:11px;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+s.address+'</div></div><div style="text-align:right;flex-shrink:0"><div style="font-size:24px;font-weight:900;color:#e74c3c">'+gc+'</div><div style="font-size:9px;color:#64748b">GUARDS</div></div></div>';
+  }).join('');
+  return '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px"><div style="font-size:24px;font-weight:900;letter-spacing:2px">SITES &amp; EVENTS</div><button class="bsm" onclick="openASi()">+ ADD</button></div><div style="color:#64748b;font-size:13px;margin-bottom:16px">All security deployments</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">'+fb+'</div>'+rows+(fl.length===0?'<p style="color:#64748b;text-align:center;padding:32px">No locations found</p>':'');
+}
+function vsi(id){selSite=sites.filter(function(s){return s.id===id;})[0];rp();}
+function siteDetH(s){
+  var guards=staff.filter(function(g){return s.guards.indexOf(g.id)>-1;});var c=scolor(s.status);
+  var gr=guards.length===0?'<div style="color:#64748b;font-size:13px;padding:12px;background:#060d1a;border-radius:8px">No guards assigned</div>':guards.map(function(g){return '<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:#060d1a;border-radius:10px;margin-bottom:8px"><div class="av" style="width:36px;height:36px;font-size:13px">'+av(g.name)+'</div><div style="flex:1"><div style="font-weight:700">'+g.name+'</div><div style="font-size:10px;color:#e87b6f">'+g.role.toUpperCase()+'</div></div><div>'+dots(g)+'</div></div>';}).join('');
+  return '<button class="bgh" onclick="selSite=null;rp()" style="margin-bottom:16px">Back</button><div class="card"><div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid #1e293b"><div style="font-size:40px">'+(s.type==='event'?'&#127914;':'&#127970;')+'</div><div><div style="font-size:20px;font-weight:900">'+s.name+'</div><div style="font-size:12px;color:#64748b">'+s.address+'</div><div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap"><span style="display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;color:'+c+';background:'+c+'22;border:1px solid '+c+'44">'+s.status.toUpperCase()+'</span></div></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px"><div style="background:#060d1a;border:1px solid #1e293b;border-radius:12px;padding:14px"><div style="font-size:10px;color:#64748b;font-weight:700;margin-bottom:6px">DATES</div><div style="font-size:13px">Start: '+(s.startDate||'--')+'</div>'+(s.endDate?'<div style="font-size:13px">End: '+s.endDate+'</div>':'')+'</div><div style="background:#060d1a;border:1px solid #1e293b;border-radius:12px;padding:14px"><div style="font-size:10px;color:#64748b;font-weight:700;margin-bottom:6px">NOTES</div><div style="font-size:13px">'+(s.notes||'--')+'</div></div></div><div style="font-weight:900;font-size:15px;letter-spacing:1px;margin-bottom:10px">ASSIGNED GUARDS ('+guards.length+')</div>'+gr+'</div>';
+}
+function openAS(){
+  document.getElementById('mc').innerHTML='<div class="mbg"><div class="mbox"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><b style="font-size:18px;letter-spacing:2px">ADD STAFF</b><button onclick="cm()" style="background:transparent;border:none;color:#94a3b8;font-size:24px;cursor:pointer">&times;</button></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px"><div><label class="lbl">Full Name</label><input class="inp" id="nn" placeholder="Full Name"/></div><div><label class="lbl">Role</label><select class="inp" id="nr"><option>Security Guard</option><option>Supervisor</option><option>Manager</option><option>Dog Handler</option></select></div><div><label class="lbl">Phone</label><input class="inp" id="np" type="tel" placeholder="Phone"/></div><div><label class="lbl">Email</label><input class="inp" id="ne" type="email" placeholder="Email"/></div></div><div class="ss"><div class="stitle">UNIFORM</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px"><div><label class="lbl">Issued</label><select class="inp" id="ui"><option>No</option><option>Yes</option></select></div><div><label class="lbl">Size</label><select class="inp" id="us"><option value="">--</option><option>XS</option><option>S</option><option>M</option><option>L</option><option>XL</option><option>XXL</option></select></div><div><label class="lbl">Issue Date</label><input class="inp" id="ud" type="date"/></div></div></div><div class="ss"><div class="stitle">ID CARD</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div><label class="lbl">Issued</label><select class="inp" id="ii"><option>No</option><option>Yes</option></select></div><div><label class="lbl">Expiry</label><input class="inp" id="ie" type="date"/></div></div></div><div class="ss"><div class="stitle">CSCS CARD</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px"><div><label class="lbl">Issued</label><select class="inp" id="ci"><option>No</option><option>Yes</option></select></div><div><label class="lbl">Number</label><input class="inp" id="cn" placeholder="Number"/></div><div><label class="lbl">Expiry</label><input class="inp" id="ce" type="date"/></div></div></div><div class="ss"><div class="stitle">SIA LICENCE</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px"><div><label class="lbl">Issued</label><select class="inp" id="si2"><option>No</option><option>Yes</option></select></div><div><label class="lbl">Number</label><input class="inp" id="sn2" placeholder="Number"/></div><div><label class="lbl">Expiry</label><input class="inp" id="se" type="date"/></div></div></div><div style="display:flex;gap:10px;margin-top:4px"><button class="btn" onclick="subS()">ADD STAFF</button><button class="bgh" onclick="cm()">CANCEL</button></div></div></div>';
+}
+function subS(){
+  var n=document.getElementById('nn').value.trim();if(!n){alert('Enter a name');return;}
+  staff.push({id:Date.now(),name:n,role:document.getElementById('nr').value,phone:document.getElementById('np').value,email:document.getElementById('ne').value,uniform:{issued:document.getElementById('ui').value==='Yes',size:document.getElementById('us').value,issuedDate:document.getElementById('ud').value},idCard:{issued:document.getElementById('ii').value==='Yes',expiry:document.getElementById('ie').value},cscs:{issued:document.getElementById('ci').value==='Yes',number:document.getElementById('cn').value,expiry:document.getElementById('ce').value},sia:{issued:document.getElementById('si2').value==='Yes',number:document.getElementById('sn2').value,expiry:document.getElementById('se').value},assignedSite:''});
+  save();cm();rp();
+}
+function openASi(){
+  var gc=staff.map(function(s){return '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:#94a3b8;margin-bottom:6px"><input type="checkbox" id="g'+s.id+'"/> '+s.name+' <span style="color:#e87b6f;font-size:11px">('+s.role+')</span></label>';}).join('');
+  document.getElementById('mc').innerHTML='<div class="mbg"><div class="mbox"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><b style="font-size:18px;letter-spacing:2px">ADD SITE / EVENT</b><button onclick="cm()" style="background:transparent;border:none;color:#94a3b8;font-size:24px;cursor:pointer">&times;</button></div><div style="margin-bottom:10px"><label class="lbl">Name</label><input class="inp" id="sin" placeholder="Site or Event Name"/></div><div style="margin-bottom:10px"><label class="lbl">Address</label><input class="inp" id="sia" placeholder="Address"/></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px"><div><label class="lbl">Type</label><select class="inp" id="sit"><option value="site">Site</option><option value="event">Event / Festival</option></select></div><div><label class="lbl">Status</label><select class="inp" id="sis"><option value="active">Active</option><option value="upcoming">Upcoming</option><option value="completed">Completed</option></select></div><div><label class="lbl">Start Date</label><input class="inp" id="sid" type="date"/></div><div><label class="lbl">End Date</label><input class="inp" id="sie" type="date"/></div></div><div style="margin-bottom:10px"><label class="lbl">Notes</label><textarea class="inp" id="sin2" rows="2" placeholder="Notes..."></textarea></div><div style="margin-bottom:16px"><label class="lbl">ASSIGN GUARDS</label><div style="background:#060d1a;border-radius:8px;padding:10px">'+gc+'</div></div><div style="display:flex;gap:10px"><button class="btn" onclick="subSi()">ADD SITE</button><button class="bgh" onclick="cm()">CANCEL</button></div></div></div>';
+}
+function subSi(){
+  var n=document.getElementById('sin').value.trim();if(!n){alert('Enter a name');return;}
+  var guards=staff.filter(function(s){var el=document.getElementById('g'+s.id);return el&&el.checked;}).map(function(s){return s.id;});
+  sites.push({id:Date.now(),name:n,address:document.getElementById('sia').value,type:document.getElementById('sit').value,status:document.getElementById('sis').value,startDate:document.getElementById('sid').value,endDate:document.getElementById('sie').value,notes:document.getElementById('sin2').value,guards:guards});
+  save();cm();rp();
+}
+function cm(){document.getElementById('mc').innerHTML='';}
+rp();
+</script>
+</body>
+</html>
