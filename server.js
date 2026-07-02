@@ -6,14 +6,15 @@ const XLSX    = require('xlsx');
 const app  = express();
 const PORT = 3000;
 
-const BASE        = "C:\\Users\\AsrarKhan\\First Call Site Services\\FCSS - Managers\\HR and Legal\\Asrar\\GuardTec Compliance";
-const ACTIVE_DIR  = BASE + "\\02 - Vetting & Screening\\Active Staff";
-const OVERVIEW    = BASE + "\\02 - Vetting & Screening\\GUARDTEC — COMPLIANCE OVERVIEW.html";
-const SPREADSHEET = "C:\\Users\\AsrarKhan\\OneDrive - First Call Site Services\\TOTAL EMPLOYEE spreadsheet.xlsl.xlsx";
-const LOGO_PATH   = "C:\\Users\\AsrarKhan\\First Call Site Services\\FCSS - Managers\\GuardTech Logo's\\Guard-Tec-final-Logos\\PNG\\GuardTec Security_Logo-white-for-black-bg.png";
-const COMPLIANCE_TRACKER = BASE + "\\01 - Staff Compliance Tracker\\GuardTec Security — Staff Compliance Tracker.xlsx";
-const REFERENCE_TRACKER  = BASE + "\\05 - Reference Tracker\\GuardTec Security — Reference Check Tracker.xlsx";
-const SHAREPOINT_DASHBOARD = BASE + "\\! GuardTec Compliance Dashboard.html";
+const HOME        = process.env.USERPROFILE || ('C:\\Users\\' + require('os').userInfo().username);
+const BASE        = path.join(HOME, "First Call Site Services", "FCSS - Managers", "HR and Legal", "Asrar", "GuardTec Compliance");
+const ACTIVE_DIR  = path.join(BASE, "02 - Vetting & Screening", "Active Staff");
+const OVERVIEW    = path.join(BASE, "02 - Vetting & Screening", "GUARDTEC — COMPLIANCE OVERVIEW.html");
+const SPREADSHEET = path.join(HOME, "OneDrive - First Call Site Services", "TOTAL EMPLOYEE spreadsheet.xlsl.xlsx");
+const LOGO_PATH   = path.join(HOME, "First Call Site Services", "FCSS - Managers", "GuardTech Logo's", "Guard-Tec-final-Logos", "PNG", "GuardTec Security_Logo-white-for-black-bg.png");
+const COMPLIANCE_TRACKER   = path.join(BASE, "01 - Staff Compliance Tracker", "GuardTec Security — Staff Compliance Tracker.xlsx");
+const REFERENCE_TRACKER    = path.join(BASE, "05 - Reference Tracker", "GuardTec Security — Reference Check Tracker.xlsx");
+const SHAREPOINT_DASHBOARD = path.join(BASE, "! GuardTec Compliance Dashboard.html");
 
 const SUBFOLDERS = ['01 - SIA Licence','02 - CSCS Card','03 - Right to Work & Visa','04 - References','05 - Employment Contract','06 - Training & Induction'];
 function getTodayStr() { return new Date().toISOString().split('T')[0]; }
