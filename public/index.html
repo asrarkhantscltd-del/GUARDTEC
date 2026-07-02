@@ -39,7 +39,7 @@ header{background:#0d0d0d;height:70px;display:flex;align-items:stretch;position:
 .s-amber .n,.s-amber .lbl{color:#F59E0B}
 .s-red .n,.s-red .lbl{color:#ff4444}
 .s-unk .n,.s-unk .lbl{color:#444}
-.docbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}.doctab{display:flex;align-items:center;gap:8px;padding:8px 16px;border-radius:8px;border:1px solid #1e1e1e;background:#111;cursor:pointer;transition:all .15s;user-select:none}.doctab:hover{border-color:#333;background:#161616}.doctab.on{border-color:#CC0000;background:rgba(204,0,0,.08)}.doctab-icon{font-size:13px}.doctab-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#555}.doctab.on .doctab-label{color:#CC0000}.doctab-count{font-size:12px;font-weight:800;padding:2px 7px;border-radius:20px;background:#1a1a1a;color:#666;min-width:22px;text-align:center}.doctab.on .doctab-count{background:rgba(204,0,0,.15);color:#ff4444}.bar{display:flex;gap:10px;margin-bottom:20px;align-items:center}.srch-wrap{flex:1;position:relative}.srch-icon{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:#333;font-size:14px;pointer-events:none}
+.bar{display:flex;gap:10px;margin-bottom:20px;align-items:center}.flt-wrap{position:relative}.flt-btn{display:flex;align-items:center;gap:8px;padding:10px 16px;background:#111;border:1px solid #1e1e1e;border-radius:8px;color:#aaa;font-size:12px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;cursor:pointer;white-space:nowrap;transition:all .15s;user-select:none}.flt-btn:hover{border-color:#333;color:#fff}.flt-btn.active{border-color:#CC0000;color:#CC0000;background:rgba(204,0,0,.08)}.flt-arrow{font-size:9px;opacity:.5}.flt-drop{display:none;position:absolute;top:calc(100% + 6px);left:0;background:#141414;border:1px solid #222;border-radius:10px;min-width:210px;z-index:300;box-shadow:0 12px 40px rgba(0,0,0,.8);overflow:hidden}.flt-drop.open{display:block}.flt-item{display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;transition:background .1s;border-bottom:1px solid #1a1a1a}.flt-item:last-child{border-bottom:none}.flt-item:hover{background:#1e1e1e}.flt-item.sel{background:rgba(204,0,0,.07)}.flt-item-icon{font-size:16px;width:22px;text-align:center}.flt-item-text{flex:1}.flt-item-name{font-size:13px;color:#ddd;font-weight:600}.flt-item.sel .flt-item-name{color:#CC0000}.flt-item-sub{font-size:11px;color:#555;margin-top:1px}.flt-item-badge{font-size:11px;font-weight:800;background:#1a1a1a;color:#666;padding:2px 8px;border-radius:20px}.flt-item.sel .flt-item-badge{background:rgba(204,0,0,.15);color:#ff4444}.flt-clear{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:rgba(204,0,0,.2);color:#CC0000;font-size:11px;font-weight:900;cursor:pointer;margin-left:4px;line-height:1}.flt-clear:hover{background:#CC0000;color:#fff}.srch-wrap{flex:1;position:relative}.srch-icon{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:#333;font-size:14px;pointer-events:none}
 .srch{width:100%;padding:11px 16px 11px 40px;border:1px solid #1a1a1a;border-radius:8px;font-size:13px;background:#111;color:#e8e8e8;transition:all .15s}.srch::placeholder{color:#333}
 .srch:focus{outline:none;border-color:#CC0000;box-shadow:0 0 0 3px rgba(204,0,0,.1)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
@@ -114,9 +114,35 @@ header{background:#0d0d0d;height:70px;display:flex;align-items:stretch;position:
 
 <div class="main">
   <div id="statbar" class="stats"></div>
-  <div id="docbar" class="docbar"></div>
   <div class="bar">
     <div class="srch-wrap"><span class="srch-icon">&#9906;</span><input class="srch" id="srch" placeholder="Search staff by name..." oninput="doRender()"></div>
+    <div class="flt-wrap" id="fltWrap">
+      <div class="flt-btn" id="fltBtn" onclick="toggleFltDrop()">
+        <span id="fltBtnLabel">&#9776; Filter</span>
+        <span class="flt-arrow">&#9660;</span>
+      </div>
+      <div class="flt-drop" id="fltDrop">
+        <div class="flt-item" id="flt-all" onclick="doDocFilter('all')">
+          <span class="flt-item-icon">&#128203;</span>
+          <div class="flt-item-text"><div class="flt-item-name">All Staff</div><div class="flt-item-sub">Clear filter</div></div>
+        </div>
+        <div class="flt-item" id="flt-sia" onclick="doDocFilter('sia')">
+          <span class="flt-item-icon">&#128266;</span>
+          <div class="flt-item-text"><div class="flt-item-name">SIA Licence</div><div class="flt-item-sub">Missing or expiring soon</div></div>
+          <span class="flt-item-badge" id="flt-sia-cnt">-</span>
+        </div>
+        <div class="flt-item" id="flt-cscs" onclick="doDocFilter('cscs')">
+          <span class="flt-item-icon">&#129527;</span>
+          <div class="flt-item-text"><div class="flt-item-name">CSCS Card</div><div class="flt-item-sub">Missing or expiring soon</div></div>
+          <span class="flt-item-badge" id="flt-cscs-cnt">-</span>
+        </div>
+        <div class="flt-item" id="flt-rtw" onclick="doDocFilter('rtw')">
+          <span class="flt-item-icon">&#128196;</span>
+          <div class="flt-item-text"><div class="flt-item-name">Right to Work</div><div class="flt-item-sub">Visa expiring or missing</div></div>
+          <span class="flt-item-badge" id="flt-rtw-cnt">-</span>
+        </div>
+      </div>
+    </div>
   </div>
   <div id="grid" class="grid"></div>
 </div>
@@ -243,6 +269,10 @@ function doRender() {
     if (q && (e.name||'').toLowerCase().indexOf(q)===-1) continue;
     list.push(e);
   }
+  // Sort by urgency when doc filter active, otherwise alphabetical
+  if (docFilter !== 'all') {
+    list.sort(function(a,b){ return docUrgency(a,docFilter) - docUrgency(b,docFilter); });
+  }
   var grid = document.getElementById('grid');
   if (!list.length) { grid.innerHTML='<div class="empty">No staff found.</div>'; return; }
   if (q && list.length === 1) { doOpen(list[0].id); }
@@ -300,53 +330,88 @@ function doRender() {
 function docNeedsAction(e, type) {
   if (type === 'sia') {
     var n = e.sia && e.sia.number;
-    var d = e.sia && days(e.sia.expiry);
+    var d = days(e.sia && e.sia.expiry);
     return !n || (d !== null && d < 91);
   }
   if (type === 'cscs') {
     var n = e.cscs && e.cscs.number;
-    var d = e.cscs && days(e.cscs.expiry);
+    var d = days(e.cscs && e.cscs.expiry);
     return !n || (d !== null && d < 91);
   }
   if (type === 'rtw') {
     var t = e.visa && e.visa.type;
-    var d = e.visa && days(e.visa.expiry);
-    // Flag if they have a visa that is expiring/expired, or no RTW info at all
+    var d = days(e.visa && e.visa.expiry);
     if (t) return d === null || d < 91;
     return false;
   }
   return false;
 }
 
-function doDocStats() {
-  var counts = { sia: 0, cscs: 0, rtw: 0 };
-  for (var i = 0; i < ALL.length; i++) {
-    if (docNeedsAction(ALL[i], 'sia'))  counts.sia++;
-    if (docNeedsAction(ALL[i], 'cscs')) counts.cscs++;
-    if (docNeedsAction(ALL[i], 'rtw'))  counts.rtw++;
+// Urgency sort key: missing = -99999, expired = actual negative days, expiring = days remaining
+function docUrgency(e, type) {
+  if (type === 'sia') {
+    if (!e.sia || !e.sia.number) return -99999;
+    var d = days(e.sia.expiry); return d === null ? -99998 : d;
   }
-  var tabs = [
-    { k:'all',  icon:'📋', label:'All Documents' },
-    { k:'sia',  icon:'🪪', label:'SIA Licence',   count: counts.sia  },
-    { k:'cscs', icon:'🏗️', label:'CSCS Card',     count: counts.cscs },
-    { k:'rtw',  icon:'📄', label:'Right to Work', count: counts.rtw  }
-  ];
-  var h = '';
-  for (var j = 0; j < tabs.length; j++) {
-    var t = tabs[j];
-    var on = docFilter === t.k ? ' on' : '';
-    h += '<div class="doctab'+on+'" onclick="doDocFilter(\''+t.k+'\')">';
-    h += '<span class="doctab-icon">'+t.icon+'</span>';
-    h += '<span class="doctab-label">'+t.label+'</span>';
-    if (t.count !== undefined) {
-      h += '<span class="doctab-count">'+t.count+'</span>';
-    }
-    h += '</div>';
+  if (type === 'cscs') {
+    if (!e.cscs || !e.cscs.number) return -99999;
+    var d = days(e.cscs.expiry); return d === null ? -99998 : d;
   }
-  document.getElementById('docbar').innerHTML = h;
+  if (type === 'rtw') {
+    var d = days(e.visa && e.visa.expiry); return d === null ? -99998 : d;
+  }
+  return 0;
 }
 
-function doDocFilter(f) { docFilter = f; doDocStats(); doRender(); }
+function doDocStats() {
+  var cnt = {sia:0, cscs:0, rtw:0};
+  for (var i=0; i<ALL.length; i++) {
+    if (docNeedsAction(ALL[i],'sia'))  cnt.sia++;
+    if (docNeedsAction(ALL[i],'cscs')) cnt.cscs++;
+    if (docNeedsAction(ALL[i],'rtw'))  cnt.rtw++;
+  }
+  var el; var labels = {sia:'SIA Licence',cscs:'CSCS Card',rtw:'Right to Work'};
+  ['sia','cscs','rtw'].forEach(function(k){
+    el = document.getElementById('flt-'+k+'-cnt');
+    if (el) el.textContent = cnt[k];
+    el = document.getElementById('flt-'+k);
+    if (el) { el.classList.toggle('sel', docFilter===k); }
+  });
+  el = document.getElementById('flt-all');
+  if (el) el.classList.toggle('sel', docFilter==='all');
+  var btn = document.getElementById('fltBtn');
+  if (btn) {
+    if (docFilter !== 'all') {
+      btn.classList.add('active');
+      document.getElementById('fltBtnLabel').innerHTML = '&#9776; '+labels[docFilter]+' <span class="flt-clear" onclick="event.stopPropagation();doDocFilter(\'all\')">&#10005;</span>';
+    } else {
+      btn.classList.remove('active');
+      document.getElementById('fltBtnLabel').innerHTML = '&#9776; Filter';
+    }
+  }
+}
+
+function toggleFltDrop() {
+  var d = document.getElementById('fltDrop');
+  d.classList.toggle('open');
+}
+
+document.addEventListener('click', function(ev) {
+  var wrap = document.getElementById('fltWrap');
+  if (wrap && !wrap.contains(ev.target)) {
+    var d = document.getElementById('fltDrop');
+    if (d) d.classList.remove('open');
+  }
+});
+
+function doDocFilter(f) {
+  docFilter = f;
+  var d = document.getElementById('fltDrop');
+  if (d) d.classList.remove('open');
+  doDocStats();
+  doRender();
+}
+
 function doFilter(f) { filter = f; doStats(); doRender(); }
 
 function showPanel(title, html) {
