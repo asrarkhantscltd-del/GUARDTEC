@@ -232,7 +232,7 @@ function doStats() {
 }
 
 function doRender() {
-  var q = document.getElementById('srch').value.toLowerCase();
+  var q = document.getElementById('srch').value.toLowerCase().trim();
   var list = [];
   for (var i=0;i<ALL.length;i++) {
     var e = ALL[i];
@@ -242,6 +242,7 @@ function doRender() {
   }
   var grid = document.getElementById('grid');
   if (!list.length) { grid.innerHTML='<div class="empty">No staff found.</div>'; return; }
+  if (q && list.length === 1) { doOpen(list[0].id); }
   var h = '';
   for (var j=0;j<list.length;j++) {
     var e = list[j];
