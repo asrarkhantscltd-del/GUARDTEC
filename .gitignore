@@ -1,0 +1,18 @@
+﻿# Dependencies
+node_modules/
+
+# Staff data — stays on your laptop, not uploaded to GitHub
+../02 - Vetting & Screening/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment / secrets
+.env
+*.env
