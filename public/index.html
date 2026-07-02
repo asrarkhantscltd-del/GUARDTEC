@@ -39,7 +39,7 @@ header{background:#0d0d0d;height:70px;display:flex;align-items:stretch;position:
 .s-amber .n,.s-amber .lbl{color:#F59E0B}
 .s-red .n,.s-red .lbl{color:#ff4444}
 .s-unk .n,.s-unk .lbl{color:#444}
-.bar{display:flex;gap:10px;margin-bottom:20px;align-items:center}.srch-wrap{flex:1;position:relative}.srch-icon{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:#333;font-size:14px;pointer-events:none}
+.docbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}.doctab{display:flex;align-items:center;gap:8px;padding:8px 16px;border-radius:8px;border:1px solid #1e1e1e;background:#111;cursor:pointer;transition:all .15s;user-select:none}.doctab:hover{border-color:#333;background:#161616}.doctab.on{border-color:#CC0000;background:rgba(204,0,0,.08)}.doctab-icon{font-size:13px}.doctab-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#555}.doctab.on .doctab-label{color:#CC0000}.doctab-count{font-size:12px;font-weight:800;padding:2px 7px;border-radius:20px;background:#1a1a1a;color:#666;min-width:22px;text-align:center}.doctab.on .doctab-count{background:rgba(204,0,0,.15);color:#ff4444}.bar{display:flex;gap:10px;margin-bottom:20px;align-items:center}.srch-wrap{flex:1;position:relative}.srch-icon{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:#333;font-size:14px;pointer-events:none}
 .srch{width:100%;padding:11px 16px 11px 40px;border:1px solid #1a1a1a;border-radius:8px;font-size:13px;background:#111;color:#e8e8e8;transition:all .15s}.srch::placeholder{color:#333}
 .srch:focus{outline:none;border-color:#CC0000;box-shadow:0 0 0 3px rgba(204,0,0,.1)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
@@ -114,6 +114,7 @@ header{background:#0d0d0d;height:70px;display:flex;align-items:stretch;position:
 
 <div class="main">
   <div id="statbar" class="stats"></div>
+  <div id="docbar" class="docbar"></div>
   <div class="bar">
     <div class="srch-wrap"><span class="srch-icon">&#9906;</span><input class="srch" id="srch" placeholder="Search staff by name..." oninput="doRender()"></div>
   </div>
@@ -152,6 +153,7 @@ header{background:#0d0d0d;height:70px;display:flex;align-items:stretch;position:
 <script>
 var ALL = /*STAFF_DATA_PLACEHOLDER*/[];
 var filter = 'all';
+var docFilter = 'all';
 var editing = null;
 var REF_OPT = ['Not Started','Email Sent','Chased','Received - Satisfactory','Received - Unsatisfactory','N/A'];
 
@@ -237,6 +239,7 @@ function doRender() {
   for (var i=0;i<ALL.length;i++) {
     var e = ALL[i];
     if (filter!=='all' && (e.overall||'unknown')!==filter) continue;
+    if (docFilter!=='all' && !docNeedsAction(e, docFilter)) continue;
     if (q && (e.name||'').toLowerCase().indexOf(q)===-1) continue;
     list.push(e);
   }
@@ -294,7 +297,57 @@ function doRender() {
   for (var k=0;k<list.length;k++) { loadCardPhoto(list[k].id); }
 }
 
-function doFilter(f) { filter=f; doStats(); doRender(); }
+function docNeedsAction(e, type) {
+  if (type === 'sia') {
+    var n = e.sia && e.sia.number;
+    var d = e.sia && days(e.sia.expiry);
+    return !n || (d !== null && d < 91);
+  }
+  if (type === 'cscs') {
+    var n = e.cscs && e.cscs.number;
+    var d = e.cscs && days(e.cscs.expiry);
+    return !n || (d !== null && d < 91);
+  }
+  if (type === 'rtw') {
+    var t = e.visa && e.visa.type;
+    var d = e.visa && days(e.visa.expiry);
+    // Flag if they have a visa that is expiring/expired, or no RTW info at all
+    if (t) return d === null || d < 91;
+    return false;
+  }
+  return false;
+}
+
+function doDocStats() {
+  var counts = { sia: 0, cscs: 0, rtw: 0 };
+  for (var i = 0; i < ALL.length; i++) {
+    if (docNeedsAction(ALL[i], 'sia'))  counts.sia++;
+    if (docNeedsAction(ALL[i], 'cscs')) counts.cscs++;
+    if (docNeedsAction(ALL[i], 'rtw'))  counts.rtw++;
+  }
+  var tabs = [
+    { k:'all',  icon:'📋', label:'All Documents' },
+    { k:'sia',  icon:'🪪', label:'SIA Licence',   count: counts.sia  },
+    { k:'cscs', icon:'🏗️', label:'CSCS Card',     count: counts.cscs },
+    { k:'rtw',  icon:'📄', label:'Right to Work', count: counts.rtw  }
+  ];
+  var h = '';
+  for (var j = 0; j < tabs.length; j++) {
+    var t = tabs[j];
+    var on = docFilter === t.k ? ' on' : '';
+    h += '<div class="doctab'+on+'" onclick="doDocFilter(\''+t.k+'\')">';
+    h += '<span class="doctab-icon">'+t.icon+'</span>';
+    h += '<span class="doctab-label">'+t.label+'</span>';
+    if (t.count !== undefined) {
+      h += '<span class="doctab-count">'+t.count+'</span>';
+    }
+    h += '</div>';
+  }
+  document.getElementById('docbar').innerHTML = h;
+}
+
+function doDocFilter(f) { docFilter = f; doDocStats(); doRender(); }
+function doFilter(f) { filter = f; doStats(); doRender(); }
 
 function showPanel(title, html) {
   document.getElementById('ptitle').textContent = title;
@@ -543,7 +596,7 @@ function reloadStaff() {
     try {
       ALL = JSON.parse(xhr.responseText);
       ALL.sort(function(a,b){return (a.name||'').localeCompare(b.name||'');});
-      doStats(); doRender();
+      doStats(); doDocStats(); doRender();
     } catch(e) {}
   };
   xhr.send();
@@ -665,6 +718,7 @@ function showToast(msg) {
 // Boot — data already embedded, no fetch needed
 ALL.sort(function(a,b){return (a.name||'').localeCompare(b.name||'');});
 doStats();
+doDocStats();
 doRender();
 </script>
 </body>
