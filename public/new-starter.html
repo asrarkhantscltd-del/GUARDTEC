@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GuardTec Security – New Starter Form</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;background:#0f1117;color:#e8e8e8;min-height:100vh;padding:24px 16px 60px}
+.wrap{max-width:680px;margin:0 auto}
+
+.logo-bar{text-align:center;padding:28px 0 24px}
+.logo-bar h1{font-size:22px;font-weight:800;letter-spacing:2px;color:#fff}
+.logo-bar p{font-size:13px;color:#9ca3af;margin-top:6px}
+
+.card{background:#1a1d27;border-radius:14px;padding:28px 24px;margin-bottom:20px;border:1px solid #2a2d3e}
+.card-title{font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#60a5fa;margin-bottom:18px;padding-bottom:10px;border-bottom:1px solid #2a2d3e}
+
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:520px){.row2{grid-template-columns:1fr}}
+.row1{display:grid;grid-template-columns:1fr}
+.f{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.f label{font-size:11px;font-weight:600;color:#9ca3af;text-transform:uppercase;letter-spacing:.8px}
+.f input,.f select,.f textarea{background:#0f1117;border:1px solid #2a2d3e;border-radius:8px;color:#e8e8e8;font-size:14px;padding:10px 12px;outline:none;transition:border-color .2s;font-family:inherit}
+.f input:focus,.f select:focus,.f textarea:focus{border-color:#3b82f6}
+.f input::placeholder,.f textarea::placeholder{color:#4b5563}
+.f select option{background:#1a1d27}
+.req{color:#ef4444}
+
+.note{font-size:12px;color:#6b7280;margin-top:-8px;margin-bottom:14px}
+
+.submit-btn{width:100%;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;padding:16px;cursor:pointer;letter-spacing:.5px;transition:opacity .2s;margin-top:8px}
+.submit-btn:hover{opacity:.9}
+.submit-btn:disabled{opacity:.5;cursor:not-allowed}
+
+.success-box{display:none;text-align:center;padding:48px 24px}
+.success-box .tick{font-size:64px;margin-bottom:16px}
+.success-box h2{font-size:22px;font-weight:800;color:#22c55e;margin-bottom:10px}
+.success-box p{font-size:15px;color:#9ca3af;line-height:1.6}
+
+.error-msg{background:#3b1a1a;border:1px solid #7f1d1d;color:#f87171;border-radius:8px;padding:12px 16px;font-size:13px;margin-top:12px;display:none}
+
+.required-note{font-size:12px;color:#6b7280;margin-bottom:20px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo-bar">
+    <h1>GUARDTEC SECURITY</h1>
+    <p>New Starter Registration Form</p>
+  </div>
+
+  <div id="formArea">
+    <p class="required-note">Fields marked <span class="req">*</span> are required.</p>
+
+    <!-- Personal Details -->
+    <div class="card">
+      <div class="card-title">Personal Details</div>
+      <div class="row2">
+        <div class="f"><label>Full Legal Name <span class="req">*</span></label><input id="ns_name" placeholder="As shown on ID"></div>
+        <div class="f"><label>Date of Birth</label><input type="date" id="ns_dob"></div>
+      </div>
+      <div class="row2">
+        <div class="f"><label>Nationality</label><input id="ns_nationality" placeholder="e.g. British, Indian"></div>
+        <div class="f"><label>Gender</label>
+          <select id="ns_gender">
+            <option value="MALE">Male</option>
+            <option value="FEMALE">Female</option>
+          </select>
+        </div>
+      </div>
+      <div class="row2">
+        <div class="f"><label>Phone Number <span class="req">*</span></label><input id="ns_phone" placeholder="07..."></div>
+        <div class="f"><label>Email Address</label><input type="email" id="ns_email" placeholder="your@email.com"></div>
+      </div>
+      <div class="row1">
+        <div class="f"><label>Home Address</label><input id="ns_address" placeholder="Full address including postcode"></div>
+      </div>
+      <div class="row1">
+        <div class="f"><label>National Insurance Number</label><input id="ns_ni" placeholder="e.g. AB 12 34 56 C" style="text-transform:uppercase"></div>
+      </div>
+      <p class="note">Your NI number is needed for payroll — it is stored securely and never shared.</p>
+    </div>
+
+    <!-- SIA Licence -->
+    <div class="card">
+      <div class="card-title">SIA Licence</div>
+      <p class="note" style="margin-top:-10px;margin-bottom:14px">Leave blank if you do not yet have an SIA licence.</p>
+      <div class="row2">
+        <div class="f"><label>SIA Licence Number</label><input id="ns_sianum" placeholder="16-digit number"></div>
+        <div class="f"><label>Expiry Date</label><input type="date" id="ns_siaexp"></div>
+      </div>
+    </div>
+
+    <!-- CSCS Card -->
+    <div class="card">
+      <div class="card-title">CSCS Card</div>
+      <p class="note" style="margin-top:-10px;margin-bottom:14px">Leave blank if you do not yet have a CSCS card.</p>
+      <div class="row2">
+        <div class="f"><label>CSCS Card Number</label><input id="ns_cscsnum" placeholder="Card number"></div>
+        <div class="f"><label>Expiry Date</label><input type="date" id="ns_cscsexp"></div>
+      </div>
+    </div>
+
+    <!-- Right to Work -->
+    <div class="card">
+      <div class="card-title">Right to Work</div>
+      <div class="row2">
+        <div class="f"><label>Document Type <span class="req">*</span></label>
+          <select id="ns_visatype">
+            <option value="">-- Select --</option>
+            <option>British Passport</option>
+            <option>British National (Overseas)</option>
+            <option>ILR (Indefinite Leave to Remain)</option>
+            <option>EUSS (EU Settlement Scheme)</option>
+            <option>BRP (Biometric Residence Permit)</option>
+            <option>Work Visa</option>
+            <option>Student Visa with permission to work</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <div class="f"><label>Expiry Date <span style="font-size:10px;color:#6b7280">(leave blank if no expiry)</span></label><input type="date" id="ns_visaexp"></div>
+      </div>
+    </div>
+
+    <!-- Emergency Contact -->
+    <div class="card">
+      <div class="card-title">Emergency Contact</div>
+      <div class="row2">
+        <div class="f"><label>Name</label><input id="ns_ecname" placeholder="Full name"></div>
+        <div class="f"><label>Relationship</label><input id="ns_ecrel" placeholder="e.g. Spouse, Parent"></div>
+      </div>
+      <div class="row1">
+        <div class="f"><label>Phone Number</label><input id="ns_ecphone" placeholder="07..."></div>
+      </div>
+    </div>
+
+    <button class="submit-btn" id="submitBtn" onclick="doSubmit()">Submit Registration</button>
+    <div class="error-msg" id="errMsg"></div>
+  </div>
+
+  <!-- Success screen -->
+  <div class="success-box" id="successBox">
+    <div class="tick">✅</div>
+    <h2>Registration Submitted!</h2>
+    <p>Thank you for completing your registration.<br>
+    The GuardTec compliance team will review your details.<br><br>
+    <strong>You can now close this page.</strong></p>
+  </div>
+</div>
+
+<script>
+function gv(id){var el=document.getElementById(id);return el?el.value.trim():'';}
+
+function doSubmit(){
+  var name=gv('ns_name');
+  var phone=gv('ns_phone');
+  var rtw=gv('ns_visatype');
+
+  var errEl=document.getElementById('errMsg');
+  errEl.style.display='none';
+
+  if(!name){showErr('Full name is required.');return;}
+  if(!phone){showErr('Phone number is required.');return;}
+  if(!rtw){showErr('Please select your Right to Work document type.');return;}
+
+  var btn=document.getElementById('submitBtn');
+  btn.disabled=true;btn.textContent='Submitting...';
+
+  var nameUpper=name.toUpperCase();
+  var payload={
+    id:nameUpper.toLowerCase().replace(/[^a-z0-9]+/g,'-')+'-'+Date.now(),
+    name:nameUpper,
+    dob:gv('ns_dob')||null,
+    nationality:gv('ns_nationality'),
+    gender:gv('ns_gender'),
+    phone:phone,
+    email:gv('ns_email'),
+    address:gv('ns_address'),
+    niNumber:gv('ns_ni').toUpperCase(),
+    sia:{number:gv('ns_sianum'),expiry:gv('ns_siaexp')||null},
+    cscs:{number:gv('ns_cscsnum'),expiry:gv('ns_cscsexp')||null},
+    visa:{type:rtw,expiry:gv('ns_visaexp')||null},
+    emergencyContact:{
+      name:gv('ns_ecname'),
+      relationship:gv('ns_ecrel'),
+      phone:gv('ns_ecphone')
+    },
+    references:{ref1:{name:'',company:'',email:'',status:'Not Started'},ref2:{name:'',company:'',email:'',status:'Not Started'}},
+    contract:'',induction:false,status:'active',
+    addedDate:new Date().toISOString().split('T')[0]
+  };
+
+  var xhr=new XMLHttpRequest();
+  xhr.open('POST','/api/staff',true);
+  xhr.setRequestHeader('Content-Type','application/json');
+  xhr.onload=function(){
+    try{
+      var r=JSON.parse(xhr.responseText);
+      if(r.ok){
+        document.getElementById('formArea').style.display='none';
+        document.getElementById('successBox').style.display='block';
+      } else {
+        btn.disabled=false;btn.textContent='Submit Registration';
+        showErr('Submission failed: '+(r.error||'Please try again.'));
+      }
+    }catch(ex){
+      btn.disabled=false;btn.textContent='Submit Registration';
+      showErr('Submission failed. Please check your connection and try again.');
+    }
+  };
+  xhr.onerror=function(){
+    btn.disabled=false;btn.textContent='Submit Registration';
+    showErr('Could not connect to server. Please try again.');
+  };
+  xhr.send(JSON.stringify(payload));
+}
+
+function showErr(msg){
+  var el=document.getElementById('errMsg');
+  el.textContent=msg;el.style.display='block';
+  el.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+</script>
+</body>
+</html>

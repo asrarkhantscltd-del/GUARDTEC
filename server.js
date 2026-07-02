@@ -680,6 +680,10 @@ app.get('/', function(req, res) {
   }
 });
 
+app.get('/new-starter', function(req, res) {
+  res.sendFile(path.join(__dirname, 'public', 'new-starter.html'));
+});
+
 app.get('/reload', function(req, res) {
   try {
     var staff = loadAllStaff();
