@@ -516,6 +516,20 @@ app.get('/api/staff', function(req, res) {
   }
 });
 
+app.patch('/api/staff/:id/deploy', function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
+    emp.deployStatus = req.body.deployStatus || 'inactive';
+    saveStaff(emp, emp._folderPath);
+    res.json({ ok: true });
+  } catch(e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.put('/api/staff/:id', function(req, res) {
   try {
     var emp = req.body;
@@ -695,14 +709,4 @@ app.get('/reload', function(req, res) {
 });
 
 
-// ── START ─────────────────────────────────────────────────────────────────────
-console.log('\nInitialising staff data from spreadsheet...');
-initFromSpreadsheet();
-
-app.listen(PORT, function() {
-  console.log('\n========================================');
-  console.log('  GuardTec Compliance App is RUNNING');
-  console.log('  Open Chrome: http://localhost:' + PORT);
-  console.log('  Press Ctrl+C to stop');
-  console.log('========================================\n');
-});
+// ── START ────────────────────────────────────────�
