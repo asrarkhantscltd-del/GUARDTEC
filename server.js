@@ -1,7 +1,8 @@
-﻿const express = require('express');
-const fs      = require('fs');
-const path    = require('path');
-const XLSX    = require('xlsx');
+﻿const express  = require('express');
+const fs       = require('fs');
+const path     = require('path');
+const XLSX     = require('xlsx');
+const { exec } = require('child_process');
 
 const app  = express();
 const PORT = 3000;
@@ -327,6 +328,30 @@ function loadAllStaff() {
   return staff;
 }
 
+// ── AUTO GIT COMMIT + PUSH ────────────────────────────────────────────────────
+var _gitTimer = null;
+function scheduleGitPush(reason) {
+  if (_gitTimer) clearTimeout(_gitTimer);
+  _gitTimer = setTimeout(function() {
+    var appDir = __dirname;
+    var now    = new Date();
+    var stamp  = now.getFullYear() + '-'
+      + String(now.getMonth()+1).padStart(2,'0') + '-'
+      + String(now.getDate()).padStart(2,'0') + ' '
+      + String(now.getHours()).padStart(2,'0') + ':'
+      + String(now.getMinutes()).padStart(2,'0');
+    var msg = 'Auto-save: ' + stamp + (reason ? ' — ' + reason : '');
+    var cmd = 'cd /d "' + appDir + '" && git add -A && git commit -m "' + msg + '" && git push origin main';
+    exec(cmd, function(err, stdout, stderr) {
+      if (err) {
+        console.log('[GIT] Push failed:', stderr || err.message);
+      } else {
+        console.log('[GIT] Pushed to GitHub —', msg);
+      }
+    });
+  }, 5000); // 5-second debounce so rapid saves group into one commit
+}
+
 // ── SAVE STAFF ────────────────────────────────────────────────────────────────
 function saveStaff(emp, oldFolderPath) {
   emp.overall = calcOverall(emp);
@@ -342,6 +367,7 @@ function saveStaff(emp, oldFolderPath) {
   emp._folderPath = newFolder;
   fs.writeFileSync(path.join(newFolder,'staff_data.json'), JSON.stringify(emp,null,2), 'utf8');
   fs.writeFileSync(path.join(newFolder,'COMPLIANCE SUMMARY - '+safeName(emp.name)+'.html'), buildReportHTML(emp), 'utf8');
+  scheduleGitPush(emp.name);
   return newFolder;
 }
 
@@ -673,40 +699,4 @@ app.post('/api/overview', function(req, res) {
   try {
     var overviewHtml = buildOverviewHTML(loadAllStaff());
     fs.writeFileSync(OVERVIEW, overviewHtml, 'utf8');
-    fs.writeFileSync(SHAREPOINT_DASHBOARD, overviewHtml, 'utf8');
-    res.json({ ok: true });
-  } catch(e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// ── SERVE APP WITH EMBEDDED STAFF DATA (no browser fetch needed) ──────────────
-app.get('/', function(req, res) {
-  try {
-    var staff = loadAllStaff();
-    var staffJSON = JSON.stringify(staff);
-    var tpl = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
-    var page = tpl.replace('/*STAFF_DATA_PLACEHOLDER*/[]', staffJSON);
-    res.setHeader('Content-Type', 'text/html');
-    res.setHeader('Cache-Control', 'no-store');
-    res.send(page);
-  } catch(e) {
-    res.send('<h2 style="color:red;padding:20px">Server error: ' + e.message + '</h2>');
-  }
-});
-
-app.get('/new-starter', function(req, res) {
-  res.sendFile(path.join(__dirname, 'public', 'new-starter.html'));
-});
-
-app.get('/reload', function(req, res) {
-  try {
-    var staff = loadAllStaff();
-    res.json(staff);
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-
-// ── START ────────────────────────────────────────�
+    fs.writeFileSync(SHAREPOINT_DASHBOARD, overviewH
