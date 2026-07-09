@@ -1,8 +1,8 @@
 ﻿const express  = require('express');
-const fs       = require('fs');
-const path     = require('path');
-const XLSX     = require('xlsx');
 const { exec } = require('child_process');
+const fs      = require('fs');
+const path    = require('path');
+const XLSX    = require('xlsx');
 
 const app  = express();
 const PORT = 3000;
@@ -328,30 +328,6 @@ function loadAllStaff() {
   return staff;
 }
 
-// ── AUTO GIT COMMIT + PUSH ────────────────────────────────────────────────────
-var _gitTimer = null;
-function scheduleGitPush(reason) {
-  if (_gitTimer) clearTimeout(_gitTimer);
-  _gitTimer = setTimeout(function() {
-    var appDir = __dirname;
-    var now    = new Date();
-    var stamp  = now.getFullYear() + '-'
-      + String(now.getMonth()+1).padStart(2,'0') + '-'
-      + String(now.getDate()).padStart(2,'0') + ' '
-      + String(now.getHours()).padStart(2,'0') + ':'
-      + String(now.getMinutes()).padStart(2,'0');
-    var msg = 'Auto-save: ' + stamp + (reason ? ' — ' + reason : '');
-    var cmd = 'cd /d "' + appDir + '" && git add -A && git commit -m "' + msg + '" && git push origin main';
-    exec(cmd, function(err, stdout, stderr) {
-      if (err) {
-        console.log('[GIT] Push failed:', stderr || err.message);
-      } else {
-        console.log('[GIT] Pushed to GitHub —', msg);
-      }
-    });
-  }, 5000); // 5-second debounce so rapid saves group into one commit
-}
-
 // ── SAVE STAFF ────────────────────────────────────────────────────────────────
 function saveStaff(emp, oldFolderPath) {
   emp.overall = calcOverall(emp);
@@ -542,6 +518,7 @@ app.get('/api/staff', function(req, res) {
   }
 });
 
+// ── DEPLOYMENT STATUS ─────────────────────────────────────────────────────────
 app.patch('/api/staff/:id/deploy', function(req, res) {
   try {
     var all = loadAllStaff();
@@ -699,4 +676,170 @@ app.post('/api/overview', function(req, res) {
   try {
     var overviewHtml = buildOverviewHTML(loadAllStaff());
     fs.writeFileSync(OVERVIEW, overviewHtml, 'utf8');
-    fs.writeFileSync(SHAREPOINT_DASHBOARD, overviewH
+    fs.writeFileSync(SHAREPOINT_DASHBOARD, overviewHtml, 'utf8');
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── SERVE APP WITH EMBEDDED STAFF DATA (no browser fetch needed) ──────────────
+app.get('/', function(req, res) {
+  try {
+    var staff = loadAllStaff();
+    var staffJSON = JSON.stringify(staff);
+    var tpl = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+    var page = tpl.replace('/*STAFF_DATA_PLACEHOLDER*/[]', staffJSON);
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(page);
+  } catch(e) {
+    res.send('<h2 style="color:red;padding:20px">Server error: ' + e.message + '</h2>');
+  }
+});
+
+app.get('/new-starter', function(req, res) {
+  res.sendFile(path.join(__dirname, 'public', 'new-starter.html'));
+});
+
+app.get('/reload', function(req, res) {
+  try {
+    var staff = loadAllStaff();
+    res.json(staff);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+// ── AUTO GIT COMMIT + PUSH ────────────────────────────────────────────────────
+var _gitTimer = null;
+function scheduleGitPush(reason) {
+  if (_gitTimer) clearTimeout(_gitTimer);
+  _gitTimer = setTimeout(function() {
+    var appDir = __dirname;
+    var now    = new Date();
+    var stamp  = now.getFullYear() + '-'
+      + String(now.getMonth()+1).padStart(2,'0') + '-'
+      + String(now.getDate()).padStart(2,'0') + ' '
+      + String(now.getHours()).padStart(2,'0') + ':'
+      + String(now.getMinutes()).padStart(2,'0');
+    var msg = 'Auto-save: ' + stamp + (reason ? ' — ' + reason : '');
+    var cmd = 'cd /d "' + appDir + '" && git add -A && git commit -m "' + msg + '" && git push origin main';
+    exec(cmd, function(err, stdout, stderr) {
+      if (err) { console.log('[GIT] Push failed:', stderr || err.message); }
+      else      { console.log('[GIT] Pushed to GitHub —', msg); }
+    });
+  }, 5000);
+}
+
+// ── AUTO DUPLICATE DETECTION ──────────────────────────────────────────────────
+function normPhone(p) {
+  if (!p) return '';
+  return String(p).replace(/\D/g,'').replace(/^(440|44|0)/,'');
+}
+function normEmail(e) { return e ? String(e).toLowerCase().trim() : ''; }
+function normSIA(s)   { return s ? String(s).replace(/\s/g,'').toUpperCase() : ''; }
+
+function nameSimilarity(a, b) {
+  var wa = a.toLowerCase().replace(/[^a-z ]/g,'').split(/\s+/).filter(Boolean);
+  var wb = b.toLowerCase().replace(/[^a-z ]/g,'').split(/\s+/).filter(Boolean);
+  if (!wa.length || !wb.length) return 0;
+  var inter = wa.filter(function(w){ return wb.indexOf(w) >= 0; }).length;
+  var union  = new Set(wa.concat(wb)).size;
+  var jaccard = inter / union;
+  var prefix = 0;
+  wa.forEach(function(w1){ wb.forEach(function(w2){
+    var l = Math.min(w1.length, w2.length);
+    if (l >= 4) {
+      var m = 0;
+      for (var k = 0; k < l; k++) { if (w1[k]===w2[k]) m++; else break; }
+      prefix = Math.max(prefix, m / l);
+    }
+  }); });
+  return Math.max(jaccard, prefix * 0.85);
+}
+
+function autoDedup() {
+  try {
+    var staff = loadAllStaff();
+    var archiveDir = path.join(BASE, '02 - Vetting & Screening', 'Duplicate Archive');
+    if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, {recursive:true});
+
+    var archived = 0;
+    var checked  = {};
+
+    for (var i = 0; i < staff.length; i++) {
+      for (var j = i + 1; j < staff.length; j++) {
+        var key = i + '-' + j;
+        if (checked[key]) continue;
+        checked[key] = true;
+
+        var a = staff[i], b = staff[j];
+        var score = 0;
+
+        var pa = normPhone(a.phone), pb = normPhone(b.phone);
+        if (pa && pb && pa === pb && pa.length >= 7) score += 3;
+
+        var ea = normEmail(a.email), eb = normEmail(b.email);
+        if (ea && eb && ea === eb) score += 3;
+
+        var sa = normSIA(a.sia && a.sia.number), sb = normSIA(b.sia && b.sia.number);
+        if (sa && sb && sa === sb && sa !== '' && sa !== 'N/A') score += 4;
+
+        var ns = nameSimilarity(a.name || '', b.name || '');
+        if (ns >= 0.5) score += ns * 2;
+        else if (ns >= 0.3) score += ns;
+
+        if (score < 2.5) continue;
+
+        // Keep the record with more complete name; archive the other
+        var keepIdx = (a.name||'').length >= (b.name||'').length ? i : j;
+        var dropIdx = keepIdx === i ? j : i;
+        var keep = staff[keepIdx], drop = staff[dropIdx];
+
+        if (!drop._folderPath || !fs.existsSync(drop._folderPath)) continue;
+
+        var dropFolder = path.basename(drop._folderPath);
+        var dest = path.join(archiveDir, dropFolder);
+        if (fs.existsSync(dest)) dest = dest + '_dup_' + Date.now();
+
+        try {
+          fs.renameSync(drop._folderPath, dest);
+          console.log('[DEDUP] Archived: ' + drop.name + ' — kept: ' + keep.name + ' (score ' + score.toFixed(1) + ')');
+          archived++;
+          staff.splice(dropIdx, 1);
+          if (dropIdx <= i) i--;
+          if (dropIdx <= j) j--;
+        } catch(moveErr) {
+          console.log('[DEDUP] Could not move ' + dropFolder + ':', moveErr.message);
+        }
+      }
+    }
+
+    if (archived > 0) {
+      console.log('[DEDUP] Done — ' + archived + ' duplicate(s) archived.');
+      scheduleGitPush('auto-dedup: ' + archived + ' duplicate(s) removed');
+    } else {
+      console.log('[DEDUP] No duplicates found.');
+    }
+  } catch(e) {
+    console.error('[DEDUP] Error:', e.message);
+  }
+}
+
+// ── START ─────────────────────────────────────────────────────────────────────
+console.log('\nInitialising staff data from spreadsheet...');
+initFromSpreadsheet();
+
+app.listen(PORT, function() {
+  console.log('\n========================================');
+  console.log('  GuardTec Compliance App is RUNNING');
+  console.log('  Open Chrome: http://localhost:' + PORT);
+  console.log('  Press Ctrl+C to stop');
+  console.log('========================================\n');
+
+  // Duplicate check on every startup, then every hour automatically
+  setTimeout(autoDedup, 3000);
+  setInterval(autoDedup, 60 * 60 * 1000);
+});
