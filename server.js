@@ -8,11 +8,11 @@ const app  = express();
 const PORT = 3000;
 
 const HOME        = process.env.USERPROFILE || ('C:\\Users\\' + require('os').userInfo().username);
-const BASE        = path.join(HOME, "First Call Site Services", "FCSS - Managers", "HR and Legal", "Asrar", "GuardTec Compliance");
+const BASE        = process.env.DATA_PATH || path.join(HOME, "First Call Site Services", "FCSS - Managers", "HR and Legal", "Asrar", "GuardTec Compliance");
 const ACTIVE_DIR  = path.join(BASE, "02 - Vetting & Screening", "Active Staff");
 const OVERVIEW    = path.join(BASE, "02 - Vetting & Screening", "GUARDTEC — COMPLIANCE OVERVIEW.html");
-const SPREADSHEET = path.join(HOME, "OneDrive - First Call Site Services", "TOTAL EMPLOYEE spreadsheet.xlsl.xlsx");
-const LOGO_PATH   = path.join(HOME, "First Call Site Services", "FCSS - Managers", "GuardTech Logo's", "Guard-Tec-final-Logos", "PNG", "GuardTec Security_Logo-white-for-black-bg.png");
+const SPREADSHEET = process.env.DATA_PATH ? path.join(process.env.DATA_PATH, "01 - Staff Compliance Tracker", "GuardTec Security — Staff Compliance Tracker.xlsx") : path.join(HOME, "OneDrive - First Call Site Services", "TOTAL EMPLOYEE spreadsheet.xlsl.xlsx");
+const LOGO_PATH = null;
 const COMPLIANCE_TRACKER   = path.join(BASE, "01 - Staff Compliance Tracker", "GuardTec Security — Staff Compliance Tracker.xlsx");
 const REFERENCE_TRACKER    = path.join(BASE, "05 - Reference Tracker", "GuardTec Security — Reference Check Tracker.xlsx");
 const SHAREPOINT_DASHBOARD = path.join(BASE, "! GuardTec Compliance Dashboard.html");
@@ -25,6 +25,7 @@ app.use(express.json({ limit: '10mb' }));
 // Serve logo as its own endpoint
 app.get('/logo', (req, res) => {
   res.setHeader('Content-Type', 'image/png');
+  if (!LOGO_PATH || !fs.existsSync(LOGO_PATH)) return res.status(404).end();
   res.send(fs.readFileSync(LOGO_PATH));
 });
 
@@ -418,7 +419,7 @@ function initFromSpreadsheet() {
 
 // ── HTML REPORT ───────────────────────────────────────────────────────────────
 function buildReportHTML(emp) {
-  var logoB64 = 'data:image/png;base64,' + fs.readFileSync(LOGO_PATH).toString('base64');
+  var logoB64 = '';
   var siaDays  = daysFrom(emp.sia && emp.sia.expiry);
   var cscsDays = daysFrom(emp.cscs && emp.cscs.expiry);
   var visaDays = daysFrom(emp.visa && emp.visa.expiry);
@@ -475,7 +476,7 @@ function buildReportHTML(emp) {
 
 // ── OVERVIEW HTML ─────────────────────────────────────────────────────────────
 function buildOverviewHTML(staff) {
-  var logoB64 = 'data:image/png;base64,' + fs.readFileSync(LOGO_PATH).toString('base64');
+  var logoB64 = '';
   var green = staff.filter(function(e){return e.overall==='green';}).length;
   var amber = staff.filter(function(e){return e.overall==='amber';}).length;
   var red   = staff.filter(function(e){return e.overall==='red';}).length;

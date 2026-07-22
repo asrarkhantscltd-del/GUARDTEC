@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  guardtec-app:
+    build: .
+    ports:
+      - "3001:3000"
+    volumes:
+      - "C:\\Users\\WORKSTATION\\First Call Site Services\\FCSS - Managers\\HR and Legal\\Asrar\\GuardTec Compliance:/data"
+    environment:
+      - DATA_PATH=/data
+      - PORT=3000
+    restart: unless-stopped
