@@ -44,6 +44,15 @@ function requireLogin(req, res, next) {
   next();
 }
 
+function requireRole() {
+  var allowedRoles = Array.prototype.slice.call(arguments);
+  return function(req, res, next) {
+    if (!req.user || !req.user.role) return res.status(403).json({ error: 'Forbidden' });
+    if (allowedRoles.indexOf(req.user.role) === -1) return res.status(403).json({ error: 'Forbidden' });
+    next();
+  };
+}
+
 const HOME        = process.env.USERPROFILE || ('C:\\Users\\' + require('os').userInfo().username);
 const BASE        = process.env.DATA_PATH || path.join(HOME, "First Call Site Services", "FCSS - Managers", "HR and Legal", "Asrar", "GuardTec Compliance");
 const ACTIVE_DIR  = path.join(BASE, "02 - Vetting & Screening", "Active Staff");
@@ -103,6 +112,31 @@ app.post('/api/login', async function(req, res) {
 app.post('/api/logout', function(req, res) {
   res.clearCookie('token');
   res.json({ ok: true });
+});
+
+app.get('/api/me', async function(req, res) {
+  var authed = getAuthedUser(req);
+  if (!authed) return res.status(401).json({ error: 'Not logged in' });
+  try {
+    var result = await pgPool.query('SELECT id, username, role, full_name FROM users WHERE id = $1', [authed.id]);
+    if (!result.rows.length) return res.status(401).json({ error: 'User not found' });
+    var user = result.rows[0];
+    var deptResult = await pgPool.query(
+      'SELECT d.slug, d.name FROM user_departments ud JOIN departments d ON d.id = ud.department_id WHERE ud.user_id = $1',
+      [user.id]
+    ).catch(function() { return { rows: [] }; });
+    res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        full_name: user.full_name || user.username,
+        role: user.role || 'supervisor',
+        departments: deptResult.rows.map(function(d) { return d.slug; })
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Serve logo as its own endpoint
