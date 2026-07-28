@@ -427,6 +427,14 @@ function initFromSpreadsheet() {
       var name = String(r[0]).trim();
       if (!name) return;
 
+      // Sanity check: real staff rows always have a real phone number.
+      // Legend/summary/caption rows in the spreadsheet (e.g. "COLOUR KEY",
+      // "TOTAL STAFF TRACKED") have either a blank phone column or non-numeric
+      // text there instead — skip anything that isn't a real phone number so
+      // it doesn't get created as a fake staff folder on every app restart.
+      var phoneDigits = (r[3] ? String(r[3]) : '').replace(/\D/g, '');
+      if (phoneDigits.length < 7) return;
+
       var siaNum = r[5] ? String(r[5]).trim().replace(/\s+/g,'') : '';
       if (['N/A','NA',''].includes(siaNum.toUpperCase())) siaNum = '';
 
