@@ -16,20 +16,29 @@ async function main() {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
 
-  const existing = await client.query('SELECT id FROM users WHERE username = $1', [username]);
+  const existing = await client.query('SELECT id, role FROM users WHERE username = $1', [username]);
   if (existing.rows.length) {
-    console.log('User "' + username + '" already exists — nothing to do.');
+    const row = existing.rows[0];
+    if (!row.role || row.role !== 'director') {
+      await client.query(
+        "UPDATE users SET role = 'director', full_name = 'Asrar Khan' WHERE id = $1",
+        [row.id]
+      );
+      console.log('Updated "' + username + '" to director role.');
+    } else {
+      console.log('User "' + username + '" already exists as director — nothing to do.');
+    }
     await client.end();
     return;
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
   await client.query(
-    'INSERT INTO users (username, password_hash) VALUES ($1, $2)',
+    "INSERT INTO users (username, password_hash, role, full_name) VALUES ($1, $2, 'director', 'Asrar Khan')",
     [username, passwordHash]
   );
 
-  console.log('Created admin user "' + username + '".');
+  console.log('Created admin user "' + username + '" with director role.');
   await client.end();
 }
 
