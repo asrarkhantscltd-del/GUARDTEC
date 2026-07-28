@@ -16,7 +16,7 @@ const pgPool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 // ── AUTH HELPERS ──────────────────────────────────────────────────────────────
 function signToken(user) {
-  return jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ id: user.id, username: user.username, role: user.role || 'supervisor' }, JWT_SECRET, { expiresIn: '7d' });
 }
 
 // Pulls the token from wherever it might be — cookie (web/PWA) or Authorization
