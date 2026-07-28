@@ -539,6 +539,7 @@ body, button, input, select { font-family: 'Inter', system-ui, -apple-system, sa
   <button class="hbtn-ghost" onclick="doRefreshOverview()">&#8635; Refresh</button>
     <button class="hbtn-outline" onclick="doShowExStaff()">Ex-Staff</button>
     <button class="hbtn-primary" onclick="doOpenNew()">+ New Starter</button>
+    <button class="hbtn-ghost" onclick="doLogout()">Log Out</button>
   </div>
 </header>
 
@@ -1250,6 +1251,12 @@ function doUploadPhoto(input) {
     }).catch(function() { showToast('Connection error during upload.'); });
   };
   reader.readAsArrayBuffer(file);
+}
+
+function doLogout() {
+  fetch('/api/logout', { method: 'POST' }).finally(function() {
+    window.location.href = '/';
+  });
 }
 
 function doRefreshOverview() {

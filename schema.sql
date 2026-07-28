@@ -3,6 +3,15 @@
 -- belong to the phases that actually use them (2, 4, 6). Encryption of
 -- employee_private columns is deferred to Phase 8 (see migration decision).
 
+-- Phase 2 — Authentication. Completely independent of the employee
+-- tables above: login has nothing to do with staff records.
+CREATE TABLE users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  username VARCHAR(100) UNIQUE NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE employees (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   legacy_id VARCHAR(255) UNIQUE NOT NULL, -- the "id" field from staff_data.json

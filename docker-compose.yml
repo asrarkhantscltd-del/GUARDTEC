@@ -9,6 +9,9 @@ services:
       - DATA_PATH=/data
       - PORT=3000
       - DATABASE_URL=postgresql://guardtec:${POSTGRES_PASSWORD}@db:5432/guardtec
+      - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
     depends_on:
       - db
     restart: unless-stopped

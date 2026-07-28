@@ -1,11 +1,48 @@
-﻿const express  = require('express');
-const { exec } = require('child_process');
-const fs      = require('fs');
-const path    = require('path');
-const XLSX    = require('xlsx');
+﻿const express      = require('express');
+const { exec }     = require('child_process');
+const fs           = require('fs');
+const path         = require('path');
+const XLSX         = require('xlsx');
+const cookieParser = require('cookie-parser');
+const jwt          = require('jsonwebtoken');
+const bcrypt       = require('bcryptjs');
+const { Pool }     = require('pg');
 
 const app  = express();
 const PORT = 3000;
+
+const JWT_SECRET = process.env.JWT_SECRET;
+const pgPool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// ── AUTH HELPERS ──────────────────────────────────────────────────────────────
+function signToken(user) {
+  return jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
+}
+
+// Pulls the token from wherever it might be — cookie (web/PWA) or Authorization
+// header (future native mobile app) — without sending any response itself.
+function getAuthedUser(req) {
+  var token = null;
+  if (req.cookies && req.cookies.token) token = req.cookies.token;
+  else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+    token = req.headers.authorization.slice(7);
+  }
+  if (!token) return null;
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch (e) {
+    return null; // missing, expired, or tampered — all treated as "not logged in"
+  }
+}
+
+// The gatekeeper: sits in front of API routes. No valid token -> 401, real
+// route code never runs.
+function requireLogin(req, res, next) {
+  var user = getAuthedUser(req);
+  if (!user) return res.status(401).json({ error: 'Not logged in' });
+  req.user = user;
+  next();
+}
 
 const HOME        = process.env.USERPROFILE || ('C:\\Users\\' + require('os').userInfo().username);
 const BASE        = process.env.DATA_PATH || path.join(HOME, "First Call Site Services", "FCSS - Managers", "HR and Legal", "Asrar", "GuardTec Compliance");
@@ -21,6 +58,37 @@ const SUBFOLDERS = ['01 - SIA Licence','02 - CSCS Card','03 - Right to Work & Vi
 function getTodayStr() { return new Date().toISOString().split('T')[0]; }
 
 app.use(express.json({ limit: '10mb' }));
+app.use(cookieParser());
+
+// ── LOGIN / LOGOUT (no gatekeeper — these ARE the gate) ───────────────────────
+app.post('/api/login', async function(req, res) {
+  try {
+    var username = String((req.body && req.body.username) || '').trim();
+    var password = String((req.body && req.body.password) || '');
+    var result = await pgPool.query('SELECT id, username, password_hash FROM users WHERE username = $1', [username]);
+    if (!result.rows.length) return res.status(401).json({ error: 'Invalid username or password' });
+
+    var user = result.rows[0];
+    var match = await bcrypt.compare(password, user.password_hash);
+    if (!match) return res.status(401).json({ error: 'Invalid username or password' });
+
+    var token = signToken(user);
+    res.cookie('token', token, {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: false, // TODO: set true once Phase 7 adds HTTPS — a secure cookie is silently dropped over plain HTTP
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days, matches the token's own expiry
+    });
+    res.json({ ok: true, token: token }); // body copy too, for a future mobile app to store itself
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/logout', function(req, res) {
+  res.clearCookie('token');
+  res.json({ ok: true });
+});
 
 // Serve logo as its own endpoint
 app.get('/logo', (req, res) => {
@@ -40,7 +108,7 @@ function findProfilePhoto(folderPath) {
   return null;
 }
 
-app.get('/api/staff/:id/photo', function(req, res) {
+app.get('/api/staff/:id/photo', requireLogin, function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -57,7 +125,7 @@ app.get('/api/staff/:id/photo', function(req, res) {
   }
 });
 
-app.post('/api/staff/:id/photo', function(req, res) {
+app.post('/api/staff/:id/photo', requireLogin, function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -511,7 +579,7 @@ function buildOverviewHTML(staff) {
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
-app.get('/api/staff', function(req, res) {
+app.get('/api/staff', requireLogin, function(req, res) {
   try {
     res.json(loadAllStaff());
   } catch(e) {
@@ -534,7 +602,7 @@ app.patch('/api/staff/:id/deploy', function(req, res) {
   }
 });
 
-app.put('/api/staff/:id', function(req, res) {
+app.put('/api/staff/:id', requireLogin, function(req, res) {
   try {
     var emp = req.body;
     var all = loadAllStaff();
@@ -552,7 +620,7 @@ app.put('/api/staff/:id', function(req, res) {
   }
 });
 
-app.post('/api/staff', function(req, res) {
+app.post('/api/staff', requireLogin, function(req, res) {
   try {
     var emp = req.body;
     if (!emp.id) emp.id = emp.name.toLowerCase().replace(/[^a-z0-9]/g,'-');
@@ -569,7 +637,7 @@ app.post('/api/staff', function(req, res) {
   }
 });
 
-app.delete('/api/staff/:id', function(req, res) {
+app.delete('/api/staff/:id', requireLogin, function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -608,7 +676,7 @@ app.delete('/api/staff/:id', function(req, res) {
   }
 });
 
-app.get('/api/exstaff', function(req, res) {
+app.get('/api/exstaff', requireLogin, function(req, res) {
   try {
     var exDir = path.join(BASE, '02 - Vetting & Screening', 'Ex-Staff');
     if (!fs.existsSync(exDir)) return res.json([]);
@@ -636,7 +704,7 @@ app.get('/api/exstaff', function(req, res) {
   }
 });
 
-app.post('/api/exstaff/restore', function(req, res) {
+app.post('/api/exstaff/restore', requireLogin, function(req, res) {
   try {
     var folderId = req.body.folderId;
     if (!folderId) return res.status(400).json({ ok: false, error: 'No folderId provided' });
@@ -673,7 +741,7 @@ app.post('/api/exstaff/restore', function(req, res) {
   }
 });
 
-app.post('/api/overview', function(req, res) {
+app.post('/api/overview', requireLogin, function(req, res) {
   try {
     var overviewHtml = buildOverviewHTML(loadAllStaff());
     fs.writeFileSync(OVERVIEW, overviewHtml, 'utf8');
@@ -686,6 +754,11 @@ app.post('/api/overview', function(req, res) {
 
 // ── SERVE APP WITH EMBEDDED STAFF DATA (no browser fetch needed) ──────────────
 app.get('/', function(req, res) {
+  if (!getAuthedUser(req)) {
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.sendFile(path.join(__dirname, 'public', 'login.html'));
+  }
   try {
     var staff = loadAllStaff();
     var staffJSON = JSON.stringify(staff);
@@ -703,7 +776,7 @@ app.get('/new-starter', function(req, res) {
   res.sendFile(path.join(__dirname, 'public', 'new-starter.html'));
 });
 
-app.get('/reload', function(req, res) {
+app.get('/reload', requireLogin, function(req, res) {
   try {
     var staff = loadAllStaff();
     res.json(staff);
