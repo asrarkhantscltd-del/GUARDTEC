@@ -65,12 +65,17 @@ app.post('/api/login', async function(req, res) {
   try {
     var username = String((req.body && req.body.username) || '').trim();
     var password = String((req.body && req.body.password) || '');
-    var result = await pgPool.query('SELECT id, username, password_hash FROM users WHERE username = $1', [username]);
+    var result = await pgPool.query('SELECT id, username, password_hash, role, full_name FROM users WHERE username = $1', [username]);
     if (!result.rows.length) return res.status(401).json({ error: 'Invalid username or password' });
 
     var user = result.rows[0];
     var match = await bcrypt.compare(password, user.password_hash);
     if (!match) return res.status(401).json({ error: 'Invalid username or password' });
+
+    var deptResult = await pgPool.query(
+      'SELECT d.slug, d.name FROM user_departments ud JOIN departments d ON d.id = ud.department_id WHERE ud.user_id = $1',
+      [user.id]
+    ).catch(function() { return { rows: [] }; });
 
     var token = signToken(user);
     res.cookie('token', token, {
@@ -79,7 +84,17 @@ app.post('/api/login', async function(req, res) {
       secure: false, // TODO: set true once Phase 7 adds HTTPS — a secure cookie is silently dropped over plain HTTP
       maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days, matches the token's own expiry
     });
-    res.json({ ok: true, token: token }); // body copy too, for a future mobile app to store itself
+    res.json({
+      ok: true,
+      token: token,
+      user: {
+        id: user.id,
+        username: user.username,
+        full_name: user.full_name || user.username,
+        role: user.role || 'supervisor',
+        departments: deptResult.rows.map(function(d) { return d.slug; })
+      }
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
