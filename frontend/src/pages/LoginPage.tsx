@@ -42,7 +42,7 @@ export default function LoginPage() {
           <img
             src="/logo-white.png"
             alt="GuardTec Security"
-            className="mx-auto mb-2 h-16 w-auto"
+            className="mx-auto mb-3 h-24 w-auto"
           />
           <CardTitle className="text-2xl">GuardTec Compliance</CardTitle>
           <CardDescription>Sign in to your account</CardDescription>
