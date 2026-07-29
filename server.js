@@ -1100,6 +1100,92 @@ function autoDedup() {
   }
 }
 
+// ── PHASE 3 API: Departments, Dashboard Stats, Fleet ──────────────────────────
+
+app.get('/api/departments', requireLogin, async function(req, res) {
+  try {
+    var result = await pgPool.query('SELECT id, slug, name, description, is_active FROM departments ORDER BY name');
+    res.json({ departments: result.rows });
+  } catch (e) {
+    res.json({ departments: [] });
+  }
+});
+
+app.get('/api/dashboard/stats', requireLogin, async function(req, res) {
+  try {
+    var allStaff = loadAllStaff();
+    var totalStaff = allStaff.length;
+
+    var now = new Date();
+    var in90 = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
+
+    var compliant = 0;
+    var expiringSoon = 0;
+    var expired = 0;
+
+    allStaff.forEach(function(s) {
+      var siaOk = true;
+      var cscsOk = true;
+      var rtwOk = true;
+      var hasExpiring = false;
+
+      if (s.siaLicence && s.siaLicence.expiryDate) {
+        var siaExp = new Date(s.siaLicence.expiryDate);
+        if (siaExp < now) { siaOk = false; }
+        else if (siaExp < in90) { hasExpiring = true; }
+      }
+      if (s.cscsCard && s.cscsCard.expiryDate) {
+        var cscsExp = new Date(s.cscsCard.expiryDate);
+        if (cscsExp < now) { cscsOk = false; }
+        else if (cscsExp < in90) { hasExpiring = true; }
+      }
+      if (s.rightToWork && s.rightToWork.visaExpiry) {
+        var rtwExp = new Date(s.rightToWork.visaExpiry);
+        if (rtwExp < now) { rtwOk = false; }
+        else if (rtwExp < in90) { hasExpiring = true; }
+      }
+
+      if (!siaOk || !cscsOk || !rtwOk) expired++;
+      else if (hasExpiring) expiringSoon++;
+      else compliant++;
+    });
+
+    var vehicleCount = 0;
+    try {
+      var vResult = await pgPool.query('SELECT COUNT(*) as count FROM vehicles WHERE status = $1', ['active']);
+      vehicleCount = parseInt(vResult.rows[0].count) || 0;
+    } catch (e) { /* vehicles table may not exist yet */ }
+
+    res.json({
+      totalStaff: totalStaff,
+      compliant: compliant,
+      expiringSoon: expiringSoon,
+      expired: expired,
+      vehicles: vehicleCount
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/vehicles', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), async function(req, res) {
+  try {
+    var result = await pgPool.query('SELECT * FROM vehicles ORDER BY registration');
+    res.json({ vehicles: result.rows });
+  } catch (e) {
+    res.json({ vehicles: [] });
+  }
+});
+
+app.get('/api/users', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var result = await pgPool.query('SELECT id, username, full_name, role, email, is_active, created_at FROM users ORDER BY full_name');
+    res.json({ users: result.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── START ─────────────────────────────────────────────────────────────────────
 console.log('\nInitialising staff data from spreadsheet...');
 initFromSpreadsheet();

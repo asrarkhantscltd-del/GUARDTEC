@@ -1,4 +1,12 @@
 services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - guardtec-app
+    restart: unless-stopped
+
   guardtec-app:
     build: .
     ports:
@@ -24,6 +32,8 @@ services:
       - POSTGRES_DB=guardtec
     volumes:
       - guardtec-db-data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./schema-phase3.sql:/docker-entrypoint-initdb.d/02-schema-phase3.sql:ro
     ports:
       - "5432:5432"
     restart: unless-stopped

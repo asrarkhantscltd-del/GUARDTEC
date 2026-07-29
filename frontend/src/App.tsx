@@ -4,6 +4,7 @@ import DashboardLayout from "@/layouts/DashboardLayout"
 import LoginPage from "@/pages/LoginPage"
 import DashboardPage from "@/pages/DashboardPage"
 import StaffPage from "@/pages/StaffPage"
+import StaffDetailPage from "@/pages/StaffDetailPage"
 import FleetPage from "@/pages/FleetPage"
 import CompliancePage from "@/pages/CompliancePage"
 import type { ReactNode } from "react"
@@ -53,6 +54,7 @@ export default function App() {
           >
             <Route index element={<DashboardPage />} />
             <Route path="staff" element={<StaffPage />} />
+            <Route path="staff/:id" element={<StaffDetailPage />} />
             <Route path="fleet" element={<FleetPage />} />
             <Route path="compliance" element={<CompliancePage />} />
           </Route>
