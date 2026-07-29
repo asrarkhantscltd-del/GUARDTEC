@@ -62,6 +62,7 @@ const LOGO_PATH = null;
 const COMPLIANCE_TRACKER   = path.join(BASE, "01 - Staff Compliance Tracker", "GuardTec Security — Staff Compliance Tracker.xlsx");
 const REFERENCE_TRACKER    = path.join(BASE, "05 - Reference Tracker", "GuardTec Security — Reference Check Tracker.xlsx");
 const SHAREPOINT_DASHBOARD = path.join(BASE, "! GuardTec Compliance Dashboard.html");
+const SITES_FILE           = path.join(BASE, "deployment-sites.json");
 
 const SUBFOLDERS = ['01 - SIA Licence','02 - CSCS Card','03 - Right to Work & Visa','04 - References','05 - Employment Contract','06 - Training & Induction'];
 function getTodayStr() { return new Date().toISOString().split('T')[0]; }
@@ -465,6 +466,15 @@ function saveStaff(emp, oldFolderPath) {
   return newFolder;
 }
 
+// ── DEPLOYMENT SITES ──────────────────────────────────────────────────────────
+function loadSites() {
+  if (!fs.existsSync(SITES_FILE)) return [];
+  try { return JSON.parse(fs.readFileSync(SITES_FILE, 'utf8')).sites || []; } catch(e) { return []; }
+}
+function saveSites(sites) {
+  fs.writeFileSync(SITES_FILE, JSON.stringify({ sites: sites }, null, 2), 'utf8');
+}
+
 // ── INIT FROM SPREADSHEET ─────────────────────────────────────────────────────
 function initFromSpreadsheet() {
   try {
@@ -645,16 +655,64 @@ app.get('/api/staff', requireLogin, function(req, res) {
 });
 
 // ── DEPLOYMENT STATUS ─────────────────────────────────────────────────────────
-app.patch('/api/staff/:id/deploy', function(req, res) {
+app.patch('/api/staff/:id/deploy', requireLogin, function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
     if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
-    emp.deployStatus = req.body.deployStatus || 'inactive';
+    emp.deployStatus = req.body.deployStatus || emp.deployStatus || 'inactive';
+    if (req.body.currentSite !== undefined) emp.currentSite = req.body.currentSite;
     saveStaff(emp, emp._folderPath);
     res.json({ ok: true });
   } catch(e) {
     console.error(e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── TRAINING ──────────────────────────────────────────────────────────────────
+app.patch('/api/staff/:id/training', requireLogin, function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
+    emp.training = req.body.training || {};
+    saveStaff(emp, emp._folderPath);
+    res.json({ ok: true });
+  } catch(e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── DEPLOYMENT SITES CRUD ─────────────────────────────────────────────────────
+app.get('/api/sites', requireLogin, function(req, res) {
+  res.json({ sites: loadSites() });
+});
+
+app.post('/api/sites', requireLogin, requireRole('director', 'ops_manager', 'hr_manager'), function(req, res) {
+  try {
+    var name = String(req.body.name || '').trim();
+    if (!name) return res.status(400).json({ ok: false, error: 'Site name required' });
+    var sites = loadSites();
+    if (sites.some(function(s){ return s.name.toLowerCase() === name.toLowerCase(); })) {
+      return res.status(409).json({ ok: false, error: 'Site already exists' });
+    }
+    var site = { id: Date.now().toString(), name: name, address: String(req.body.address || '').trim() };
+    sites.push(site);
+    saveSites(sites);
+    res.json({ ok: true, site: site });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/sites/:id', requireLogin, requireRole('director', 'ops_manager'), function(req, res) {
+  try {
+    var sites = loadSites().filter(function(s){ return s.id !== req.params.id; });
+    saveSites(sites);
+    res.json({ ok: true });
+  } catch(e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -1116,38 +1174,16 @@ app.get('/api/dashboard/stats', requireLogin, async function(req, res) {
     var allStaff = loadAllStaff();
     var totalStaff = allStaff.length;
 
-    var now = new Date();
-    var in90 = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
-
     var compliant = 0;
     var expiringSoon = 0;
     var expired = 0;
 
+    // overall is calculated by calcOverall() in loadAllStaff() using the real
+    // field names (sia.expiry, cscs.expiry, visa.expiry) — use it directly.
     allStaff.forEach(function(s) {
-      var siaOk = true;
-      var cscsOk = true;
-      var rtwOk = true;
-      var hasExpiring = false;
-
-      if (s.siaLicence && s.siaLicence.expiryDate) {
-        var siaExp = new Date(s.siaLicence.expiryDate);
-        if (siaExp < now) { siaOk = false; }
-        else if (siaExp < in90) { hasExpiring = true; }
-      }
-      if (s.cscsCard && s.cscsCard.expiryDate) {
-        var cscsExp = new Date(s.cscsCard.expiryDate);
-        if (cscsExp < now) { cscsOk = false; }
-        else if (cscsExp < in90) { hasExpiring = true; }
-      }
-      if (s.rightToWork && s.rightToWork.visaExpiry) {
-        var rtwExp = new Date(s.rightToWork.visaExpiry);
-        if (rtwExp < now) { rtwOk = false; }
-        else if (rtwExp < in90) { hasExpiring = true; }
-      }
-
-      if (!siaOk || !cscsOk || !rtwOk) expired++;
-      else if (hasExpiring) expiringSoon++;
-      else compliant++;
+      if      (s.overall === 'red')   expired++;
+      else if (s.overall === 'amber') expiringSoon++;
+      else if (s.overall === 'green') compliant++;
     });
 
     var vehicleCount = 0;
