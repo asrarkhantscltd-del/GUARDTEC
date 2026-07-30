@@ -1213,6 +1213,59 @@ app.get('/api/vehicles', requireLogin, requireRole('director', 'fleet_manager', 
   }
 });
 
+// ── FLEET DRIVERS ─────────────────────────────────────────────────────────────
+var FLEET_DRIVERS_FILE = path.join(BASE, 'fleet-drivers.json');
+
+function loadFleetDrivers() {
+  if (!fs.existsSync(FLEET_DRIVERS_FILE)) return [];
+  try { return JSON.parse(fs.readFileSync(FLEET_DRIVERS_FILE, 'utf8')); }
+  catch (e) { return []; }
+}
+
+function saveFleetDrivers(drivers) {
+  fs.writeFileSync(FLEET_DRIVERS_FILE, JSON.stringify(drivers, null, 2), 'utf8');
+}
+
+app.get('/api/fleet-drivers', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+  res.json(loadFleetDrivers());
+});
+
+app.post('/api/fleet-drivers', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+  try {
+    var drivers = loadFleetDrivers();
+    var newDriver = Object.assign({}, req.body, { id: Date.now().toString() });
+    drivers.push(newDriver);
+    saveFleetDrivers(drivers);
+    res.json({ ok: true, driver: newDriver });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.patch('/api/fleet-drivers/:id', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+  try {
+    var drivers = loadFleetDrivers();
+    var idx = drivers.findIndex(function(d) { return d.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Driver not found' });
+    drivers[idx] = Object.assign({}, drivers[idx], req.body);
+    saveFleetDrivers(drivers);
+    res.json({ ok: true, driver: drivers[idx] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/fleet-drivers/:id', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+  try {
+    var drivers = loadFleetDrivers();
+    drivers = drivers.filter(function(d) { return d.id !== req.params.id; });
+    saveFleetDrivers(drivers);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.get('/api/users', requireLogin, requireRole('director'), async function(req, res) {
   try {
     var result = await pgPool.query('SELECT id, username, full_name, role, email, is_active, created_at FROM users ORDER BY full_name');
