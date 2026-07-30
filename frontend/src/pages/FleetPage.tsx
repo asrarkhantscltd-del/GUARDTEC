@@ -185,7 +185,7 @@ export default function FleetPage() {
     const q = search.toLowerCase()
     return staff.filter(s => {
       if (!q) return true
-      return `${s.first_name} ${s.last_name}`.toLowerCase().includes(q) ||
+      return `${s.first_name ?? ""} ${s.last_name ?? ""}`.toLowerCase().includes(q) ||
         (s.drivingLicence?.licenceNumber ?? "").toLowerCase().includes(q)
     })
   }, [staff, search])
