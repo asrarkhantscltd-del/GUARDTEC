@@ -118,7 +118,7 @@ export default function DashboardLayout() {
                   onClick={() => setSidebarOpen(false)}
                   className={({ isActive }) =>
                     `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                      isActive ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      isActive ? "bg-sidebar-primary text-sidebar-primary-foreground"
                                : "text-sidebar-foreground hover:bg-sidebar-accent/50"
                     }`
                   }>
@@ -140,7 +140,7 @@ export default function DashboardLayout() {
                   <NavLink to={item.to}
                     onClick={() => setSidebarOpen(false)}
                     className={`flex flex-1 items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                      isActive ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      isActive ? "bg-sidebar-primary text-sidebar-primary-foreground"
                                : "text-sidebar-foreground hover:bg-sidebar-accent/50"
                     }`}>
                     {item.icon}{item.label}
@@ -148,7 +148,7 @@ export default function DashboardLayout() {
                   <button
                     onClick={toggleExpanded}
                     className={`rounded-md p-1.5 transition-colors hover:bg-sidebar-accent/50 ${
-                      isActive ? "text-sidebar-accent-foreground" : "text-sidebar-foreground"
+                      isActive ? "text-sidebar-primary-foreground" : "text-sidebar-foreground"
                     }`}>
                     <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
                   </button>
@@ -161,7 +161,7 @@ export default function DashboardLayout() {
                         onClick={() => setSidebarOpen(false)}
                         className={({ isActive: ca }) =>
                           `flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
-                            ca ? "bg-sidebar-accent/70 text-sidebar-accent-foreground"
+                            ca ? "bg-sidebar-primary/80 text-sidebar-primary-foreground"
                                : "text-sidebar-foreground/80 hover:bg-sidebar-accent/40 hover:text-sidebar-foreground"
                           }`
                         }>
