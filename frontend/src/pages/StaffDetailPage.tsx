@@ -142,29 +142,6 @@ function DocRow({
   )
 }
 
-function TrainingRow({
-  icon, label, item, expiryYears,
-}: {
-  icon: React.ReactNode; label: string; item?: TrainingItem; expiryYears?: number
-}) {
-  const status = docStatusOf(item?.completed, item?.expiry)
-  return (
-    <div className="flex items-center gap-3 py-2.5 border-b last:border-0">
-      <div className="text-muted-foreground w-5 shrink-0">{icon}</div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium">{label}</p>
-        {item?.date    && <p className="text-xs text-muted-foreground">Completed {fmtDate(item.date)}</p>}
-        {item?.expiry  && <p className="text-xs text-muted-foreground">Expires {fmtDate(item.expiry)}</p>}
-        {item?.number  && <p className="text-xs text-muted-foreground">Cert # {item.number}</p>}
-        {item?.provider && <p className="text-xs text-muted-foreground">{item.provider}</p>}
-        {expiryYears && !item?.expiry && (
-          <p className="text-xs text-muted-foreground italic">Renews every {expiryYears} years</p>
-        )}
-      </div>
-      <DocStatusChip status={item?.completed ? "uploaded" : "missing"} />
-    </div>
-  )
-}
 
 function AcsCheckRow({ label, done, note }: { label: string; done?: boolean; note?: string }) {
   return (
@@ -897,7 +874,7 @@ export default function StaffDetailPage() {
                     ].map(({ field, label: fl, type }) => (
                       <div key={field}>
                         <p className="text-xs text-muted-foreground mb-0.5">{fl}</p>
-                        <input type={type} value={(addDraft as Record<string, string>)[field]}
+                        <input type={type} value={(addDraft as Record<string, string | boolean>)[field] as string}
                           onChange={e => setAddDraft(p => ({ ...p, [field]: e.target.value }))}
                           className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
                       </div>
