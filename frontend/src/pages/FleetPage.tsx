@@ -399,13 +399,13 @@ function VehicleCard({ v, staff }: { v: Vehicle; staff: StaffMember[] }) {
       <div className="flex items-center gap-2 border-t pt-3">
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
           {driver
-            ? `${driver.first_name[0]}${driver.last_name[0]}`
+            ? `${driver.first_name?.[0] ?? "?"}${driver.last_name?.[0] ?? ""}`
             : <Car className="h-3.5 w-3.5 opacity-50" />
           }
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-medium">
-            {driver ? `${driver.first_name} ${driver.last_name}` : "Unassigned"}
+            {driver ? `${driver.first_name ?? ""} ${driver.last_name ?? ""}`.trim() || "Unknown" : "Unassigned"}
           </div>
           <div className="text-[10px] text-muted-foreground">Assigned Driver</div>
         </div>
@@ -455,10 +455,10 @@ function DriverRow({ s, vehicles }: { s: StaffMember; vehicles: Vehicle[] }) {
       <td className="px-4 py-3">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
-            {s.first_name[0]}{s.last_name[0]}
+            {s.first_name?.[0] ?? "?"}{s.last_name?.[0] ?? ""}
           </div>
           <div>
-            <div className="font-medium">{s.first_name} {s.last_name}</div>
+            <div className="font-medium">{s.first_name ?? ""} {s.last_name ?? ""}</div>
             <div className="text-xs text-muted-foreground">{s.role ?? "Security Officer"}</div>
           </div>
         </div>
