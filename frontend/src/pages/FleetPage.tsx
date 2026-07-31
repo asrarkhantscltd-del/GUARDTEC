@@ -120,7 +120,8 @@ const VEHICLE_STATUS_STYLE: Record<string, string> = {
 export default function FleetPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const tabParam = searchParams.get("tab") as "vehicles" | "drivers" | null
-  const [activeTab, setActiveTab] = useState<"vehicles" | "drivers">(tabParam ?? "vehicles")
+  // Derived straight from the URL — no separate useState to fall out of sync with it
+  const activeTab: "vehicles" | "drivers" = tabParam ?? "vehicles"
 
   const [vehicles, setVehicles] = useState<Vehicle[]>([])
   const [drivers, setDrivers] = useState<FleetDriver[]>([])
@@ -147,12 +148,8 @@ export default function FleetPage() {
   const [deletingVehicle, setDeletingVehicle] = useState(false)
 
   function switchTab(tab: "vehicles" | "drivers") {
-    setActiveTab(tab); setSearch(""); setSearchParams({ tab })
+    setSearch(""); setSearchParams({ tab })
   }
-
-  useEffect(() => {
-    if (tabParam && tabParam !== activeTab) setActiveTab(tabParam)
-  }, [tabParam])
 
   useEffect(() => {
     let cancelled = false

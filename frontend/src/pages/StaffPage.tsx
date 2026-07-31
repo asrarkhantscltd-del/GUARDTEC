@@ -5,6 +5,7 @@ import {
   Search, ChevronRight, Loader2, LayoutList, LayoutGrid,
   Table2, StretchHorizontal, Grid2x2, MapPin, Clock,
   CircleCheck, ShieldCheck, HardHat, FileCheck, Building2, Plus, X,
+  BarChart3, FileWarning,
 } from "lucide-react"
 import { StatusBadge } from "@/components/ui/status-badge"
 
@@ -142,6 +143,14 @@ const viewButtons: { mode: ViewMode; icon: React.ReactNode; label: string }[] = 
   { mode: "list",    icon: <LayoutList className="h-4 w-4" />,         label: "List" },
 ]
 
+type SectionId = "compliance" | "deployment" | "documents"
+
+const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
+  { id: "compliance", label: "Compliance Status", icon: <BarChart3 className="h-3.5 w-3.5" /> },
+  { id: "deployment", label: "Deployment",         icon: <MapPin className="h-3.5 w-3.5" /> },
+  { id: "documents",  label: "Document Issues",    icon: <FileWarning className="h-3.5 w-3.5" /> },
+]
+
 export default function StaffPage() {
   const [staff, setStaff]     = useState<StaffMember[]>([])
   const [sites, setSites]     = useState<Site[]>([])
@@ -155,10 +164,16 @@ export default function StaffPage() {
   const [newSiteName, setNewSiteName]   = useState("")
   const [addingSite, setAddingSite]     = useState(false)
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
 
-  // Which section the sidebar sub-item navigated to (null = show all)
-  const activeSection = searchParams.get("section") // "compliance" | "deployment" | "documents" | null
+  // Which section tab is active — defaults to Compliance Status if the URL
+  // doesn't specify one (e.g. clicking the parent "Staff" nav item)
+  const sectionParam = searchParams.get("section") as SectionId | null
+  const activeSection: SectionId = sectionParam ?? "compliance"
+
+  function switchSection(id: SectionId) {
+    setSearchParams({ section: id })
+  }
 
   useEffect(() => {
     fetch("/api/staff", { credentials: "include" })
@@ -265,8 +280,20 @@ export default function StaffPage() {
         <p className="text-muted-foreground text-sm">{staff.length} active staff members</p>
       </div>
 
-      {/* ── Compliance filter — only shown when section=compliance or no section ── */}
-      {(!activeSection || activeSection === "compliance") && (
+      {/* ── Section tabs ── */}
+      <div className="flex w-fit gap-0 rounded-lg border bg-muted/40 p-1">
+        {SECTIONS.map(({ id, label, icon }) => (
+          <button key={id} onClick={() => switchSection(id)}
+            className={`flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-medium transition-all ${
+              activeSection === id ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
+            }`}>
+            {icon}{label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Compliance filter ── */}
+      {activeSection === "compliance" && (
         <div>
           <p className="text-xs font-medium text-muted-foreground mb-1.5 uppercase tracking-wide">Compliance Status</p>
           <div className="flex flex-wrap gap-2">
@@ -294,8 +321,8 @@ export default function StaffPage() {
         </div>
       )}
 
-      {/* ── Deployment + Sites filter — only shown when section=deployment or no section ── */}
-      {(!activeSection || activeSection === "deployment") && (
+      {/* ── Deployment + Sites filter ── */}
+      {activeSection === "deployment" && (
         <>
           <div>
             <p className="text-xs font-medium text-muted-foreground mb-1.5 uppercase tracking-wide">Deployment</p>
@@ -366,8 +393,8 @@ export default function StaffPage() {
         </>
       )}
 
-      {/* ── Document Issues filter — only shown when section=documents or no section ── */}
-      {(!activeSection || activeSection === "documents") && (
+      {/* ── Document Issues filter ── */}
+      {activeSection === "documents" && (
         <div>
           <p className="text-xs font-medium text-muted-foreground mb-1.5 uppercase tracking-wide">Document Issues</p>
           <div className="flex flex-wrap gap-2">
