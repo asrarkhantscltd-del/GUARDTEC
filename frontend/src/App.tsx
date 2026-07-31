@@ -7,6 +7,7 @@ import StaffPage from "@/pages/StaffPage"
 import StaffDetailPage from "@/pages/StaffDetailPage"
 import FleetPage from "@/pages/FleetPage"
 import CompliancePage from "@/pages/CompliancePage"
+import SitesPage from "@/pages/SitesPage"
 import type { ReactNode } from "react"
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="staff" element={<StaffPage />} />
             <Route path="staff/:id" element={<StaffDetailPage />} />
             <Route path="fleet" element={<FleetPage />} />
+            <Route path="sites" element={<SitesPage />} />
             <Route path="compliance" element={<CompliancePage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

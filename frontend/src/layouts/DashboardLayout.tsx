@@ -45,6 +45,12 @@ const navItems: NavItem[] = [
     ],
   },
   {
+    label: "Sites",
+    to: "/sites",
+    icon: <MapPin className="h-4 w-4" />,
+    roles: ["director","ops_manager","hr_manager","office_manager","supervisor"],
+  },
+  {
     label: "Compliance",
     to: "/compliance",
     icon: <ShieldCheck className="h-4 w-4" />,

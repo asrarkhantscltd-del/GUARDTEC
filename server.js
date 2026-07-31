@@ -698,7 +698,18 @@ app.post('/api/sites', requireLogin, requireRole('director', 'ops_manager', 'hr_
     if (sites.some(function(s){ return s.name.toLowerCase() === name.toLowerCase(); })) {
       return res.status(409).json({ ok: false, error: 'Site already exists' });
     }
-    var site = { id: Date.now().toString(), name: name, address: String(req.body.address || '').trim() };
+    var site = {
+      id: Date.now().toString(),
+      name: name,
+      type: String(req.body.type || 'other').trim(),
+      client_name: String(req.body.client_name || '').trim(),
+      address: String(req.body.address || '').trim(),
+      supervisor_name: String(req.body.supervisor_name || '').trim(),
+      supervisor_phone: String(req.body.supervisor_phone || '').trim(),
+      supervisor_email: String(req.body.supervisor_email || '').trim(),
+      status: String(req.body.status || 'active').trim(),
+      notes: String(req.body.notes || '').trim(),
+    };
     sites.push(site);
     saveSites(sites);
     res.json({ ok: true, site: site });
@@ -707,9 +718,140 @@ app.post('/api/sites', requireLogin, requireRole('director', 'ops_manager', 'hr_
   }
 });
 
+app.patch('/api/sites/:id', requireLogin, requireRole('director', 'ops_manager', 'hr_manager'), function(req, res) {
+  try {
+    var sites = loadSites();
+    var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    var b = req.body;
+    var o = sites[idx];
+    sites[idx] = Object.assign({}, o, {
+      name:             String(b.name             !== undefined ? b.name             : o.name             || '').trim(),
+      type:             String(b.type             !== undefined ? b.type             : o.type             || 'other').trim(),
+      client_name:      String(b.client_name      !== undefined ? b.client_name      : o.client_name      || '').trim(),
+      address:          String(b.address          !== undefined ? b.address          : o.address          || '').trim(),
+      supervisor_name:  String(b.supervisor_name  !== undefined ? b.supervisor_name  : o.supervisor_name  || '').trim(),
+      supervisor_phone: String(b.supervisor_phone !== undefined ? b.supervisor_phone : o.supervisor_phone || '').trim(),
+      supervisor_email: String(b.supervisor_email !== undefined ? b.supervisor_email : o.supervisor_email || '').trim(),
+      status:           String(b.status           !== undefined ? b.status           : o.status           || 'active').trim(),
+      notes:            String(b.notes            !== undefined ? b.notes            : o.notes            || '').trim(),
+    });
+    saveSites(sites);
+    res.json({ ok: true, site: sites[idx] });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.delete('/api/sites/:id', requireLogin, requireRole('director', 'ops_manager'), function(req, res) {
   try {
     var sites = loadSites().filter(function(s){ return s.id !== req.params.id; });
+    saveSites(sites);
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── SITE STAFF ASSIGNMENT ─────────────────────────────────────────────────────
+app.get('/api/sites/:id/staff', requireLogin, function(req, res) {
+  var site = loadSites().find(function(s){ return s.id === req.params.id; });
+  if (!site) return res.status(404).json({ ok: false, error: 'Site not found' });
+  var assignedIds = site.assigned_staff || [];
+  var allStaff = loadAllStaff();
+  var assigned = allStaff.filter(function(s){ return assignedIds.indexOf(s.id) !== -1; })
+    .map(function(s){ return { id: s.id, name: s.name, overall: s.overall }; });
+  res.json({ ok: true, staff: assigned, count: assigned.length });
+});
+
+app.post('/api/sites/:id/staff', requireLogin, requireRole('director', 'ops_manager', 'hr_manager', 'office_manager', 'supervisor'), function(req, res) {
+  try {
+    var sites = loadSites();
+    var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    var staffId = String(req.body.staff_id || '').trim();
+    if (!staffId) return res.status(400).json({ ok: false, error: 'staff_id required' });
+    if (!sites[idx].assigned_staff) sites[idx].assigned_staff = [];
+    if (sites[idx].assigned_staff.indexOf(staffId) === -1) {
+      sites[idx].assigned_staff.push(staffId);
+      saveSites(sites);
+    }
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.delete('/api/sites/:id/staff/:staffId', requireLogin, requireRole('director', 'ops_manager', 'hr_manager', 'office_manager', 'supervisor'), function(req, res) {
+  try {
+    var sites = loadSites();
+    var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    sites[idx].assigned_staff = (sites[idx].assigned_staff || []).filter(function(id){ return id !== req.params.staffId; });
+    saveSites(sites);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── SITE WELFARE / ASSETS ─────────────────────────────────────────────────────
+app.get('/api/sites/:id/welfare', requireLogin, function(req, res) {
+  var site = loadSites().find(function(s){ return s.id === req.params.id; });
+  if (!site) return res.status(404).json({ ok: false, error: 'Site not found' });
+  res.json({ ok: true, items: site.welfare_items || [] });
+});
+
+app.post('/api/sites/:id/welfare', requireLogin, requireRole('director', 'ops_manager', 'hr_manager', 'office_manager'), function(req, res) {
+  try {
+    var sites = loadSites();
+    var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    if (!sites[idx].welfare_items) sites[idx].welfare_items = [];
+    var item = {
+      id: Date.now().toString(),
+      name: String(req.body.name || '').trim(),
+      quantity: parseInt(req.body.quantity) || 1,
+      condition: String(req.body.condition || 'good').trim(),
+      serial_number: String(req.body.serial_number || '').trim(),
+      notes: String(req.body.notes || '').trim(),
+    };
+    if (!item.name) return res.status(400).json({ ok: false, error: 'Item name required' });
+    sites[idx].welfare_items.push(item);
+    saveSites(sites);
+    res.json({ ok: true, item: item });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.patch('/api/sites/:id/welfare/:itemId', requireLogin, requireRole('director', 'ops_manager', 'hr_manager', 'office_manager'), function(req, res) {
+  try {
+    var sites = loadSites();
+    var sIdx = sites.findIndex(function(s){ return s.id === req.params.id; });
+    if (sIdx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    var items = sites[sIdx].welfare_items || [];
+    var iIdx = items.findIndex(function(i){ return i.id === req.params.itemId; });
+    if (iIdx === -1) return res.status(404).json({ ok: false, error: 'Item not found' });
+    var b = req.body; var o = items[iIdx];
+    items[iIdx] = {
+      id: o.id,
+      name:          String(b.name          !== undefined ? b.name          : o.name          || '').trim(),
+      quantity:      parseInt(b.quantity     !== undefined ? b.quantity      : o.quantity)    || 1,
+      condition:     String(b.condition      !== undefined ? b.condition     : o.condition     || 'good').trim(),
+      serial_number: String(b.serial_number  !== undefined ? b.serial_number : o.serial_number || '').trim(),
+      notes:         String(b.notes          !== undefined ? b.notes         : o.notes         || '').trim(),
+    };
+    sites[sIdx].welfare_items = items;
+    saveSites(sites);
+    res.json({ ok: true, item: items[iIdx] });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/sites/:id/welfare/:itemId', requireLogin, requireRole('director', 'ops_manager', 'hr_manager', 'office_manager'), function(req, res) {
+  try {
+    var sites = loadSites();
+    var sIdx = sites.findIndex(function(s){ return s.id === req.params.id; });
+    if (sIdx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    sites[sIdx].welfare_items = (sites[sIdx].welfare_items || []).filter(function(i){ return i.id !== req.params.itemId; });
     saveSites(sites);
     res.json({ ok: true });
   } catch(e) {
@@ -1192,12 +1334,21 @@ app.get('/api/dashboard/stats', requireLogin, async function(req, res) {
       vehicleCount = parseInt(vResult.rows[0].count) || 0;
     } catch (e) { /* vehicles table may not exist yet */ }
 
+    var activeSites = loadSites().filter(function(s){ return s.status !== 'inactive'; }).length;
+    var fleetDrivers = 0;
+    try {
+      var fd = JSON.parse(fs.readFileSync(FLEET_DRIVERS_FILE, 'utf8'));
+      fleetDrivers = Array.isArray(fd) ? fd.length : 0;
+    } catch(e) {}
+
     res.json({
       totalStaff: totalStaff,
       compliant: compliant,
       expiringSoon: expiringSoon,
       expired: expired,
-      vehicles: vehicleCount
+      vehicles: vehicleCount,
+      activeSites: activeSites,
+      drivers: fleetDrivers,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
