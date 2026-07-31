@@ -14,9 +14,21 @@ const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
 const pgPool = new Pool({ connectionString: process.env.DATABASE_URL });
 
+// Self-healing schema — adds columns introduced after the original users table
+// was created, so upgrades never require a manual migration step.
+(async function ensureUsersSchema() {
+  try {
+    await pgPool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT DEFAULT ''");
+    await pgPool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE");
+    await pgPool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_id TEXT");
+  } catch (e) {
+    console.error('[DB] users schema migration failed:', e.message);
+  }
+})();
+
 // ── AUTH HELPERS ──────────────────────────────────────────────────────────────
 function signToken(user) {
-  return jwt.sign({ id: user.id, username: user.username, role: user.role || 'supervisor' }, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ id: user.id, username: user.username, role: user.role || 'supervisor', staff_id: user.staff_id || null }, JWT_SECRET, { expiresIn: '7d' });
 }
 
 // Pulls the token from wherever it might be — cookie (web/PWA) or Authorization
@@ -53,6 +65,13 @@ function requireRole() {
   };
 }
 
+// Blocks the self-service 'staff' role from management-only endpoints —
+// staff must go through /api/my-profile, never the full roster.
+function requireManagementRole(req, res, next) {
+  if (!req.user || req.user.role === 'staff') return res.status(403).json({ error: 'Forbidden' });
+  next();
+}
+
 const HOME        = process.env.USERPROFILE || ('C:\\Users\\' + require('os').userInfo().username);
 const BASE        = process.env.DATA_PATH || path.join(HOME, "First Call Site Services", "FCSS - Managers", "HR and Legal", "Asrar", "GuardTec Compliance");
 const ACTIVE_DIR  = path.join(BASE, "02 - Vetting & Screening", "Active Staff");
@@ -75,10 +94,11 @@ app.post('/api/login', async function(req, res) {
   try {
     var username = String((req.body && req.body.username) || '').trim();
     var password = String((req.body && req.body.password) || '');
-    var result = await pgPool.query('SELECT id, username, password_hash, role, full_name FROM users WHERE username = $1', [username]);
+    var result = await pgPool.query('SELECT id, username, password_hash, role, full_name, staff_id, is_active FROM users WHERE username = $1', [username]);
     if (!result.rows.length) return res.status(401).json({ error: 'Invalid username or password' });
 
     var user = result.rows[0];
+    if (user.is_active === false) return res.status(401).json({ error: 'This account has been suspended' });
     var match = await bcrypt.compare(password, user.password_hash);
     if (!match) return res.status(401).json({ error: 'Invalid username or password' });
 
@@ -102,6 +122,7 @@ app.post('/api/login', async function(req, res) {
         username: user.username,
         full_name: user.full_name || user.username,
         role: user.role || 'supervisor',
+        staff_id: user.staff_id || null,
         departments: deptResult.rows.map(function(d) { return d.slug; })
       }
     });
@@ -115,13 +136,67 @@ app.post('/api/logout', function(req, res) {
   res.json({ ok: true });
 });
 
+// Staff self-registration — proves identity with a one-time code an Ops
+// Manager/Director hands them, then the staff member picks their own
+// username & password. No requireLogin gate — this IS how staff get in.
+app.post('/api/register', async function(req, res) {
+  try {
+    var code     = String((req.body && req.body.registration_code) || '').trim().toUpperCase();
+    var username = String((req.body && req.body.username) || '').trim().toLowerCase();
+    var password = String((req.body && req.body.password) || '');
+
+    if (!code)      return res.status(400).json({ ok: false, error: 'Registration code is required.' });
+    if (!username)  return res.status(400).json({ ok: false, error: 'Username is required.' });
+    if (!password || password.length < 6) return res.status(400).json({ ok: false, error: 'Password must be at least 6 characters.' });
+
+    var all = loadAllStaff();
+    var emp = all.find(function(e) { return e.registration_code === code && !e.registration_claimed; });
+    if (!emp) return res.status(400).json({ ok: false, error: 'Invalid or already-used registration code. Ask your manager for a new one.' });
+
+    var exists = await pgPool.query('SELECT id FROM users WHERE username = $1', [username]);
+    if (exists.rows.length) return res.status(400).json({ ok: false, error: 'That username is already taken.' });
+
+    var hash = await bcrypt.hash(password, 10);
+    var r = await pgPool.query(
+      'INSERT INTO users (username, password_hash, full_name, role, email, is_active, staff_id) VALUES ($1,$2,$3,$4,$5,TRUE,$6) RETURNING id, username, full_name, role, staff_id',
+      [username, hash, emp.name, 'staff', emp.email || '', emp.id]
+    );
+    var user = r.rows[0];
+
+    emp.registration_claimed = true;
+    saveStaff(emp, emp._folderPath);
+
+    var token = signToken(user);
+    res.cookie('token', token, {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: false,
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+    res.json({
+      ok: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        full_name: user.full_name || user.username,
+        role: user.role,
+        staff_id: user.staff_id,
+        departments: []
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.get('/api/me', async function(req, res) {
   var authed = getAuthedUser(req);
   if (!authed) return res.status(401).json({ error: 'Not logged in' });
   try {
-    var result = await pgPool.query('SELECT id, username, role, full_name FROM users WHERE id = $1', [authed.id]);
+    var result = await pgPool.query('SELECT id, username, role, full_name, staff_id, is_active FROM users WHERE id = $1', [authed.id]);
     if (!result.rows.length) return res.status(401).json({ error: 'User not found' });
     var user = result.rows[0];
+    if (user.is_active === false) return res.status(401).json({ error: 'This account has been suspended' });
     var deptResult = await pgPool.query(
       'SELECT d.slug, d.name FROM user_departments ud JOIN departments d ON d.id = ud.department_id WHERE ud.user_id = $1',
       [user.id]
@@ -132,6 +207,7 @@ app.get('/api/me', async function(req, res) {
         username: user.username,
         full_name: user.full_name || user.username,
         role: user.role || 'supervisor',
+        staff_id: user.staff_id || null,
         departments: deptResult.rows.map(function(d) { return d.slug; })
       }
     });
@@ -646,7 +722,7 @@ function buildOverviewHTML(staff) {
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
-app.get('/api/staff', requireLogin, function(req, res) {
+app.get('/api/staff', requireLogin, requireManagementRole, function(req, res) {
   try {
     res.json(loadAllStaff());
   } catch(e) {
@@ -655,7 +731,7 @@ app.get('/api/staff', requireLogin, function(req, res) {
 });
 
 // ── DEPLOYMENT STATUS ─────────────────────────────────────────────────────────
-app.patch('/api/staff/:id/deploy', requireLogin, function(req, res) {
+app.patch('/api/staff/:id/deploy', requireLogin, requireManagementRole, function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -671,7 +747,7 @@ app.patch('/api/staff/:id/deploy', requireLogin, function(req, res) {
 });
 
 // ── TRAINING ──────────────────────────────────────────────────────────────────
-app.patch('/api/staff/:id/training', requireLogin, function(req, res) {
+app.patch('/api/staff/:id/training', requireLogin, requireManagementRole, function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -681,6 +757,217 @@ app.patch('/api/staff/:id/training', requireLogin, function(req, res) {
     res.json({ ok: true });
   } catch(e) {
     console.error(e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── STAFF SELF-SERVICE PORTAL ─────────────────────────────────────────────────
+
+function generateRegistrationCode() {
+  var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous 0/O/1/I
+  var code = '';
+  for (var i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+// Ops Manager / Director generate & share this with a staff member so they
+// can self-register their own portal login.
+app.get('/api/staff/:id/registration-code', requireLogin, requireRole('director', 'ops_manager'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
+    if (emp.registration_claimed) return res.json({ ok: true, claimed: true, code: null });
+    if (!emp.registration_code) {
+      emp.registration_code = generateRegistrationCode();
+      saveStaff(emp, emp._folderPath);
+    }
+    res.json({ ok: true, claimed: false, code: emp.registration_code });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/staff/:id/registration-code/regenerate', requireLogin, requireRole('director', 'ops_manager'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
+    emp.registration_code = generateRegistrationCode();
+    emp.registration_claimed = false;
+    saveStaff(emp, emp._folderPath);
+    res.json({ ok: true, code: emp.registration_code });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+function sanitizeForStaffView(emp) {
+  var copy = Object.assign({}, emp);
+  delete copy._folderPath;
+  return copy;
+}
+
+// The logged-in staff member's own profile — reads via the staff_id baked
+// into their JWT at login/registration time.
+app.get('/api/my-profile', requireLogin, requireRole('staff'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.user.staff_id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Profile not found' });
+    res.json({ ok: true, profile: sanitizeForStaffView(emp) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Staff submit changes here — they land in pending_submission and do NOT
+// touch the live compliance record until a manager approves them.
+app.post('/api/my-profile', requireLogin, requireRole('staff'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.user.staff_id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Profile not found' });
+
+    var b = req.body || {};
+    var pending = Object.assign({}, emp.pending_submission, {
+      submitted_at: new Date().toISOString(),
+      phone: b.phone, address: b.address,
+      emergencyContact: b.emergencyContact,
+      sia: b.sia, cscs: b.cscs, visa: b.visa, references: b.references,
+      notes: b.notes,
+    });
+    emp.pending_submission = pending;
+    delete emp.rejection_reason;
+    saveStaff(emp, emp._folderPath);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/my-profile/photo', requireLogin, requireRole('staff'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.user.staff_id; });
+    if (!emp || !emp._folderPath) return res.status(404).json({ ok: false, error: 'Profile not found' });
+
+    var chunks = [];
+    req.on('data', function(c) { chunks.push(c); });
+    req.on('end', function() {
+      var buf = Buffer.concat(chunks);
+      var ext = '.jpg';
+      if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
+      else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
+
+      ['.jpg', '.jpeg', '.png', '.webp'].forEach(function(e) {
+        var old = path.join(emp._folderPath, 'pending-profile' + e);
+        if (fs.existsSync(old)) fs.unlinkSync(old);
+      });
+      fs.writeFileSync(path.join(emp._folderPath, 'pending-profile' + ext), buf);
+
+      emp.pending_submission = Object.assign({}, emp.pending_submission, {
+        submitted_at: new Date().toISOString(),
+        photo_pending: true,
+      });
+      saveStaff(emp, emp._folderPath);
+      res.json({ ok: true });
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+function findPendingPhoto(folderPath) {
+  var exts = ['.jpg', '.jpeg', '.png', '.webp'];
+  for (var e of exts) {
+    var p = path.join(folderPath, 'pending-profile' + e);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+app.get('/api/staff/:id/pending-photo', requireLogin, requireRole('director', 'ops_manager'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp || !emp._folderPath) return res.status(404).end();
+    var photo = findPendingPhoto(emp._folderPath);
+    if (!photo) return res.status(404).end();
+    var ext = path.extname(photo).toLowerCase();
+    var mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(photo));
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+// Ops Manager / Director review queue — every staff member with an
+// outstanding self-submitted change.
+app.get('/api/staff/pending-review', requireLogin, requireRole('director', 'ops_manager'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var pending = all
+      .filter(function(e){ return !!e.pending_submission; })
+      .map(function(e){ return sanitizeForStaffView(e); });
+    res.json({ ok: true, staff: pending });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/staff/:id/approve', requireLogin, requireRole('director', 'ops_manager'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
+    var pending = emp.pending_submission;
+    if (!pending) return res.status(400).json({ ok: false, error: 'No pending submission for this staff member' });
+
+    ['phone', 'address', 'emergencyContact', 'sia', 'cscs', 'visa', 'references', 'notes'].forEach(function(field) {
+      if (pending[field] !== undefined) emp[field] = pending[field];
+    });
+
+    if (pending.photo_pending && emp._folderPath) {
+      var pendingPhoto = findPendingPhoto(emp._folderPath);
+      if (pendingPhoto) {
+        var ext = path.extname(pendingPhoto);
+        ['.jpg', '.jpeg', '.png', '.webp'].forEach(function(e) {
+          var old = path.join(emp._folderPath, 'profile' + e);
+          if (fs.existsSync(old)) fs.unlinkSync(old);
+        });
+        fs.renameSync(pendingPhoto, path.join(emp._folderPath, 'profile' + ext));
+      }
+    }
+
+    delete emp.pending_submission;
+    delete emp.rejection_reason;
+    saveStaff(emp, emp._folderPath);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/staff/:id/reject', requireLogin, requireRole('director', 'ops_manager'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
+    if (!emp.pending_submission) return res.status(400).json({ ok: false, error: 'No pending submission for this staff member' });
+
+    if (emp._folderPath) {
+      var pendingPhoto = findPendingPhoto(emp._folderPath);
+      if (pendingPhoto) fs.unlinkSync(pendingPhoto);
+    }
+
+    emp.rejection_reason = String(req.body.reason || 'Please review and resubmit your details.').trim();
+    delete emp.pending_submission;
+    saveStaff(emp, emp._folderPath);
+    res.json({ ok: true });
+  } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -703,6 +990,8 @@ app.post('/api/sites', requireLogin, requireRole('director', 'ops_manager', 'hr_
       name: name,
       type: String(req.body.type || 'other').trim(),
       client_name: String(req.body.client_name || '').trim(),
+      client_phone: String(req.body.client_phone || '').trim(),
+      client_email: String(req.body.client_email || '').trim(),
       address: String(req.body.address || '').trim(),
       supervisor_name: String(req.body.supervisor_name || '').trim(),
       supervisor_phone: String(req.body.supervisor_phone || '').trim(),
@@ -729,6 +1018,8 @@ app.patch('/api/sites/:id', requireLogin, requireRole('director', 'ops_manager',
       name:             String(b.name             !== undefined ? b.name             : o.name             || '').trim(),
       type:             String(b.type             !== undefined ? b.type             : o.type             || 'other').trim(),
       client_name:      String(b.client_name      !== undefined ? b.client_name      : o.client_name      || '').trim(),
+      client_phone:     String(b.client_phone     !== undefined ? b.client_phone     : o.client_phone     || '').trim(),
+      client_email:     String(b.client_email     !== undefined ? b.client_email     : o.client_email     || '').trim(),
       address:          String(b.address          !== undefined ? b.address          : o.address          || '').trim(),
       supervisor_name:  String(b.supervisor_name  !== undefined ? b.supervisor_name  : o.supervisor_name  || '').trim(),
       supervisor_phone: String(b.supervisor_phone !== undefined ? b.supervisor_phone : o.supervisor_phone || '').trim(),
@@ -1328,11 +1619,7 @@ app.get('/api/dashboard/stats', requireLogin, async function(req, res) {
       else if (s.overall === 'green') compliant++;
     });
 
-    var vehicleCount = 0;
-    try {
-      var vResult = await pgPool.query('SELECT COUNT(*) as count FROM vehicles WHERE status = $1', ['active']);
-      vehicleCount = parseInt(vResult.rows[0].count) || 0;
-    } catch (e) { /* vehicles table may not exist yet */ }
+    var vehicleCount = loadVehicles().filter(function(v){ return v.status === 'active'; }).length;
 
     var activeSites = loadSites().filter(function(s){ return s.status !== 'inactive'; }).length;
     var fleetDrivers = 0;
@@ -1355,12 +1642,112 @@ app.get('/api/dashboard/stats', requireLogin, async function(req, res) {
   }
 });
 
-app.get('/api/vehicles', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), async function(req, res) {
+// ── VEHICLES ──────────────────────────────────────────────────────────────────
+var VEHICLES_FILE = path.join(BASE, 'vehicles.json');
+var VEHICLE_PHOTOS_DIR = path.join(BASE, 'vehicle-photos');
+if (!fs.existsSync(VEHICLE_PHOTOS_DIR)) fs.mkdirSync(VEHICLE_PHOTOS_DIR, { recursive: true });
+
+function loadVehicles() {
+  if (!fs.existsSync(VEHICLES_FILE)) return [];
+  try { return JSON.parse(fs.readFileSync(VEHICLES_FILE, 'utf8')); }
+  catch (e) { return []; }
+}
+
+function saveVehicles(vehicles) {
+  fs.writeFileSync(VEHICLES_FILE, JSON.stringify(vehicles, null, 2), 'utf8');
+}
+
+function findVehiclePhoto(id) {
+  var exts = ['.jpg', '.jpeg', '.png', '.webp'];
+  for (var e of exts) {
+    var p = path.join(VEHICLE_PHOTOS_DIR, id + e);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+app.get('/api/vehicles', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+  res.json({ vehicles: loadVehicles() });
+});
+
+app.post('/api/vehicles', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
   try {
-    var result = await pgPool.query('SELECT * FROM vehicles ORDER BY registration');
-    res.json({ vehicles: result.rows });
+    var vehicles = loadVehicles();
+    var newVehicle = Object.assign({}, req.body, { id: Date.now().toString() });
+    vehicles.push(newVehicle);
+    saveVehicles(vehicles);
+    res.json({ ok: true, vehicle: newVehicle });
   } catch (e) {
-    res.json({ vehicles: [] });
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.patch('/api/vehicles/:id', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+  try {
+    var vehicles = loadVehicles();
+    var idx = vehicles.findIndex(function(v) { return v.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Vehicle not found' });
+    vehicles[idx] = Object.assign({}, vehicles[idx], req.body);
+    saveVehicles(vehicles);
+    res.json({ ok: true, vehicle: vehicles[idx] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/vehicles/:id', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+  try {
+    var vehicles = loadVehicles();
+    vehicles = vehicles.filter(function(v) { return v.id !== req.params.id; });
+    saveVehicles(vehicles);
+    var oldPhoto = findVehiclePhoto(req.params.id);
+    if (oldPhoto) fs.unlinkSync(oldPhoto);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/vehicles/:id/photo', requireLogin, function(req, res) {
+  try {
+    var photo = findVehiclePhoto(req.params.id);
+    if (!photo) return res.status(404).end();
+    var ext = path.extname(photo).toLowerCase();
+    var mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(photo));
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+app.post('/api/vehicles/:id/photo', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+  try {
+    var vehicles = loadVehicles();
+    var idx = vehicles.findIndex(function(v) { return v.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Vehicle not found' });
+
+    var chunks = [];
+    req.on('data', function(c) { chunks.push(c); });
+    req.on('end', function() {
+      var buf = Buffer.concat(chunks);
+      var ext = '.jpg';
+      if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
+      else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
+
+      ['.jpg', '.jpeg', '.png', '.webp'].forEach(function(e) {
+        var old = path.join(VEHICLE_PHOTOS_DIR, req.params.id + e);
+        if (fs.existsSync(old)) fs.unlinkSync(old);
+      });
+
+      fs.writeFileSync(path.join(VEHICLE_PHOTOS_DIR, req.params.id + ext), buf);
+      vehicles[idx].has_photo = true;
+      saveVehicles(vehicles);
+      res.json({ ok: true });
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
@@ -1419,10 +1806,93 @@ app.delete('/api/fleet-drivers/:id', requireLogin, requireRole('director', 'flee
 
 app.get('/api/users', requireLogin, requireRole('director'), async function(req, res) {
   try {
+    // Ensure email + is_active columns exist for older databases
+    await pgPool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT DEFAULT ''").catch(function(){});
+    await pgPool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE").catch(function(){});
     var result = await pgPool.query('SELECT id, username, full_name, role, email, is_active, created_at FROM users ORDER BY full_name');
     res.json({ users: result.rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/users', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var b = req.body;
+    var username  = String(b.username  || '').trim().toLowerCase();
+    var full_name = String(b.full_name || '').trim();
+    var role      = String(b.role      || 'supervisor').trim();
+    var email     = String(b.email     || '').trim().toLowerCase();
+    var password  = String(b.password  || '');
+
+    if (!username)  return res.status(400).json({ ok: false, error: 'Username is required.' });
+    if (!full_name) return res.status(400).json({ ok: false, error: 'Full name is required.' });
+    if (!password || password.length < 6) return res.status(400).json({ ok: false, error: 'Password must be at least 6 characters.' });
+
+    var exists = await pgPool.query('SELECT id FROM users WHERE username = $1', [username]);
+    if (exists.rows.length) return res.status(400).json({ ok: false, error: 'Username already exists.' });
+
+    var hash = await bcrypt.hash(password, 10);
+    var r = await pgPool.query(
+      'INSERT INTO users (username, password_hash, full_name, role, email, is_active) VALUES ($1,$2,$3,$4,$5,TRUE) RETURNING id, username, full_name, role, email, is_active, created_at',
+      [username, hash, full_name, role, email]
+    );
+    res.json({ ok: true, user: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.patch('/api/users/:id', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var b = req.body;
+    var id        = req.params.id;
+    var full_name = String(b.full_name || '').trim();
+    var role      = String(b.role      || '').trim();
+    var email     = String(b.email     || '').trim().toLowerCase();
+    var is_active = b.is_active !== undefined ? Boolean(b.is_active) : true;
+
+    if (!full_name) return res.status(400).json({ ok: false, error: 'Full name is required.' });
+
+    // Prevent director from suspending their own account
+    if (String(req.user.id) === String(id) && !is_active) {
+      return res.status(400).json({ ok: false, error: 'You cannot suspend your own account.' });
+    }
+
+    var r = await pgPool.query(
+      'UPDATE users SET full_name=$1, role=$2, email=$3, is_active=$4 WHERE id=$5 RETURNING id, username, full_name, role, email, is_active',
+      [full_name, role, email, is_active, id]
+    );
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'User not found.' });
+    res.json({ ok: true, user: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/users/:id/reset-password', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var password = String(req.body.password || '');
+    if (!password || password.length < 6) return res.status(400).json({ ok: false, error: 'New password must be at least 6 characters.' });
+    var hash = await bcrypt.hash(password, 10);
+    var r = await pgPool.query('UPDATE users SET password_hash=$1 WHERE id=$2 RETURNING id', [hash, req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'User not found.' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/users/:id', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    if (String(req.user.id) === String(req.params.id)) {
+      return res.status(400).json({ ok: false, error: 'You cannot delete your own account.' });
+    }
+    var r = await pgPool.query('DELETE FROM users WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'User not found.' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 

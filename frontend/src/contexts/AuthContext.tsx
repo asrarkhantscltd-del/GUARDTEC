@@ -15,12 +15,14 @@ export type UserRole =
   | "media"
   | "supervisor"
   | "fleet_manager"
+  | "staff"
 
 export interface User {
   id: number
   username: string
   full_name: string
   role: UserRole
+  staff_id?: string | null
   departments: string[]
 }
 
@@ -29,6 +31,7 @@ interface AuthState {
   loading: boolean
   login: (username: string, password: string) => Promise<void>
   logout: () => Promise<void>
+  refreshUser: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthState | null>(null)
@@ -37,17 +40,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 
+  async function refreshUser() {
+    try {
+      const res = await fetch("/api/me", { credentials: "include" })
+      const data = res.ok ? await res.json() : null
+      setUser(data?.user ?? null)
+    } catch {
+      setUser(null)
+    }
+  }
+
   useEffect(() => {
-    fetch("/api/me", { credentials: "include" })
-      .then((res) => {
-        if (res.ok) return res.json()
-        return null
-      })
-      .then((data) => {
-        if (data?.user) setUser(data.user)
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false))
+    refreshUser().finally(() => setLoading(false))
   }, [])
 
   async function login(username: string, password: string) {
@@ -74,7 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   )

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react"
 import { useSearchParams } from "react-router-dom"
 import {
   Truck, Users, AlertTriangle, CheckCircle2, Search, Plus,
-  Car, UserCheck, Trash2, X, Save, Loader2,
+  Car, UserCheck, Trash2, X, Save, Loader2, Camera, ImageOff,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -24,6 +24,14 @@ interface Vehicle {
   road_tax_expiry?: string
   service_due?: string
   mileage?: number
+  has_photo?: boolean
+}
+
+const BLANK_VEHICLE: Omit<Vehicle, "id"> = {
+  registration: "", make: "", model: "", year: new Date().getFullYear(),
+  colour: "", type: "patrol_car", status: "active", assignedDriverId: "",
+  mot_expiry: "", insurance_expiry: "", road_tax_expiry: "", service_due: "",
+  mileage: undefined,
 }
 
 interface FleetDriver {
@@ -122,12 +130,21 @@ export default function FleetPage() {
   const [statusFilter, setStatusFilter] = useState("all")
   const [typeFilter, setTypeFilter] = useState("all")
 
-  // Add/Delete state
+  // Add/Delete state — drivers
   const [showPanel, setShowPanel] = useState(false)
   const [editDriver, setEditDriver] = useState<Omit<FleetDriver, "id">>(BLANK_DRIVER)
   const [saving, setSaving] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  // Add/Delete state — vehicles
+  const [showVehiclePanel, setShowVehiclePanel] = useState(false)
+  const [editVehicle, setEditVehicle] = useState<Omit<Vehicle, "id">>(BLANK_VEHICLE)
+  const [vehiclePhoto, setVehiclePhoto] = useState<File | null>(null)
+  const [vehiclePhotoPreview, setVehiclePhotoPreview] = useState<string | null>(null)
+  const [savingVehicle, setSavingVehicle] = useState(false)
+  const [deleteVehicleId, setDeleteVehicleId] = useState<string | null>(null)
+  const [deletingVehicle, setDeletingVehicle] = useState(false)
 
   function switchTab(tab: "vehicles" | "drivers") {
     setActiveTab(tab); setSearch(""); setSearchParams({ tab })
@@ -237,6 +254,72 @@ export default function FleetPage() {
     }
   }
 
+  // ── Add vehicle ───────────────────────────────────────────────────────────────
+
+  function openAddVehicle() {
+    setEditVehicle(BLANK_VEHICLE)
+    setVehiclePhoto(null)
+    setVehiclePhotoPreview(null)
+    setShowVehiclePanel(true)
+  }
+
+  function closeVehiclePanel() {
+    setShowVehiclePanel(false)
+    if (vehiclePhotoPreview) URL.revokeObjectURL(vehiclePhotoPreview)
+    setVehiclePhoto(null)
+    setVehiclePhotoPreview(null)
+  }
+
+  function pickVehiclePhoto(file: File | null) {
+    if (vehiclePhotoPreview) URL.revokeObjectURL(vehiclePhotoPreview)
+    setVehiclePhoto(file)
+    setVehiclePhotoPreview(file ? URL.createObjectURL(file) : null)
+  }
+
+  async function handleAddVehicle(e: React.FormEvent) {
+    e.preventDefault()
+    setSavingVehicle(true)
+    try {
+      const res = await fetch("/api/vehicles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editVehicle),
+      })
+      if (!res.ok) return
+      const { vehicle } = await res.json()
+
+      if (vehiclePhoto) {
+        await fetch(`/api/vehicles/${vehicle.id}/photo`, {
+          method: "POST",
+          headers: { "Content-Type": vehiclePhoto.type || "application/octet-stream" },
+          body: vehiclePhoto,
+        })
+        vehicle.has_photo = true
+      }
+
+      setVehicles(prev => [...prev, vehicle])
+      closeVehiclePanel()
+    } finally {
+      setSavingVehicle(false)
+    }
+  }
+
+  // ── Delete vehicle ────────────────────────────────────────────────────────────
+
+  async function confirmDeleteVehicle() {
+    if (!deleteVehicleId) return
+    setDeletingVehicle(true)
+    try {
+      const res = await fetch(`/api/vehicles/${deleteVehicleId}`, { method: "DELETE" })
+      if (res.ok) {
+        setVehicles(prev => prev.filter(v => v.id !== deleteVehicleId))
+        setDeleteVehicleId(null)
+      }
+    } finally {
+      setDeletingVehicle(false)
+    }
+  }
+
   // ── Toggle licence category ───────────────────────────────────────────────────
 
   function toggleCat(cat: string) {
@@ -273,7 +356,7 @@ export default function FleetPage() {
           </Button>
         )}
         {activeTab === "vehicles" && (
-          <Button size="sm" className="gap-1.5 shrink-0">
+          <Button size="sm" className="gap-1.5 shrink-0" onClick={openAddVehicle}>
             <Plus className="h-4 w-4" />Add Vehicle
           </Button>
         )}
@@ -351,7 +434,9 @@ export default function FleetPage() {
               title={vehicles.length === 0 ? "No vehicles on record" : "No vehicles match your filters"}
               description="Add your first company vehicle to start tracking compliance." />
           : <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {filteredVehicles.map(v => <VehicleCard key={v.id} v={v} drivers={drivers} />)}
+              {filteredVehicles.map(v => (
+                <VehicleCard key={v.id} v={v} drivers={drivers} onDelete={() => setDeleteVehicleId(v.id)} />
+              ))}
             </div>
       )}
 
@@ -554,13 +639,168 @@ export default function FleetPage() {
           </div>
         </div>
       )}
+
+      {/* ── Add Vehicle slide-over panel ── */}
+      {showVehiclePanel && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/40" onClick={closeVehiclePanel} />
+          <div className="flex h-full w-full max-w-lg flex-col overflow-y-auto bg-background shadow-2xl">
+            <div className="flex items-center justify-between border-b px-6 py-4">
+              <h2 className="text-lg font-semibold">Add Vehicle</h2>
+              <button onClick={closeVehiclePanel} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddVehicle} className="flex flex-1 flex-col gap-0 overflow-y-auto">
+              <div className="space-y-5 px-6 py-5">
+
+                {/* Photo upload */}
+                <Section title="Vehicle Photo">
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-dashed bg-muted/40">
+                      {vehiclePhotoPreview
+                        ? <img src={vehiclePhotoPreview} alt="Preview" className="h-full w-full object-cover" />
+                        : <ImageOff className="h-6 w-6 text-muted-foreground/40" />}
+                    </div>
+                    <div className="flex-1">
+                      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors">
+                        <Camera className="h-3.5 w-3.5" />
+                        {vehiclePhoto ? "Change photo" : "Upload photo"}
+                        <input type="file" accept="image/*" className="hidden"
+                          onChange={e => pickVehiclePhoto(e.target.files?.[0] ?? null)} />
+                      </label>
+                      <p className="mt-1.5 text-[11px] text-muted-foreground">JPG or PNG, optional</p>
+                    </div>
+                  </div>
+                </Section>
+
+                {/* Vehicle details */}
+                <Section title="Vehicle Details">
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Registration *">
+                      <Input required className="font-mono uppercase" value={editVehicle.registration}
+                        onChange={e => setEditVehicle(p => ({ ...p, registration: e.target.value.toUpperCase() }))} />
+                    </Field>
+                    <Field label="Type">
+                      <select value={editVehicle.type}
+                        onChange={e => setEditVehicle(p => ({ ...p, type: e.target.value }))}
+                        className="h-9 w-full rounded-md border bg-background px-3 text-sm">
+                        {Object.entries(VEHICLE_TYPE_LABELS).map(([val, label]) => (
+                          <option key={val} value={val}>{label}</option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="Make">
+                      <Input value={editVehicle.make}
+                        onChange={e => setEditVehicle(p => ({ ...p, make: e.target.value }))} />
+                    </Field>
+                    <Field label="Model">
+                      <Input value={editVehicle.model}
+                        onChange={e => setEditVehicle(p => ({ ...p, model: e.target.value }))} />
+                    </Field>
+                    <Field label="Year">
+                      <Input type="number" value={editVehicle.year}
+                        onChange={e => setEditVehicle(p => ({ ...p, year: parseInt(e.target.value) || p.year }))} />
+                    </Field>
+                    <Field label="Colour">
+                      <Input value={editVehicle.colour}
+                        onChange={e => setEditVehicle(p => ({ ...p, colour: e.target.value }))} />
+                    </Field>
+                  </div>
+                </Section>
+
+                {/* Compliance dates */}
+                <Section title="Compliance Dates">
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="MOT Expiry">
+                      <Input type="date" value={editVehicle.mot_expiry ?? ""}
+                        onChange={e => setEditVehicle(p => ({ ...p, mot_expiry: e.target.value }))} />
+                    </Field>
+                    <Field label="Insurance Expiry">
+                      <Input type="date" value={editVehicle.insurance_expiry ?? ""}
+                        onChange={e => setEditVehicle(p => ({ ...p, insurance_expiry: e.target.value }))} />
+                    </Field>
+                    <Field label="Road Tax Expiry">
+                      <Input type="date" value={editVehicle.road_tax_expiry ?? ""}
+                        onChange={e => setEditVehicle(p => ({ ...p, road_tax_expiry: e.target.value }))} />
+                    </Field>
+                    <Field label="Service Due">
+                      <Input type="date" value={editVehicle.service_due ?? ""}
+                        onChange={e => setEditVehicle(p => ({ ...p, service_due: e.target.value }))} />
+                    </Field>
+                  </div>
+                </Section>
+
+                {/* Assignment */}
+                <Section title="Assignment & Status">
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Assign Driver">
+                      <select value={editVehicle.assignedDriverId ?? ""}
+                        onChange={e => setEditVehicle(p => ({ ...p, assignedDriverId: e.target.value }))}
+                        className="h-9 w-full rounded-md border bg-background px-3 text-sm">
+                        <option value="">Unassigned</option>
+                        {drivers.filter(d => d.status === "active").map(d => (
+                          <option key={d.id} value={d.id}>{d.first_name} {d.last_name}</option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="Status">
+                      <select value={editVehicle.status}
+                        onChange={e => setEditVehicle(p => ({ ...p, status: e.target.value as Vehicle["status"] }))}
+                        className="h-9 w-full rounded-md border bg-background px-3 text-sm">
+                        <option value="active">Active</option>
+                        <option value="off_road">Off Road</option>
+                        <option value="maintenance">Maintenance</option>
+                        <option value="sold">Sold</option>
+                      </select>
+                    </Field>
+                    <Field label="Mileage">
+                      <Input type="number" value={editVehicle.mileage ?? ""}
+                        onChange={e => setEditVehicle(p => ({ ...p, mileage: e.target.value ? parseInt(e.target.value) : undefined }))} />
+                    </Field>
+                  </div>
+                </Section>
+              </div>
+
+              {/* Footer */}
+              <div className="sticky bottom-0 flex gap-3 border-t bg-background px-6 py-4">
+                <Button type="submit" disabled={savingVehicle} className="flex-1 gap-2">
+                  {savingVehicle ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  {savingVehicle ? "Saving…" : "Save Vehicle"}
+                </Button>
+                <Button type="button" variant="outline" onClick={closeVehiclePanel}>Cancel</Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete vehicle confirm dialog ── */}
+      {deleteVehicleId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-sm rounded-xl border bg-background p-6 shadow-2xl">
+            <h3 className="text-base font-semibold">Remove vehicle?</h3>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              This vehicle will be permanently removed from the fleet register, including its photo. This cannot be undone.
+            </p>
+            <div className="mt-5 flex gap-3">
+              <Button variant="destructive" disabled={deletingVehicle} className="flex-1 gap-2" onClick={confirmDeleteVehicle}>
+                {deletingVehicle ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                {deletingVehicle ? "Removing…" : "Yes, Remove"}
+              </Button>
+              <Button variant="outline" className="flex-1" onClick={() => setDeleteVehicleId(null)}>Cancel</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 // ── Vehicle Card ──────────────────────────────────────────────────────────────
 
-function VehicleCard({ v, drivers }: { v: Vehicle; drivers: FleetDriver[] }) {
+function VehicleCard({ v, drivers, onDelete }: { v: Vehicle; drivers: FleetDriver[]; onDelete: () => void }) {
   const driver = v.assignedDriverId ? drivers.find(d => d.id === v.assignedDriverId) : null
   const worst = worstDays([v.mot_expiry, v.insurance_expiry, v.road_tax_expiry])
   const borderClass =
@@ -568,49 +808,67 @@ function VehicleCard({ v, drivers }: { v: Vehicle; drivers: FleetDriver[] }) {
     worst !== null && worst <= 30 ? "border-amber-400 dark:border-amber-700" : "border-border"
 
   return (
-    <div className={`rounded-xl border-2 ${borderClass} bg-card p-4 shadow-sm transition-all hover:shadow-md`}>
-      <div className="mb-3 flex items-start justify-between gap-2">
-        <div>
-          <div className="font-bold tracking-widest" style={{ fontSize: "1.1rem", letterSpacing: "0.12em" }}>
-            {v.registration || "—"}
-          </div>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            {[v.year, v.make, v.model, v.colour].filter(Boolean).join(" · ")}
-          </div>
-        </div>
-        <div className="flex flex-col items-end gap-1.5">
-          <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${VEHICLE_STATUS_STYLE[v.status] ?? VEHICLE_STATUS_STYLE.active}`}>
-            {v.status.replace("_", " ")}
-          </span>
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-            {VEHICLE_TYPE_LABELS[v.type] ?? v.type}
-          </span>
-        </div>
-      </div>
-
-      <div className="mb-3 grid grid-cols-2 gap-2">
-        <ComplianceCell label="MOT" dateStr={v.mot_expiry} />
-        <ComplianceCell label="Insurance" dateStr={v.insurance_expiry} />
-        <ComplianceCell label="Road Tax" dateStr={v.road_tax_expiry} />
-        <ComplianceCell label="Service Due" dateStr={v.service_due} />
-      </div>
-
-      <div className="flex items-center gap-2 border-t pt-3">
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
-          {driver ? `${driver.first_name?.[0] ?? "?"}${driver.last_name?.[0] ?? ""}` : <Car className="h-3.5 w-3.5 opacity-50" />}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-medium">
-            {driver ? `${driver.first_name ?? ""} ${driver.last_name ?? ""}`.trim() || "Unknown" : "Unassigned"}
-          </div>
-          <div className="text-[10px] text-muted-foreground">Assigned Driver</div>
-        </div>
-        {v.mileage != null && (
-          <div className="text-right">
-            <div className="text-xs font-semibold">{v.mileage.toLocaleString()}</div>
-            <div className="text-[10px] text-muted-foreground">miles</div>
+    <div className={`surface surface-hover overflow-hidden border-2 ${borderClass}`}>
+      {/* Photo */}
+      <div className="relative h-32 w-full bg-muted/50">
+        {v.has_photo ? (
+          <img src={`/api/vehicles/${v.id}/photo`} alt={v.registration}
+            className="h-full w-full object-cover" />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-muted-foreground/30">
+            <Car className="h-10 w-10" />
           </div>
         )}
+        <button onClick={onDelete} title="Delete vehicle"
+          className="absolute right-2 top-2 rounded-md bg-black/40 p-1.5 text-white/80 backdrop-blur-sm transition-colors hover:bg-destructive hover:text-white">
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <div className="p-4">
+        <div className="mb-3 flex items-start justify-between gap-2">
+          <div>
+            <div className="font-bold tracking-widest" style={{ fontSize: "1.1rem", letterSpacing: "0.12em" }}>
+              {v.registration || "—"}
+            </div>
+            <div className="mt-0.5 text-xs text-muted-foreground">
+              {[v.year, v.make, v.model, v.colour].filter(Boolean).join(" · ")}
+            </div>
+          </div>
+          <div className="flex flex-col items-end gap-1.5">
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${VEHICLE_STATUS_STYLE[v.status] ?? VEHICLE_STATUS_STYLE.active}`}>
+              {v.status.replace("_", " ")}
+            </span>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+              {VEHICLE_TYPE_LABELS[v.type] ?? v.type}
+            </span>
+          </div>
+        </div>
+
+        <div className="mb-3 grid grid-cols-2 gap-2">
+          <ComplianceCell label="MOT" dateStr={v.mot_expiry} />
+          <ComplianceCell label="Insurance" dateStr={v.insurance_expiry} />
+          <ComplianceCell label="Road Tax" dateStr={v.road_tax_expiry} />
+          <ComplianceCell label="Service Due" dateStr={v.service_due} />
+        </div>
+
+        <div className="flex items-center gap-2 border-t pt-3">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
+            {driver ? `${driver.first_name?.[0] ?? "?"}${driver.last_name?.[0] ?? ""}` : <Car className="h-3.5 w-3.5 opacity-50" />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-xs font-medium">
+              {driver ? `${driver.first_name ?? ""} ${driver.last_name ?? ""}`.trim() || "Unknown" : "Unassigned"}
+            </div>
+            <div className="text-[10px] text-muted-foreground">Assigned Driver</div>
+          </div>
+          {v.mileage != null && (
+            <div className="text-right">
+              <div className="text-xs font-semibold">{v.mileage.toLocaleString()}</div>
+              <div className="text-[10px] text-muted-foreground">miles</div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

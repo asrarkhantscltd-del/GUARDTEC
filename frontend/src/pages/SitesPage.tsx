@@ -36,6 +36,8 @@ interface Site {
   name: string
   type: string
   client_name: string
+  client_phone: string
+  client_email: string
   address: string
   supervisor_name: string
   supervisor_phone: string
@@ -48,6 +50,7 @@ interface Site {
 
 const BLANK_SITE: Site = {
   id: "", name: "", type: "construction", client_name: "",
+  client_phone: "", client_email: "",
   address: "", supervisor_name: "", supervisor_phone: "",
   supervisor_email: "", status: "active", notes: "",
 }
@@ -338,7 +341,8 @@ export default function SitesPage() {
             const staffCount   = site.assigned_staff?.length ?? 0
             return (
               <div key={site.id}
-                className={`rounded-xl border bg-card p-4 flex flex-col gap-3 ${site.status === "inactive" ? "opacity-60" : ""}`}>
+                className={`surface surface-hover animate-fade-in-up flex flex-col gap-3 p-4 ${site.status === "inactive" ? "opacity-60" : ""}`}
+                style={{ animationDelay: `${i * 40}ms` }}>
 
                 {/* Name + type badge */}
                 <div className="flex items-start justify-between gap-2">
@@ -348,7 +352,21 @@ export default function SitesPage() {
                       <p className="truncate text-sm font-semibold">{site.name}</p>
                     </div>
                     {site.client_name && (
-                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{site.client_name}</p>
+                      <p className="mt-0.5 truncate text-xs font-medium text-muted-foreground">{site.client_name}</p>
+                    )}
+                    {site.client_phone && (
+                      <a href={`tel:${site.client_phone}`}
+                        className="flex items-center gap-1 text-[10px] text-primary hover:underline"
+                        onClick={(e) => e.stopPropagation()}>
+                        <Phone className="h-2.5 w-2.5" />{site.client_phone}
+                      </a>
+                    )}
+                    {site.client_email && (
+                      <a href={`mailto:${site.client_email}`}
+                        className="flex items-center gap-1 text-[10px] text-primary hover:underline"
+                        onClick={(e) => e.stopPropagation()}>
+                        <Mail className="h-2.5 w-2.5" />{site.client_email}
+                      </a>
                     )}
                   </div>
                   <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${t.color}`}>
@@ -490,6 +508,25 @@ export default function SitesPage() {
                 <Label>Client name</Label>
                 <Input value={siteDraft.client_name} onChange={(e) => setSF("client_name", e.target.value)}
                   placeholder="e.g. ABC Builders Ltd" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Client phone</Label>
+                  <div className="relative">
+                    <Phone className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input value={siteDraft.client_phone} onChange={(e) => setSF("client_phone", e.target.value)}
+                      placeholder="07700 900000" className="pl-8" type="tel" />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Client email</Label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input value={siteDraft.client_email} onChange={(e) => setSF("client_email", e.target.value)}
+                      placeholder="client@company.co.uk" className="pl-8" type="email" />
+                  </div>
+                </div>
               </div>
 
               <div className="space-y-1.5">

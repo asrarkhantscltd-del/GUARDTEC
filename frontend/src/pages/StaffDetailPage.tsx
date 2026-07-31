@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
+import { useAuth } from "@/contexts/AuthContext"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/ui/status-badge"
@@ -9,6 +10,7 @@ import {
   Fingerprint, Building2, GraduationCap, ClipboardList, UserCheck,
   HeartPulse, Flame, Swords, HardHat, Camera, Briefcase,
   MapPin, Contact, BadgeAlert, Pencil, Trash2, Plus, X as XIcon,
+  KeyRound, Copy, RefreshCw, Check,
 } from "lucide-react"
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -203,10 +205,17 @@ type TabId = typeof TABS[number]["id"]
 export default function StaffDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { user: me } = useAuth()
   const [staff, setStaff]     = useState<StaffMember | null>(null)
   const [loading, setLoading]   = useState(true)
   const [photoUrl, setPhotoUrl] = useState<string | null>(null)
   const [tab, setTab]           = useState<TabId>("overview")
+
+  // Portal access — registration code for the staff self-service login
+  const [regCode, setRegCode]         = useState<string | null>(null)
+  const [regClaimed, setRegClaimed]   = useState(false)
+  const [regLoading, setRegLoading]   = useState(false)
+  const [regCopied, setRegCopied]     = useState(false)
 
   // Training management
   const [trainingData, setTrainingData]   = useState<TrainingRecord>({})
@@ -232,6 +241,35 @@ export default function StaffDetailPage() {
       .then((blob) => { if (blob) setPhotoUrl(URL.createObjectURL(blob)) })
       .catch(() => {})
   }, [id])
+
+  const canManagePortalAccess = me?.role === "director" || me?.role === "ops_manager"
+
+  useEffect(() => {
+    if (!canManagePortalAccess || !id) return
+    fetch(`/api/staff/${id}/registration-code`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((d) => { if (d.ok) { setRegCode(d.code); setRegClaimed(d.claimed) } })
+      .catch(() => {})
+  }, [id, canManagePortalAccess])
+
+  async function regenerateCode() {
+    setRegLoading(true)
+    try {
+      const res = await fetch(`/api/staff/${id}/registration-code/regenerate`, { method: "POST", credentials: "include" })
+      const d = await res.json()
+      if (d.ok) { setRegCode(d.code); setRegClaimed(false) }
+    } finally {
+      setRegLoading(false)
+    }
+  }
+
+  function copyCode() {
+    if (!regCode) return
+    navigator.clipboard.writeText(regCode).then(() => {
+      setRegCopied(true)
+      setTimeout(() => setRegCopied(false), 2000)
+    })
+  }
 
   // ── Training helpers ──
   async function patchTraining(updated: TrainingRecord) {
@@ -413,6 +451,42 @@ export default function StaffDetailPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* ── Portal access ── */}
+      {canManagePortalAccess && (
+        <Card>
+          <CardContent className="flex items-center gap-3 py-4">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <KeyRound className="h-4 w-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium">Staff portal access</p>
+              {regClaimed ? (
+                <p className="text-xs text-success">This staff member has already registered their own login.</p>
+              ) : regCode ? (
+                <p className="text-xs text-muted-foreground">
+                  Share this one-time code so {staff.name.split(" ")[0]} can register at <span className="font-medium">/register</span>
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">Loading…</p>
+              )}
+            </div>
+            {!regClaimed && regCode && (
+              <div className="flex items-center gap-2">
+                <span className="rounded-md border bg-muted/50 px-3 py-1.5 font-mono text-sm font-bold tracking-widest">
+                  {regCode}
+                </span>
+                <Button variant="outline" size="icon-sm" onClick={copyCode} title="Copy code">
+                  {regCopied ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+                </Button>
+                <Button variant="outline" size="icon-sm" onClick={regenerateCode} disabled={regLoading} title="Generate new code">
+                  <RefreshCw className={`h-3.5 w-3.5 ${regLoading ? "animate-spin" : ""}`} />
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Tab bar ── */}
       <div className="flex gap-1 overflow-x-auto rounded-lg border bg-muted/30 p-1">

@@ -1,10 +1,10 @@
 import { useState, type FormEvent } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, Link } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Loader2, ShieldCheck, Eye, EyeOff } from "lucide-react"
+import { Loader2, ShieldCheck, Eye, EyeOff, Users, Radio, Camera, CalendarDays, Bot, Zap, Plane } from "lucide-react"
 
 export default function LoginPage() {
   const { login } = useAuth()
@@ -57,7 +57,7 @@ export default function LoginPage() {
             <img src="/logo-white.png" alt="GuardTec" className="h-12 w-auto" />
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/40">GuardTec</p>
-              <p className="text-[10px] text-white/25 tracking-widest">SECURITY LTD</p>
+              <p className="text-[10px] text-white/25 tracking-widest">SECURITY &amp; PATROL LTD</p>
             </div>
           </div>
 
@@ -93,14 +93,14 @@ export default function LoginPage() {
           <div className="border-t border-white/8 pt-6">
             <div className="flex items-center gap-2 text-white/30">
               <ShieldCheck className="h-4 w-4 text-[#E40613]" />
-              <span className="text-xs">GuardTec Security Ltd — UK Manned Guarding &amp; CCTV Services</span>
+              <span className="text-xs">GuardTec Security &amp; Patrol Ltd — UK Manned Guarding &amp; CCTV Services</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* ── Right panel — Login form ── */}
-      <div className="flex flex-1 flex-col items-center justify-center bg-background px-8 py-12">
+      {/* ── Right panel — Login form + About ── */}
+      <div className="flex flex-1 flex-col items-center overflow-y-auto bg-background px-8 py-12">
         <div className="w-full max-w-sm">
 
           {/* Mobile logo (hidden on desktop) */}
@@ -169,9 +169,82 @@ export default function LoginPage() {
             </Button>
           </form>
 
+          <div className="mt-5 rounded-lg border border-muted bg-muted/30 px-4 py-3">
+            <p className="text-xs font-medium text-muted-foreground">
+              Forgotten your password?
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground/70">
+              Please contact your Director or System Administrator to have your password reset via the Team Access portal.
+            </p>
+          </div>
+
+          <p className="mt-4 text-center text-sm text-muted-foreground">
+            New staff member with a registration code?{" "}
+            <Link to="/register" className="text-primary hover:underline">Set up your account</Link>
+          </p>
+        </div>
+
+        {/* ── About GuardTec section ── */}
+        <div className="mt-12 w-full max-w-lg">
+          <div className="mb-6 flex items-center gap-3">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">About Us</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
+          {/* Tagline */}
+          <div className="mb-6 text-center">
+            <p className="text-lg font-bold tracking-tight" style={{ fontFamily: "'Orbitron', sans-serif" }}>
+              Smart Security.{" "}
+              <span style={{ color: "#E40613" }}>Real Response.</span>{" "}
+              Complete Protection.
+            </p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              GuardTec delivers professional, technology-driven security solutions for large sites,
+              small &amp; medium businesses, and major national events.
+            </p>
+          </div>
+
+          {/* Services grid */}
+          <div className="mb-6 grid grid-cols-2 gap-3">
+            {[
+              { icon: Users,       title: "Security Guarding",        desc: "Access control, AI CCTV towers & 24/7 monitoring for large sites" },
+              { icon: Radio,       title: "Mobile Response",           desc: "Rapid alarm response, mobile patrols & keyholding services" },
+              { icon: Camera,      title: "CCTV & Drone Security",     desc: "Mobile CCTV & drone patrols for remote or complex environments" },
+              { icon: CalendarDays, title: "Event & Media Security",   desc: "Crowd management, VIP protection & event control for festivals & sports" },
+            ].map(({ icon: Icon, title, desc }) => (
+              <div key={title} className="rounded-xl border bg-muted/30 p-4">
+                <div className="mb-2 flex items-center gap-2">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-destructive/10">
+                    <Icon className="h-3.5 w-3.5" style={{ color: "#E40613" }} />
+                  </div>
+                  <p className="text-xs font-semibold">{title}</p>
+                </div>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">{desc}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Key strengths */}
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { icon: ShieldCheck, label: "SIA Licensed Officers" },
+              { icon: Bot,         label: "AI-Assisted CCTV" },
+              { icon: Zap,         label: "20–30 Min Response" },
+              { icon: Plane,       label: "Drone-Ready Patrols" },
+              { icon: Users,       label: "ACS Approved" },
+              { icon: Camera,      label: "24/7 Monitoring" },
+            ].map(({ icon: Icon, label }) => (
+              <div key={label} className="flex items-center gap-1.5 rounded-lg border bg-muted/20 px-2.5 py-2">
+                <Icon className="h-3 w-3 shrink-0 text-muted-foreground" style={{ color: "#E40613" }} />
+                <span className="text-[10px] font-medium text-muted-foreground">{label}</span>
+              </div>
+            ))}
+          </div>
+
           {/* Footer */}
-          <p className="mt-8 text-center text-xs text-muted-foreground/60">
-            GuardTec Security Ltd &copy; {new Date().getFullYear()}
+          <p className="mt-8 text-center text-xs text-muted-foreground/50">
+            GuardTec Security &amp; Patrol Ltd &copy; {new Date().getFullYear()} · UK Manned Guarding &amp; CCTV Services
           </p>
         </div>
       </div>
