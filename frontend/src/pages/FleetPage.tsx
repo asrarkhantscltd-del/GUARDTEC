@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom"
 import {
   Truck, Users, AlertTriangle, CheckCircle2, Search, Plus,
   Car, UserCheck, Trash2, X, Save, Loader2, Camera, ImageOff,
+  FileText, Download, Upload,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -103,9 +104,33 @@ function worstDays(dates: (string | undefined)[]): number | null {
   }, null)
 }
 
+interface VehicleDoc {
+  filename: string
+  originalName: string
+  docType: string
+  size: number
+  uploadedAt: string
+}
+
 const VEHICLE_TYPE_LABELS: Record<string, string> = {
   patrol_car: "Patrol Car", response_van: "Response Van",
   supervisor_car: "Supervisor Car", support_van: "Support Van", minibus: "Minibus",
+}
+
+const DOC_TYPE_LABELS: Record<string, string> = {
+  mot:        "MOT Certificate",
+  road_tax:   "Road Tax",
+  insurance:  "Insurance Certificate",
+  workshop:   "Workshop Receipt",
+  mechanic:   "Mechanic Invoice",
+  inspection: "Vehicle Inspection",
+  other:      "Other Document",
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return bytes + " B"
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB"
 }
 
 const VEHICLE_STATUS_STYLE: Record<string, string> = {
@@ -146,6 +171,15 @@ export default function FleetPage() {
   const [savingVehicle, setSavingVehicle] = useState(false)
   const [deleteVehicleId, setDeleteVehicleId] = useState<string | null>(null)
   const [deletingVehicle, setDeletingVehicle] = useState(false)
+
+  // Docs panel state
+  const [docsVehicleId, setDocsVehicleId] = useState<string | null>(null)
+  const [docs, setDocs] = useState<VehicleDoc[]>([])
+  const [docsLoading, setDocsLoading] = useState(false)
+  const [uploadDocFile, setUploadDocFile] = useState<File | null>(null)
+  const [uploadDocType, setUploadDocType] = useState("mot")
+  const [uploadingDoc, setUploadingDoc] = useState(false)
+  const [docError, setDocError] = useState("")
 
   function switchTab(tab: "vehicles" | "drivers") {
     setSearch(""); setSearchParams({ tab })
@@ -317,6 +351,69 @@ export default function FleetPage() {
     }
   }
 
+  // ── Vehicle Documents ─────────────────────────────────────────────────────────
+
+  async function openDocsPanel(vehicleId: string) {
+    setDocsVehicleId(vehicleId)
+    setDocError("")
+    setUploadDocFile(null)
+    setUploadDocType("mot")
+    setDocs([])
+    setDocsLoading(true)
+    try {
+      const res = await fetch(`/api/vehicles/${vehicleId}/docs`, { credentials: "include" })
+      if (res.ok) setDocs(await res.json())
+    } finally {
+      setDocsLoading(false)
+    }
+  }
+
+  function closeDocsPanel() {
+    setDocsVehicleId(null)
+    setDocs([])
+    setUploadDocFile(null)
+    setDocError("")
+  }
+
+  async function handleUploadDoc() {
+    if (!uploadDocFile || !docsVehicleId) return
+    setUploadingDoc(true)
+    setDocError("")
+    try {
+      const res = await fetch(`/api/vehicles/${docsVehicleId}/docs`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": uploadDocFile.type || "application/octet-stream",
+          "X-Filename": encodeURIComponent(uploadDocFile.name),
+          "X-Doc-Type": uploadDocType,
+        },
+        body: uploadDocFile,
+      })
+      const d = await res.json()
+      if (!d.ok) { setDocError(d.error ?? "Upload failed."); return }
+      setDocs(prev => [...prev, d.doc])
+      setUploadDocFile(null)
+    } catch {
+      setDocError("Network error — please try again.")
+    } finally {
+      setUploadingDoc(false)
+    }
+  }
+
+  async function handleDeleteDoc(filename: string) {
+    if (!docsVehicleId) return
+    try {
+      const res = await fetch(`/api/vehicles/${docsVehicleId}/docs/${filename}`, {
+        method: "DELETE",
+        credentials: "include",
+      })
+      if ((await res.json()).ok) {
+        setDocs(prev => prev.filter(d => d.filename !== filename))
+      }
+    } catch { /* ignore */ }
+  }
+
   // ── Toggle licence category ───────────────────────────────────────────────────
 
   function toggleCat(cat: string) {
@@ -432,7 +529,7 @@ export default function FleetPage() {
               description="Add your first company vehicle to start tracking compliance." />
           : <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {filteredVehicles.map(v => (
-                <VehicleCard key={v.id} v={v} drivers={drivers} onDelete={() => setDeleteVehicleId(v.id)} />
+                <VehicleCard key={v.id} v={v} drivers={drivers} onDelete={() => setDeleteVehicleId(v.id)} onDocs={() => openDocsPanel(v.id)} />
               ))}
             </div>
       )}
@@ -773,6 +870,108 @@ export default function FleetPage() {
         </div>
       )}
 
+      {/* ── Vehicle Documents slide-over panel ── */}
+      {docsVehicleId && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/40" onClick={closeDocsPanel} />
+          <div className="flex h-full w-full max-w-lg flex-col bg-background shadow-2xl">
+            <div className="flex items-center justify-between border-b px-6 py-4">
+              <div>
+                <h2 className="text-lg font-semibold">Vehicle Documents</h2>
+                <p className="text-xs text-muted-foreground">
+                  {vehicles.find(v => v.id === docsVehicleId)?.registration ?? ""}
+                  {" · "}
+                  {vehicles.find(v => v.id === docsVehicleId)?.make ?? ""}
+                  {" "}
+                  {vehicles.find(v => v.id === docsVehicleId)?.model ?? ""}
+                </p>
+              </div>
+              <button onClick={closeDocsPanel} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-6 px-6 py-5">
+
+              {/* Upload section */}
+              <div>
+                <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Upload Document</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-muted-foreground">Document Type</label>
+                    <select value={uploadDocType} onChange={e => setUploadDocType(e.target.value)}
+                      className="h-9 w-full rounded-md border bg-background px-3 text-sm">
+                      {Object.entries(DOC_TYPE_LABELS).map(([val, label]) => (
+                        <option key={val} value={val}>{label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-muted-foreground">File</label>
+                    <label className="flex cursor-pointer items-center gap-2 rounded-md border border-dashed bg-muted/20 px-4 py-3 text-sm transition-colors hover:bg-muted/40">
+                      <Upload className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                        {uploadDocFile ? uploadDocFile.name : "Click to choose a file…"}
+                      </span>
+                      <input type="file" className="hidden"
+                        onChange={e => { setUploadDocFile(e.target.files?.[0] ?? null); setDocError("") }} />
+                    </label>
+                  </div>
+                  {docError && <p className="text-xs text-destructive">{docError}</p>}
+                  <Button onClick={handleUploadDoc} disabled={!uploadDocFile || uploadingDoc} className="w-full gap-2">
+                    {uploadingDoc ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    {uploadingDoc ? "Uploading…" : "Upload Document"}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Stored docs list */}
+              <div>
+                <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Stored Documents {!docsLoading && `(${docs.length})`}
+                </h3>
+                {docsLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading…</p>
+                ) : docs.length === 0 ? (
+                  <div className="rounded-lg border-2 border-dashed py-10 text-center">
+                    <FileText className="mx-auto mb-2 h-8 w-8 text-muted-foreground/25" />
+                    <p className="text-sm text-muted-foreground">No documents uploaded yet.</p>
+                    <p className="mt-1 text-xs text-muted-foreground/60">MOT, road tax, workshop receipts — upload above.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {docs.map(doc => (
+                      <div key={doc.filename} className="flex items-center gap-3 rounded-lg border bg-muted/20 px-3 py-2.5">
+                        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium">{doc.originalName}</div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {DOC_TYPE_LABELS[doc.docType] ?? doc.docType}
+                            {" · "}{formatBytes(doc.size)}
+                            {" · "}{new Date(doc.uploadedAt).toLocaleDateString("en-GB")}
+                          </div>
+                        </div>
+                        <a href={`/api/vehicles/${docsVehicleId}/docs/${doc.filename}`}
+                          download={doc.originalName}
+                          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          title="Download">
+                          <Download className="h-3.5 w-3.5" />
+                        </a>
+                        <button onClick={() => handleDeleteDoc(doc.filename)}
+                          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
+                          title="Delete document">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Delete vehicle confirm dialog ── */}
       {deleteVehicleId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -797,7 +996,7 @@ export default function FleetPage() {
 
 // ── Vehicle Card ──────────────────────────────────────────────────────────────
 
-function VehicleCard({ v, drivers, onDelete }: { v: Vehicle; drivers: FleetDriver[]; onDelete: () => void }) {
+function VehicleCard({ v, drivers, onDelete, onDocs }: { v: Vehicle; drivers: FleetDriver[]; onDelete: () => void; onDocs: () => void }) {
   const driver = v.assignedDriverId ? drivers.find(d => d.id === v.assignedDriverId) : null
   const worst = worstDays([v.mot_expiry, v.insurance_expiry, v.road_tax_expiry])
   const borderClass =
@@ -816,10 +1015,16 @@ function VehicleCard({ v, drivers, onDelete }: { v: Vehicle; drivers: FleetDrive
             <Car className="h-10 w-10" />
           </div>
         )}
-        <button onClick={onDelete} title="Delete vehicle"
-          className="absolute right-2 top-2 rounded-md bg-black/40 p-1.5 text-white/80 backdrop-blur-sm transition-colors hover:bg-destructive hover:text-white">
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
+        <div className="absolute right-2 top-2 flex gap-1">
+          <button onClick={onDocs} title="Manage documents"
+            className="rounded-md bg-black/40 p-1.5 text-white/80 backdrop-blur-sm transition-colors hover:bg-blue-600 hover:text-white">
+            <FileText className="h-3.5 w-3.5" />
+          </button>
+          <button onClick={onDelete} title="Delete vehicle"
+            className="rounded-md bg-black/40 p-1.5 text-white/80 backdrop-blur-sm transition-colors hover:bg-destructive hover:text-white">
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
 
       <div className="p-4">

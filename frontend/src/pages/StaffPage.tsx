@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
 import {
   Search, ChevronRight, Loader2, LayoutList, LayoutGrid,
   Table2, StretchHorizontal, Grid2x2, MapPin, Clock,
   CircleCheck, ShieldCheck, HardHat, FileCheck, Building2, Plus, X,
-  BarChart3, FileWarning, UserX, RotateCcw, Archive,
+  BarChart3, FileWarning, UserX, RotateCcw, Archive, Briefcase,
 } from "lucide-react"
 import { StatusBadge } from "@/components/ui/status-badge"
 
@@ -19,6 +21,7 @@ interface StaffMember {
   id: string
   name: string
   overall: string
+  jobRole?: string
   email?: string
   phone?: string
   sia?: { number?: string; expiry?: string }
@@ -181,6 +184,12 @@ export default function StaffPage() {
   const [restoringId, setRestoringId] = useState<string | null>(null)
   const [exError, setExError]         = useState("")
 
+  // Add Staff panel
+  const [addPanel, setAddPanel]   = useState(false)
+  const [addForm, setAddForm]     = useState({ name: "", jobRole: "", email: "", phone: "", nationality: "" })
+  const [addSaving, setAddSaving] = useState(false)
+  const [addError, setAddError]   = useState("")
+
   // Which section tab is active — defaults to Compliance Status if the URL
   // doesn't specify one (e.g. clicking the parent "Staff" nav item)
   const sectionParam = searchParams.get("section") as SectionId | null
@@ -235,6 +244,43 @@ export default function StaffPage() {
       setExError("Network error.")
     } finally {
       setRestoringId(null)
+    }
+  }
+
+  function openAddStaff() {
+    setAddForm({ name: "", jobRole: "", email: "", phone: "", nationality: "" })
+    setAddError("")
+    setAddPanel(true)
+  }
+
+  async function handleAddStaff() {
+    if (!addForm.name.trim()) { setAddError("Full name is required."); return }
+    setAddSaving(true); setAddError("")
+    try {
+      const r = await fetch("/api/staff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          name:        addForm.name.trim(),
+          jobRole:     addForm.jobRole || undefined,
+          email:       addForm.email.trim() || undefined,
+          phone:       addForm.phone.trim() || undefined,
+          nationality: addForm.nationality.trim() || undefined,
+          overall:     "unknown",
+        }),
+      })
+      const d = await r.json()
+      if (!d.ok) { setAddError(d.error ?? "Failed to add staff."); setAddSaving(false); return }
+      fetch("/api/staff", { credentials: "include" })
+        .then((r2) => r2.json())
+        .then((data) => setStaff(Array.isArray(data) ? data : []))
+        .catch(() => {})
+      setAddPanel(false)
+    } catch {
+      setAddError("Network error.")
+    } finally {
+      setAddSaving(false)
     }
   }
 
@@ -331,10 +377,15 @@ export default function StaffPage() {
           <h2 className="text-2xl font-bold tracking-tight">Staff</h2>
           <p className="text-muted-foreground text-sm">{staff.length} active staff members</p>
         </div>
-        <button onClick={openExStaff}
-          className="flex shrink-0 items-center gap-1.5 rounded-md border bg-background px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
-          <UserX className="h-4 w-4" />Ex-Staff
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={openExStaff}
+            className="flex shrink-0 items-center gap-1.5 rounded-md border bg-background px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+            <UserX className="h-4 w-4" />Ex-Staff
+          </button>
+          <Button onClick={openAddStaff} size="sm" className="gap-1.5">
+            <Plus className="h-4 w-4" />Add staff
+          </Button>
+        </div>
       </div>
 
       {/* ── Section tabs ── */}
@@ -562,6 +613,11 @@ export default function StaffPage() {
                 <InitialsAvatar name={s.name} status={s.overall} size="lg" />
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-sm truncate">{s.name}</p>
+                  {s.jobRole && (
+                    <p className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5 truncate">
+                      <Briefcase className="h-3 w-3 shrink-0" />{s.jobRole}
+                    </p>
+                  )}
                   <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                     <StatusBadge status={s.overall} />
                     <DeployBadge raw={s.deployStatus} />
@@ -637,6 +693,106 @@ export default function StaffPage() {
             ))}
           </div>
         )
+      )}
+
+      {/* ── Add Staff panel ── */}
+      {addPanel && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/40" onClick={() => setAddPanel(false)} />
+          <div className="flex h-full w-full max-w-md flex-col bg-background shadow-2xl">
+            <div className="flex items-center justify-between border-b px-6 py-4">
+              <div>
+                <h2 className="text-lg font-semibold">Add new staff member</h2>
+                <p className="text-xs text-muted-foreground">Basic details — full compliance data is added from their profile page</p>
+              </div>
+              <button onClick={() => setAddPanel(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+              {addError && (
+                <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{addError}</p>
+              )}
+
+              <div className="space-y-1.5">
+                <Label>Full name *</Label>
+                <Input
+                  value={addForm.name}
+                  onChange={(e) => setAddForm((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="e.g. James Okafor"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="flex items-center gap-1.5">
+                  <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
+                  Job role
+                </Label>
+                <select
+                  value={addForm.jobRole}
+                  onChange={(e) => setAddForm((p) => ({ ...p, jobRole: e.target.value }))}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="">— Select role —</option>
+                  <option value="Security Officer">Security Officer</option>
+                  <option value="Door Supervisor">Door Supervisor</option>
+                  <option value="CCTV Operator">CCTV Operator</option>
+                  <option value="Patrol Officer">Patrol Officer</option>
+                  <option value="Mobile Patrol">Mobile Patrol</option>
+                  <option value="Supervisor">Supervisor</option>
+                  <option value="Team Leader">Team Leader</option>
+                  <option value="Key Holder">Key Holder</option>
+                  <option value="Receptionist / Concierge">Receptionist / Concierge</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Email</Label>
+                  <Input
+                    type="email"
+                    value={addForm.email}
+                    onChange={(e) => setAddForm((p) => ({ ...p, email: e.target.value }))}
+                    placeholder="email@example.com"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Phone</Label>
+                  <Input
+                    type="tel"
+                    value={addForm.phone}
+                    onChange={(e) => setAddForm((p) => ({ ...p, phone: e.target.value }))}
+                    placeholder="+44 7700 000000"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Nationality</Label>
+                <Input
+                  value={addForm.nationality}
+                  onChange={(e) => setAddForm((p) => ({ ...p, nationality: e.target.value }))}
+                  placeholder="e.g. British"
+                />
+              </div>
+
+              <p className="rounded-lg bg-muted/50 px-3 py-2.5 text-xs text-muted-foreground">
+                SIA licence, CSCS, Right to Work, documents and training are added from the staff member's profile page after creation.
+              </p>
+            </div>
+
+            <div className="flex gap-2 border-t px-6 py-4">
+              <Button variant="outline" className="flex-1" onClick={() => setAddPanel(false)}>
+                Cancel
+              </Button>
+              <Button className="flex-1" onClick={handleAddStaff} disabled={addSaving}>
+                {addSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Adding…</> : "Add staff member"}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Ex-Staff panel ── */}

@@ -359,6 +359,76 @@ app.post('/api/staff/:id/photo', requireLogin, function(req, res) {
   }
 });
 
+// ── USER (ACCOUNT) PROFILE PHOTOS ────────────────────────────────────────────
+// One photo per logged-in account (stored by postgres user id, not staff id).
+// Works for every role — director, manager, staff — anyone with a login.
+var USER_PHOTOS_DIR = path.join(BASE, 'user-photos');
+if (!fs.existsSync(USER_PHOTOS_DIR)) fs.mkdirSync(USER_PHOTOS_DIR, { recursive: true });
+
+function findUserPhoto(userId) {
+  var exts = ['.jpg', '.jpeg', '.png', '.webp'];
+  for (var e of exts) {
+    var p = path.join(USER_PHOTOS_DIR, String(userId) + e);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+app.get('/api/users/:id/photo', requireLogin, function(req, res) {
+  try {
+    var photo = findUserPhoto(req.params.id);
+    if (!photo) return res.status(404).end();
+    var ext = path.extname(photo).toLowerCase();
+    var mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(photo));
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+app.get('/api/me/photo', requireLogin, function(req, res) {
+  try {
+    var photo = findUserPhoto(req.user.id);
+    if (!photo) return res.status(404).end();
+    var ext = path.extname(photo).toLowerCase();
+    var mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(photo));
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+app.post('/api/me/photo', requireLogin, function(req, res) {
+  try {
+    var chunks = [];
+    req.on('data', function(c) { chunks.push(c); });
+    req.on('end', function() {
+      try {
+        var buf = Buffer.concat(chunks);
+        var ext = '.jpg';
+        if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
+        else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
+
+        ['.jpg', '.jpeg', '.png', '.webp'].forEach(function(e) {
+          var old = path.join(USER_PHOTOS_DIR, String(req.user.id) + e);
+          if (fs.existsSync(old)) fs.unlinkSync(old);
+        });
+
+        fs.writeFileSync(path.join(USER_PHOTOS_DIR, String(req.user.id) + ext), buf);
+        res.json({ ok: true });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: e.message });
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── DATE HELPERS ──────────────────────────────────────────────────────────────
 function excelDate(v) {
   if (!v) return null;
@@ -1724,6 +1794,27 @@ var VEHICLES_FILE = path.join(BASE, 'vehicles.json');
 var VEHICLE_PHOTOS_DIR = path.join(BASE, 'vehicle-photos');
 if (!fs.existsSync(VEHICLE_PHOTOS_DIR)) fs.mkdirSync(VEHICLE_PHOTOS_DIR, { recursive: true });
 
+var VEHICLE_DOCS_DIR = path.join(BASE, 'vehicle-docs');
+if (!fs.existsSync(VEHICLE_DOCS_DIR)) fs.mkdirSync(VEHICLE_DOCS_DIR, { recursive: true });
+
+function ensureVehicleDocsDir(vehicleId) {
+  var dir = path.join(VEHICLE_DOCS_DIR, vehicleId);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function loadVehicleDocs(vehicleId) {
+  var indexFile = path.join(VEHICLE_DOCS_DIR, vehicleId, 'index.json');
+  if (!fs.existsSync(indexFile)) return [];
+  try { return JSON.parse(fs.readFileSync(indexFile, 'utf8')); }
+  catch (e) { return []; }
+}
+
+function saveVehicleDocs(vehicleId, docs) {
+  var dir = ensureVehicleDocsDir(vehicleId);
+  fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify(docs, null, 2), 'utf8');
+}
+
 function loadVehicles() {
   if (!fs.existsSync(VEHICLES_FILE)) return [];
   try { return JSON.parse(fs.readFileSync(VEHICLES_FILE, 'utf8')); }
@@ -1779,6 +1870,10 @@ app.delete('/api/vehicles/:id', requireLogin, requirePermission('fleet'), functi
     saveVehicles(vehicles);
     var oldPhoto = findVehiclePhoto(req.params.id);
     if (oldPhoto) fs.unlinkSync(oldPhoto);
+    var docsDir = path.join(VEHICLE_DOCS_DIR, req.params.id);
+    if (fs.existsSync(docsDir)) {
+      try { fs.rmSync(docsDir, { recursive: true, force: true }); } catch (e) {}
+    }
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -1823,6 +1918,86 @@ app.post('/api/vehicles/:id/photo', requireLogin, requirePermission('fleet'), fu
       saveVehicles(vehicles);
       res.json({ ok: true });
     });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── VEHICLE DOCUMENTS ─────────────────────────────────────────────────────────
+
+app.get('/api/vehicles/:id/docs', requireLogin, requirePermission('fleet'), function(req, res) {
+  res.json(loadVehicleDocs(req.params.id));
+});
+
+app.post('/api/vehicles/:id/docs', requireLogin, requirePermission('fleet'), function(req, res) {
+  try {
+    var vehicles = loadVehicles();
+    var idx = vehicles.findIndex(function(v) { return v.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Vehicle not found' });
+
+    ensureVehicleDocsDir(req.params.id);
+    var originalName = 'document';
+    try { originalName = decodeURIComponent(req.headers['x-filename'] || 'document'); } catch (e) {}
+    var docType = req.headers['x-doc-type'] || 'other';
+    var timestamp = Date.now().toString();
+    var ext = path.extname(originalName) || '';
+    var filename = timestamp + ext;
+    var filePath = path.join(VEHICLE_DOCS_DIR, req.params.id, filename);
+
+    var chunks = [];
+    req.on('data', function(c) { chunks.push(c); });
+    req.on('end', function() {
+      try {
+        var buf = Buffer.concat(chunks);
+        fs.writeFileSync(filePath, buf);
+
+        var docs = loadVehicleDocs(req.params.id);
+        var doc = { filename: filename, originalName: originalName, docType: docType, size: buf.length, uploadedAt: new Date().toISOString() };
+        docs.push(doc);
+        saveVehicleDocs(req.params.id, docs);
+
+        res.json({ ok: true, doc: doc });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: e.message });
+      }
+    });
+    req.on('error', function(e) {
+      res.status(500).json({ ok: false, error: e.message });
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/vehicles/:id/docs/:filename', requireLogin, function(req, res) {
+  try {
+    var filename = path.basename(req.params.filename);
+    var filePath = path.join(VEHICLE_DOCS_DIR, req.params.id, filename);
+    if (!fs.existsSync(filePath)) return res.status(404).end();
+
+    var docs = loadVehicleDocs(req.params.id);
+    var doc = docs.find(function(d) { return d.filename === filename; });
+    var originalName = doc ? doc.originalName : filename;
+
+    res.setHeader('Content-Disposition', 'attachment; filename="' + originalName.replace(/"/g, '\\"') + '"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(filePath));
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+app.delete('/api/vehicles/:id/docs/:filename', requireLogin, requirePermission('fleet'), function(req, res) {
+  try {
+    var filename = path.basename(req.params.filename);
+    var filePath = path.join(VEHICLE_DOCS_DIR, req.params.id, filename);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+    var docs = loadVehicleDocs(req.params.id);
+    docs = docs.filter(function(d) { return d.filename !== filename; });
+    saveVehicleDocs(req.params.id, docs);
+
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

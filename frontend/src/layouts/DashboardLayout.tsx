@@ -5,8 +5,9 @@ import {
   LayoutDashboard, Users, Truck, ShieldCheck, LogOut,
   Menu, X, ChevronDown, MapPin,
   Car, UserCheck, KeyRound, Bell, ClipboardCheck, Shield,
+  Camera, Loader2,
 } from "lucide-react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 
 interface NavItem {
   label: string
@@ -80,6 +81,37 @@ export default function DashboardLayout() {
   const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [fleetExpanded, setFleetExpanded] = useState(false)
+  const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null)
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const photoInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    fetch("/api/me/photo", { credentials: "include" })
+      .then(r => r.ok ? r.blob() : null)
+      .then(blob => { if (blob) setMyPhotoUrl(URL.createObjectURL(blob)) })
+      .catch(() => {})
+  }, [])
+
+  async function handleMyPhotoUpload(file: File | null) {
+    if (!file) return
+    setUploadingPhoto(true)
+    try {
+      await fetch("/api/me/photo", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      })
+      const res = await fetch("/api/me/photo", { credentials: "include" })
+      if (res.ok) {
+        const blob = await res.blob()
+        if (myPhotoUrl) URL.revokeObjectURL(myPhotoUrl)
+        setMyPhotoUrl(URL.createObjectURL(blob))
+      }
+    } finally {
+      setUploadingPhoto(false)
+    }
+  }
 
   useEffect(() => {
     if (location.pathname.startsWith("/fleet")) setFleetExpanded(true)
@@ -198,9 +230,19 @@ export default function DashboardLayout() {
 
         <div className="border-t border-sidebar-border p-3">
           <div className="mb-2 flex items-center gap-2.5 rounded-lg bg-sidebar-accent/40 px-3 py-2.5">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-xs font-bold text-primary-foreground shadow-[0_2px_8px_rgba(228,6,19,0.35)]">
-              {user?.full_name?.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase()}
-            </div>
+            <label className="relative h-9 w-9 shrink-0 cursor-pointer group" title="Change profile photo">
+              {myPhotoUrl
+                ? <img src={myPhotoUrl} alt="Profile" className="h-9 w-9 rounded-full object-cover" />
+                : <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-xs font-bold text-primary-foreground shadow-[0_2px_8px_rgba(228,6,19,0.35)]">
+                    {user?.full_name?.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase()}
+                  </div>}
+              <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                {uploadingPhoto ? <Loader2 className="h-3.5 w-3.5 text-white animate-spin" /> : <Camera className="h-3.5 w-3.5 text-white" />}
+              </div>
+              <input ref={photoInputRef} type="file" accept="image/*" className="hidden"
+                disabled={uploadingPhoto}
+                onChange={e => handleMyPhotoUpload(e.target.files?.[0] ?? null)} />
+            </label>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium leading-tight">{user?.full_name}</p>
               <p className="truncate text-xs leading-tight text-sidebar-foreground/50">{user?.role_name ?? ""}</p>
@@ -231,9 +273,18 @@ export default function DashboardLayout() {
               <Bell className="h-4.5 w-4.5" />
               <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background" />
             </button>
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-xs font-bold text-primary-foreground shadow-sm">
-              {user?.full_name?.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase()}
-            </div>
+            <button onClick={() => photoInputRef.current?.click()}
+              className="relative h-8 w-8 shrink-0 cursor-pointer group rounded-full overflow-hidden"
+              title="Change profile photo">
+              {myPhotoUrl
+                ? <img src={myPhotoUrl} alt="Profile" className="h-8 w-8 rounded-full object-cover" />
+                : <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-xs font-bold text-primary-foreground shadow-sm">
+                    {user?.full_name?.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase()}
+                  </div>}
+              <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                {uploadingPhoto ? <Loader2 className="h-3 w-3 text-white animate-spin" /> : <Camera className="h-3 w-3 text-white" />}
+              </div>
+            </button>
           </div>
         </header>
         <main className="flex-1 overflow-y-auto bg-background p-4 md:p-6">

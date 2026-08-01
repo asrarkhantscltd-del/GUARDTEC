@@ -35,6 +35,7 @@ interface StaffMember {
   id: string
   name: string
   overall: string
+  jobRole?: string
   email?: string
   phone?: string
   nationality?: string
@@ -208,7 +209,8 @@ export default function StaffDetailPage() {
   const { user: me } = useAuth()
   const [staff, setStaff]     = useState<StaffMember | null>(null)
   const [loading, setLoading]   = useState(true)
-  const [photoUrl, setPhotoUrl] = useState<string | null>(null)
+  const [photoUrl, setPhotoUrl]       = useState<string | null>(null)
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [tab, setTab]           = useState<TabId>("overview")
 
   // Portal access — registration code for the staff self-service login
@@ -274,6 +276,27 @@ export default function StaffDetailPage() {
       setRegCopied(true)
       setTimeout(() => setRegCopied(false), 2000)
     })
+  }
+
+  async function handlePhotoUpload(file: File | null) {
+    if (!file || !id) return
+    setUploadingPhoto(true)
+    try {
+      await fetch(`/api/staff/${id}/photo`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      })
+      const res = await fetch(`/api/staff/${id}/photo`, { credentials: "include" })
+      if (res.ok) {
+        const blob = await res.blob()
+        if (photoUrl) URL.revokeObjectURL(photoUrl)
+        setPhotoUrl(URL.createObjectURL(blob))
+      }
+    } finally {
+      setUploadingPhoto(false)
+    }
   }
 
   async function moveToExStaff() {
@@ -427,15 +450,30 @@ export default function StaffDetailPage() {
       <Card>
         <CardContent className="pt-5 pb-4">
           <div className="flex items-center gap-4">
-            {photoUrl ? (
-              <img src={photoUrl} alt={staff.name} className="h-16 w-16 rounded-full object-cover border" />
-            ) : (
-              <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center shrink-0">
-                <User className="h-8 w-8 text-muted-foreground" />
+            <label className="relative h-16 w-16 shrink-0 cursor-pointer group" title="Click to change photo">
+              {photoUrl ? (
+                <img src={photoUrl} alt={staff.name} className="h-16 w-16 rounded-full object-cover border" />
+              ) : (
+                <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center">
+                  <User className="h-8 w-8 text-muted-foreground" />
+                </div>
+              )}
+              <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                {uploadingPhoto
+                  ? <Loader2 className="h-5 w-5 text-white animate-spin" />
+                  : <Camera className="h-5 w-5 text-white" />}
               </div>
-            )}
+              <input type="file" accept="image/*" className="hidden"
+                disabled={uploadingPhoto}
+                onChange={e => handlePhotoUpload(e.target.files?.[0] ?? null)} />
+            </label>
             <div className="flex-1 min-w-0">
               <h2 className="text-xl font-bold truncate">{staff.name}</h2>
+              {staff.jobRole && (
+                <p className="flex items-center gap-1 text-sm text-muted-foreground mt-0.5">
+                  <Briefcase className="h-3.5 w-3.5 shrink-0" />{staff.jobRole}
+                </p>
+              )}
               <div className="flex flex-wrap items-center gap-2 mt-1">
                 <StatusBadge status={staff.overall} />
                 {staff.sia?.type && (

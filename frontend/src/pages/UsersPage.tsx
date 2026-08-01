@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { useAuth } from "@/contexts/AuthContext"
 import {
   Plus, Pencil, Trash2, X, KeyRound, ShieldCheck,
-  ShieldOff, UserCog, Mail, Eye, EyeOff,
+  ShieldOff, UserCog, Mail, Eye, EyeOff, User,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -61,6 +61,26 @@ const AV_COLORS = [
   "bg-amber-100 text-amber-800", "bg-orange-100 text-orange-800",
 ]
 
+function UserPhotoCircle({ userId, name, colorClass, onClick }: {
+  userId: string; name: string; colorClass: string; onClick: () => void
+}) {
+  const [src, setSrc] = useState<string | null>(null)
+  useEffect(() => {
+    fetch(`/api/users/${userId}/photo`, { credentials: "include" })
+      .then(r => r.ok ? r.blob() : null)
+      .then(blob => { if (blob) setSrc(URL.createObjectURL(blob)) })
+      .catch(() => {})
+  }, [userId])
+  return (
+    <button onClick={onClick} title="View profile photo"
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full overflow-hidden text-xs font-semibold cursor-pointer hover:ring-2 hover:ring-primary/40 transition-all ${src ? "" : colorClass}`}>
+      {src
+        ? <img src={src} alt={name} className="h-8 w-8 rounded-full object-cover" />
+        : initials(name)}
+    </button>
+  )
+}
+
 // ── Component ──────────────────────────────────────────────────────────────────
 
 const BLANK_DRAFT = { full_name: "", username: "", role: "supervisor", email: "", password: "", is_active: true }
@@ -94,6 +114,24 @@ export default function UsersPage() {
 
   // Delete confirm
   const [deleteUser, setDeleteUser] = useState<PortalUser | null>(null)
+
+  // View profile photo modal
+  const [viewUser, setViewUser]         = useState<PortalUser | null>(null)
+  const [viewPhotoUrl, setViewPhotoUrl] = useState<string | null>(null)
+  const [viewPhotoLoading, setViewPhotoLoading] = useState(false)
+
+  async function openViewPhoto(u: PortalUser) {
+    setViewUser(u); setViewPhotoUrl(null); setViewPhotoLoading(true)
+    try {
+      const res = await fetch(`/api/users/${u.id}/photo`, { credentials: "include" })
+      if (res.ok) setViewPhotoUrl(URL.createObjectURL(await res.blob()))
+    } finally { setViewPhotoLoading(false) }
+  }
+
+  function closeViewPhoto() {
+    if (viewPhotoUrl) URL.revokeObjectURL(viewPhotoUrl)
+    setViewUser(null); setViewPhotoUrl(null)
+  }
 
   // ── Loaders ────────────────────────────────────────────────────────────────
 
@@ -231,9 +269,9 @@ export default function UsersPage() {
                 <tr key={u.id} className={`transition-colors hover:bg-muted/20 ${!u.is_active ? "opacity-50" : ""}`}>
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-3">
-                      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${AV_COLORS[i % AV_COLORS.length]}`}>
-                        {initials(u.full_name)}
-                      </div>
+                      <UserPhotoCircle userId={u.id} name={u.full_name}
+                        colorClass={AV_COLORS[i % AV_COLORS.length]}
+                        onClick={() => openViewPhoto(u)} />
                       <div>
                         <p className="font-medium leading-tight">
                           {u.full_name}
@@ -433,6 +471,38 @@ export default function UsersPage() {
               <Button className="flex-1" onClick={confirmReset} disabled={resetting}>
                 {resetting ? "Resetting…" : "Reset password"}
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── View profile photo modal ── */}
+      {viewUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" onClick={closeViewPhoto}>
+          <div className="w-full max-w-xs rounded-2xl bg-background shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b">
+              <div>
+                <p className="font-semibold leading-tight">{viewUser.full_name}</p>
+                <p className="text-xs text-muted-foreground">@{viewUser.username}</p>
+              </div>
+              <button onClick={closeViewPhoto} className="rounded-md p-1 text-muted-foreground hover:bg-muted transition-colors">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex items-center justify-center bg-muted/30 py-8">
+              {viewPhotoLoading ? (
+                <div className="flex h-40 w-40 items-center justify-center rounded-full bg-muted">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                </div>
+              ) : viewPhotoUrl ? (
+                <img src={viewPhotoUrl} alt={viewUser.full_name}
+                  className="h-40 w-40 rounded-full object-cover shadow-lg ring-4 ring-background" />
+              ) : (
+                <div className="flex h-40 w-40 flex-col items-center justify-center rounded-full bg-muted text-muted-foreground">
+                  <User className="h-12 w-12 opacity-30" />
+                  <p className="mt-2 text-xs">No photo yet</p>
+                </div>
+              )}
             </div>
           </div>
         </div>
