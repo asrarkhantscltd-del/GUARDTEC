@@ -26,6 +26,71 @@ const pgPool = new Pool({ connectionString: process.env.DATABASE_URL });
   }
 })();
 
+// ── ROLES (configurable, module-level permissions) ────────────────────────────
+// Modules a role can be granted: staff, fleet, sites, compliance, pending_review.
+// Team Access + Manage Roles are deliberately NOT part of this system — they stay
+// hardcoded director-only everywhere, so no role can ever grant itself the power
+// to create/edit other accounts or roles (privilege-escalation guard).
+var DEFAULT_ROLES = [
+  { slug: 'director',       name: 'Director',            is_system: true,  permissions: { staff: true,  fleet: true,  sites: true,  compliance: true,  pending_review: true  } },
+  { slug: 'ops_manager',    name: 'Operations Manager',  is_system: true,  permissions: { staff: true,  fleet: true,  sites: true,  compliance: true,  pending_review: true  } },
+  { slug: 'hr_manager',     name: 'HR Manager',          is_system: true,  permissions: { staff: true,  fleet: false, sites: true,  compliance: true,  pending_review: false } },
+  { slug: 'office_manager', name: 'Office Manager',      is_system: true,  permissions: { staff: true,  fleet: false, sites: true,  compliance: false, pending_review: false } },
+  { slug: 'accounts',       name: 'Accounts',            is_system: true,  permissions: { staff: true,  fleet: false, sites: false, compliance: false, pending_review: false } },
+  { slug: 'media',          name: 'Media',               is_system: true,  permissions: { staff: false, fleet: false, sites: false, compliance: false, pending_review: false } },
+  { slug: 'supervisor',     name: 'Supervisor',          is_system: true,  permissions: { staff: true,  fleet: false, sites: true,  compliance: true,  pending_review: false } },
+  { slug: 'fleet_manager',  name: 'Fleet Manager',       is_system: true,  permissions: { staff: false, fleet: true,  sites: false, compliance: false, pending_review: false } },
+  { slug: 'staff',          name: 'Staff (self-service)',is_system: true,  permissions: {} },
+];
+
+(async function ensureRolesSchema() {
+  try {
+    await pgPool.query(
+      "CREATE TABLE IF NOT EXISTS roles (" +
+      "slug TEXT PRIMARY KEY, name TEXT NOT NULL, is_system BOOLEAN NOT NULL DEFAULT FALSE, " +
+      "permissions JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ DEFAULT NOW())"
+    );
+    for (var i = 0; i < DEFAULT_ROLES.length; i++) {
+      var r = DEFAULT_ROLES[i];
+      await pgPool.query(
+        'INSERT INTO roles (slug, name, is_system, permissions) VALUES ($1,$2,$3,$4) ON CONFLICT (slug) DO NOTHING',
+        [r.slug, r.name, r.is_system, JSON.stringify(r.permissions)]
+      );
+    }
+  } catch (e) {
+    console.error('[DB] roles schema migration failed:', e.message);
+  }
+})();
+
+var rolesCache = null;
+async function loadRoles() {
+  if (!rolesCache) {
+    var result = await pgPool.query('SELECT slug, name, is_system, permissions FROM roles ORDER BY name');
+    rolesCache = result.rows;
+  }
+  return rolesCache;
+}
+function invalidateRolesCache() { rolesCache = null; }
+
+// Director always passes — a safety net so a misconfigured role can never
+// lock the Director out of their own system.
+function requirePermission(moduleKey) {
+  return async function(req, res, next) {
+    if (!req.user || !req.user.role) return res.status(403).json({ error: 'Forbidden' });
+    if (req.user.role === 'director') return next();
+    try {
+      var roles = await loadRoles();
+      var roleDef = roles.find(function(r){ return r.slug === req.user.role; });
+      if (!roleDef || !roleDef.permissions || !roleDef.permissions[moduleKey]) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      next();
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  };
+}
+
 // ── AUTH HELPERS ──────────────────────────────────────────────────────────────
 function signToken(user) {
   return jwt.sign({ id: user.id, username: user.username, role: user.role || 'supervisor', staff_id: user.staff_id || null }, JWT_SECRET, { expiresIn: '7d' });
@@ -65,12 +130,6 @@ function requireRole() {
   };
 }
 
-// Blocks the self-service 'staff' role from management-only endpoints —
-// staff must go through /api/my-profile, never the full roster.
-function requireManagementRole(req, res, next) {
-  if (!req.user || req.user.role === 'staff') return res.status(403).json({ error: 'Forbidden' });
-  next();
-}
 
 const HOME        = process.env.USERPROFILE || ('C:\\Users\\' + require('os').userInfo().username);
 const BASE        = process.env.DATA_PATH || path.join(HOME, "First Call Site Services", "FCSS - Managers", "HR and Legal", "Asrar", "GuardTec Compliance");
@@ -90,6 +149,13 @@ app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
 // ── LOGIN / LOGOUT (no gatekeeper — these ARE the gate) ───────────────────────
+async function resolvePermissions(role) {
+  if (role === 'director') return { staff: true, fleet: true, sites: true, compliance: true, pending_review: true };
+  var roles = await loadRoles();
+  var def = roles.find(function(r){ return r.slug === role; });
+  return (def && def.permissions) || {};
+}
+
 app.post('/api/login', async function(req, res) {
   try {
     var username = String((req.body && req.body.username) || '').trim();
@@ -123,6 +189,7 @@ app.post('/api/login', async function(req, res) {
         full_name: user.full_name || user.username,
         role: user.role || 'supervisor',
         staff_id: user.staff_id || null,
+        permissions: await resolvePermissions(user.role),
         departments: deptResult.rows.map(function(d) { return d.slug; })
       }
     });
@@ -181,6 +248,7 @@ app.post('/api/register', async function(req, res) {
         full_name: user.full_name || user.username,
         role: user.role,
         staff_id: user.staff_id,
+        permissions: await resolvePermissions(user.role),
         departments: []
       }
     });
@@ -208,6 +276,7 @@ app.get('/api/me', async function(req, res) {
         full_name: user.full_name || user.username,
         role: user.role || 'supervisor',
         staff_id: user.staff_id || null,
+        permissions: await resolvePermissions(user.role),
         departments: deptResult.rows.map(function(d) { return d.slug; })
       }
     });
@@ -722,7 +791,7 @@ function buildOverviewHTML(staff) {
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
-app.get('/api/staff', requireLogin, requireManagementRole, function(req, res) {
+app.get('/api/staff', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     res.json(loadAllStaff());
   } catch(e) {
@@ -731,7 +800,7 @@ app.get('/api/staff', requireLogin, requireManagementRole, function(req, res) {
 });
 
 // ── DEPLOYMENT STATUS ─────────────────────────────────────────────────────────
-app.patch('/api/staff/:id/deploy', requireLogin, requireManagementRole, function(req, res) {
+app.patch('/api/staff/:id/deploy', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -747,7 +816,7 @@ app.patch('/api/staff/:id/deploy', requireLogin, requireManagementRole, function
 });
 
 // ── TRAINING ──────────────────────────────────────────────────────────────────
-app.patch('/api/staff/:id/training', requireLogin, requireManagementRole, function(req, res) {
+app.patch('/api/staff/:id/training', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -772,7 +841,7 @@ function generateRegistrationCode() {
 
 // Ops Manager / Director generate & share this with a staff member so they
 // can self-register their own portal login.
-app.get('/api/staff/:id/registration-code', requireLogin, requireRole('director', 'ops_manager'), function(req, res) {
+app.get('/api/staff/:id/registration-code', requireLogin, requirePermission('pending_review'), function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -788,7 +857,7 @@ app.get('/api/staff/:id/registration-code', requireLogin, requireRole('director'
   }
 });
 
-app.post('/api/staff/:id/registration-code/regenerate', requireLogin, requireRole('director', 'ops_manager'), function(req, res) {
+app.post('/api/staff/:id/registration-code/regenerate', requireLogin, requirePermission('pending_review'), function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -887,7 +956,7 @@ function findPendingPhoto(folderPath) {
   return null;
 }
 
-app.get('/api/staff/:id/pending-photo', requireLogin, requireRole('director', 'ops_manager'), function(req, res) {
+app.get('/api/staff/:id/pending-photo', requireLogin, requirePermission('pending_review'), function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -906,7 +975,7 @@ app.get('/api/staff/:id/pending-photo', requireLogin, requireRole('director', 'o
 
 // Ops Manager / Director review queue — every staff member with an
 // outstanding self-submitted change.
-app.get('/api/staff/pending-review', requireLogin, requireRole('director', 'ops_manager'), function(req, res) {
+app.get('/api/staff/pending-review', requireLogin, requirePermission('pending_review'), function(req, res) {
   try {
     var all = loadAllStaff();
     var pending = all
@@ -918,7 +987,7 @@ app.get('/api/staff/pending-review', requireLogin, requireRole('director', 'ops_
   }
 });
 
-app.post('/api/staff/:id/approve', requireLogin, requireRole('director', 'ops_manager'), function(req, res) {
+app.post('/api/staff/:id/approve', requireLogin, requirePermission('pending_review'), function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -951,7 +1020,7 @@ app.post('/api/staff/:id/approve', requireLogin, requireRole('director', 'ops_ma
   }
 });
 
-app.post('/api/staff/:id/reject', requireLogin, requireRole('director', 'ops_manager'), function(req, res) {
+app.post('/api/staff/:id/reject', requireLogin, requirePermission('pending_review'), function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -977,7 +1046,7 @@ app.get('/api/sites', requireLogin, function(req, res) {
   res.json({ sites: loadSites() });
 });
 
-app.post('/api/sites', requireLogin, requireRole('director', 'ops_manager', 'hr_manager'), function(req, res) {
+app.post('/api/sites', requireLogin, requirePermission('sites'), function(req, res) {
   try {
     var name = String(req.body.name || '').trim();
     if (!name) return res.status(400).json({ ok: false, error: 'Site name required' });
@@ -1007,7 +1076,7 @@ app.post('/api/sites', requireLogin, requireRole('director', 'ops_manager', 'hr_
   }
 });
 
-app.patch('/api/sites/:id', requireLogin, requireRole('director', 'ops_manager', 'hr_manager'), function(req, res) {
+app.patch('/api/sites/:id', requireLogin, requirePermission('sites'), function(req, res) {
   try {
     var sites = loadSites();
     var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
@@ -1034,7 +1103,7 @@ app.patch('/api/sites/:id', requireLogin, requireRole('director', 'ops_manager',
   }
 });
 
-app.delete('/api/sites/:id', requireLogin, requireRole('director', 'ops_manager'), function(req, res) {
+app.delete('/api/sites/:id', requireLogin, requirePermission('sites'), function(req, res) {
   try {
     var sites = loadSites().filter(function(s){ return s.id !== req.params.id; });
     saveSites(sites);
@@ -1055,7 +1124,7 @@ app.get('/api/sites/:id/staff', requireLogin, function(req, res) {
   res.json({ ok: true, staff: assigned, count: assigned.length });
 });
 
-app.post('/api/sites/:id/staff', requireLogin, requireRole('director', 'ops_manager', 'hr_manager', 'office_manager', 'supervisor'), function(req, res) {
+app.post('/api/sites/:id/staff', requireLogin, requirePermission('sites'), function(req, res) {
   try {
     var sites = loadSites();
     var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
@@ -1071,7 +1140,7 @@ app.post('/api/sites/:id/staff', requireLogin, requireRole('director', 'ops_mana
   } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-app.delete('/api/sites/:id/staff/:staffId', requireLogin, requireRole('director', 'ops_manager', 'hr_manager', 'office_manager', 'supervisor'), function(req, res) {
+app.delete('/api/sites/:id/staff/:staffId', requireLogin, requirePermission('sites'), function(req, res) {
   try {
     var sites = loadSites();
     var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
@@ -1089,7 +1158,7 @@ app.get('/api/sites/:id/welfare', requireLogin, function(req, res) {
   res.json({ ok: true, items: site.welfare_items || [] });
 });
 
-app.post('/api/sites/:id/welfare', requireLogin, requireRole('director', 'ops_manager', 'hr_manager', 'office_manager'), function(req, res) {
+app.post('/api/sites/:id/welfare', requireLogin, requirePermission('sites'), function(req, res) {
   try {
     var sites = loadSites();
     var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
@@ -1112,7 +1181,7 @@ app.post('/api/sites/:id/welfare', requireLogin, requireRole('director', 'ops_ma
   }
 });
 
-app.patch('/api/sites/:id/welfare/:itemId', requireLogin, requireRole('director', 'ops_manager', 'hr_manager', 'office_manager'), function(req, res) {
+app.patch('/api/sites/:id/welfare/:itemId', requireLogin, requirePermission('sites'), function(req, res) {
   try {
     var sites = loadSites();
     var sIdx = sites.findIndex(function(s){ return s.id === req.params.id; });
@@ -1137,7 +1206,7 @@ app.patch('/api/sites/:id/welfare/:itemId', requireLogin, requireRole('director'
   }
 });
 
-app.delete('/api/sites/:id/welfare/:itemId', requireLogin, requireRole('director', 'ops_manager', 'hr_manager', 'office_manager'), function(req, res) {
+app.delete('/api/sites/:id/welfare/:itemId', requireLogin, requirePermission('sites'), function(req, res) {
   try {
     var sites = loadSites();
     var sIdx = sites.findIndex(function(s){ return s.id === req.params.id; });
@@ -1666,11 +1735,11 @@ function findVehiclePhoto(id) {
   return null;
 }
 
-app.get('/api/vehicles', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+app.get('/api/vehicles', requireLogin, requirePermission('fleet'), function(req, res) {
   res.json({ vehicles: loadVehicles() });
 });
 
-app.post('/api/vehicles', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+app.post('/api/vehicles', requireLogin, requirePermission('fleet'), function(req, res) {
   try {
     var vehicles = loadVehicles();
     var newVehicle = Object.assign({}, req.body, { id: Date.now().toString() });
@@ -1682,7 +1751,7 @@ app.post('/api/vehicles', requireLogin, requireRole('director', 'fleet_manager',
   }
 });
 
-app.patch('/api/vehicles/:id', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+app.patch('/api/vehicles/:id', requireLogin, requirePermission('fleet'), function(req, res) {
   try {
     var vehicles = loadVehicles();
     var idx = vehicles.findIndex(function(v) { return v.id === req.params.id; });
@@ -1695,7 +1764,7 @@ app.patch('/api/vehicles/:id', requireLogin, requireRole('director', 'fleet_mana
   }
 });
 
-app.delete('/api/vehicles/:id', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+app.delete('/api/vehicles/:id', requireLogin, requirePermission('fleet'), function(req, res) {
   try {
     var vehicles = loadVehicles();
     vehicles = vehicles.filter(function(v) { return v.id !== req.params.id; });
@@ -1722,7 +1791,7 @@ app.get('/api/vehicles/:id/photo', requireLogin, function(req, res) {
   }
 });
 
-app.post('/api/vehicles/:id/photo', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+app.post('/api/vehicles/:id/photo', requireLogin, requirePermission('fleet'), function(req, res) {
   try {
     var vehicles = loadVehicles();
     var idx = vehicles.findIndex(function(v) { return v.id === req.params.id; });
@@ -1764,11 +1833,11 @@ function saveFleetDrivers(drivers) {
   fs.writeFileSync(FLEET_DRIVERS_FILE, JSON.stringify(drivers, null, 2), 'utf8');
 }
 
-app.get('/api/fleet-drivers', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+app.get('/api/fleet-drivers', requireLogin, requirePermission('fleet'), function(req, res) {
   res.json(loadFleetDrivers());
 });
 
-app.post('/api/fleet-drivers', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+app.post('/api/fleet-drivers', requireLogin, requirePermission('fleet'), function(req, res) {
   try {
     var drivers = loadFleetDrivers();
     var newDriver = Object.assign({}, req.body, { id: Date.now().toString() });
@@ -1780,7 +1849,7 @@ app.post('/api/fleet-drivers', requireLogin, requireRole('director', 'fleet_mana
   }
 });
 
-app.patch('/api/fleet-drivers/:id', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+app.patch('/api/fleet-drivers/:id', requireLogin, requirePermission('fleet'), function(req, res) {
   try {
     var drivers = loadFleetDrivers();
     var idx = drivers.findIndex(function(d) { return d.id === req.params.id; });
@@ -1793,7 +1862,7 @@ app.patch('/api/fleet-drivers/:id', requireLogin, requireRole('director', 'fleet
   }
 });
 
-app.delete('/api/fleet-drivers/:id', requireLogin, requireRole('director', 'fleet_manager', 'ops_manager'), function(req, res) {
+app.delete('/api/fleet-drivers/:id', requireLogin, requirePermission('fleet'), function(req, res) {
   try {
     var drivers = loadFleetDrivers();
     drivers = drivers.filter(function(d) { return d.id !== req.params.id; });
@@ -1890,6 +1959,94 @@ app.delete('/api/users/:id', requireLogin, requireRole('director'), async functi
     }
     var r = await pgPool.query('DELETE FROM users WHERE id=$1 RETURNING id', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'User not found.' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── ROLES MANAGEMENT ──────────────────────────────────────────────────────────
+// Deliberately director-only and NOT itself permission-configurable — letting
+// any role grant/edit roles would be a privilege-escalation hole.
+function slugify(name) {
+  return String(name).toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'role';
+}
+
+app.get('/api/roles', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var roles = await loadRoles();
+    res.json({ ok: true, roles: roles });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/roles', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var name = String(req.body.name || '').trim();
+    var permissions = req.body.permissions && typeof req.body.permissions === 'object' ? req.body.permissions : {};
+    if (!name) return res.status(400).json({ ok: false, error: 'Role name is required.' });
+
+    var slug = slugify(name);
+    var existing = await pgPool.query('SELECT slug FROM roles WHERE slug = $1', [slug]);
+    if (existing.rows.length) {
+      slug = slug + '_' + Date.now().toString().slice(-5);
+    }
+
+    var r = await pgPool.query(
+      'INSERT INTO roles (slug, name, is_system, permissions) VALUES ($1,$2,FALSE,$3) RETURNING slug, name, is_system, permissions',
+      [slug, name, JSON.stringify(permissions)]
+    );
+    invalidateRolesCache();
+    res.json({ ok: true, role: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.patch('/api/roles/:slug', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var slug = req.params.slug;
+    var existing = await pgPool.query('SELECT * FROM roles WHERE slug = $1', [slug]);
+    if (!existing.rows.length) return res.status(404).json({ ok: false, error: 'Role not found.' });
+    var current = existing.rows[0];
+
+    if (slug === 'director' || slug === 'staff') {
+      return res.status(400).json({ ok: false, error: 'This role is required by the system and cannot be edited.' });
+    }
+
+    var name = String(req.body.name || current.name).trim();
+    var permissions = req.body.permissions && typeof req.body.permissions === 'object' ? req.body.permissions : current.permissions;
+    if (!name) return res.status(400).json({ ok: false, error: 'Role name is required.' });
+
+    var r = await pgPool.query(
+      'UPDATE roles SET name=$1, permissions=$2 WHERE slug=$3 RETURNING slug, name, is_system, permissions',
+      [name, JSON.stringify(permissions), slug]
+    );
+    invalidateRolesCache();
+    res.json({ ok: true, role: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/roles/:slug', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var slug = req.params.slug;
+    var existing = await pgPool.query('SELECT is_system FROM roles WHERE slug = $1', [slug]);
+    if (!existing.rows.length) return res.status(404).json({ ok: false, error: 'Role not found.' });
+    if (existing.rows[0].is_system) {
+      return res.status(400).json({ ok: false, error: 'Built-in roles cannot be deleted.' });
+    }
+
+    var inUse = await pgPool.query('SELECT COUNT(*) as count FROM users WHERE role = $1', [slug]);
+    var count = parseInt(inUse.rows[0].count) || 0;
+    if (count > 0) {
+      return res.status(400).json({ ok: false, error: count + ' user(s) currently have this role. Reassign them first in Team Access.' });
+    }
+
+    await pgPool.query('DELETE FROM roles WHERE slug = $1', [slug]);
+    invalidateRolesCache();
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
