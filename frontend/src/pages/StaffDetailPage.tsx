@@ -10,7 +10,7 @@ import {
   Fingerprint, Building2, GraduationCap, ClipboardList, UserCheck,
   HeartPulse, Flame, Swords, HardHat, Camera, Briefcase,
   MapPin, Contact, BadgeAlert, Pencil, Trash2, Plus, X as XIcon,
-  KeyRound, Copy, RefreshCw, Check,
+  KeyRound, Copy, RefreshCw, Check, UserX,
 } from "lucide-react"
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -217,6 +217,11 @@ export default function StaffDetailPage() {
   const [regLoading, setRegLoading]   = useState(false)
   const [regCopied, setRegCopied]     = useState(false)
 
+  // Move to Ex-Staff
+  const [exConfirm, setExConfirm] = useState(false)
+  const [exMoving, setExMoving]   = useState(false)
+  const [exError, setExError]     = useState("")
+
   // Training management
   const [trainingData, setTrainingData]   = useState<TrainingRecord>({})
   const [trainingSaving, setTrainingSaving] = useState(false)
@@ -269,6 +274,19 @@ export default function StaffDetailPage() {
       setRegCopied(true)
       setTimeout(() => setRegCopied(false), 2000)
     })
+  }
+
+  async function moveToExStaff() {
+    setExMoving(true); setExError("")
+    try {
+      const res = await fetch(`/api/staff/${id}`, { method: "DELETE", credentials: "include" })
+      const d = await res.json()
+      if (!d.ok) { setExError(d.error ?? "Failed to move to Ex-Staff."); setExMoving(false); return }
+      navigate("/staff", { replace: true })
+    } catch {
+      setExError("Network error.")
+      setExMoving(false)
+    }
   }
 
   // ── Training helpers ──
@@ -395,9 +413,15 @@ export default function StaffDetailPage() {
 
   return (
     <div className="space-y-4 max-w-3xl">
-      <Button variant="ghost" size="sm" onClick={() => navigate("/staff")}>
-        <ArrowLeft className="mr-2 h-4 w-4" />Back to Staff
-      </Button>
+      <div className="flex items-center justify-between">
+        <Button variant="ghost" size="sm" onClick={() => navigate("/staff")}>
+          <ArrowLeft className="mr-2 h-4 w-4" />Back to Staff
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => setExConfirm(true)}
+          className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+          <UserX className="mr-2 h-4 w-4" />Move to Ex-Staff
+        </Button>
+      </div>
 
       {/* ── Profile header ── */}
       <Card>
@@ -1034,6 +1058,34 @@ export default function StaffDetailPage() {
               <AcsCheckRow label="Emergency contact recorded"       done={acs.emergencyContact} note="Name, phone, and relationship" />
             </CardContent>
           </Card>
+        </div>
+      )}
+
+      {/* ── Move to Ex-Staff confirm ── */}
+      {exConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-xl bg-background border p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-destructive/10">
+                <UserX className="h-5 w-5 text-destructive" />
+              </div>
+              <div>
+                <p className="font-semibold">Move {staff.name} to Ex-Staff?</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Their folder will be kept as a record — nothing is permanently deleted.
+                  You can restore them any time from Staff → Ex-Staff.
+                </p>
+              </div>
+            </div>
+            {exError && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{exError}</p>}
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setExConfirm(false)}>Cancel</Button>
+              <Button variant="destructive" className="flex-1 gap-2" disabled={exMoving} onClick={moveToExStaff}>
+                {exMoving ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserX className="h-4 w-4" />}
+                {exMoving ? "Moving…" : "Move to Ex-Staff"}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

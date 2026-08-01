@@ -1,10 +1,10 @@
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom"
-import { useAuth, type UserRole } from "@/contexts/AuthContext"
+import { useAuth, type Permissions } from "@/contexts/AuthContext"
 import { Button } from "@/components/ui/button"
 import {
   LayoutDashboard, Users, Truck, ShieldCheck, LogOut,
-  Menu, X, ChevronDown, MapPin, FileWarning, BarChart3,
-  Car, UserCheck, KeyRound, Bell, ClipboardCheck,
+  Menu, X, ChevronDown, MapPin,
+  Car, UserCheck, KeyRound, Bell, ClipboardCheck, Shield,
 } from "lucide-react"
 import { useState, useEffect } from "react"
 
@@ -12,7 +12,11 @@ interface NavItem {
   label: string
   to: string
   icon: React.ReactNode
-  roles: UserRole[]
+  // undefined = visible to everyone logged in; a permission key = gated by
+  // that module permission (director always passes); directorOnly = never
+  // configurable, hardcoded to the Director role only.
+  permission?: keyof Permissions
+  directorOnly?: boolean
   children?: { label: string; to: string; icon: React.ReactNode }[]
 }
 
@@ -21,24 +25,18 @@ const navItems: NavItem[] = [
     label: "Dashboard",
     to: "/",
     icon: <LayoutDashboard className="h-4 w-4" />,
-    roles: ["director","ops_manager","hr_manager","office_manager","accounts","media","supervisor","fleet_manager"],
   },
   {
     label: "Staff",
     to: "/staff",
     icon: <Users className="h-4 w-4" />,
-    roles: ["director","ops_manager","hr_manager","office_manager","accounts","supervisor"],
-    children: [
-      { label: "Compliance Status", to: "/staff?section=compliance", icon: <BarChart3 className="h-3.5 w-3.5" /> },
-      { label: "Deployment",        to: "/staff?section=deployment", icon: <MapPin className="h-3.5 w-3.5" /> },
-      { label: "Document Issues",   to: "/staff?section=documents",  icon: <FileWarning className="h-3.5 w-3.5" /> },
-    ],
+    permission: "staff",
   },
   {
     label: "Fleet",
     to: "/fleet",
     icon: <Truck className="h-4 w-4" />,
-    roles: ["director","fleet_manager","ops_manager"],
+    permission: "fleet",
     children: [
       { label: "Vehicles",   to: "/fleet?tab=vehicles", icon: <Car className="h-3.5 w-3.5" /> },
       { label: "Drivers",    to: "/fleet?tab=drivers",  icon: <UserCheck className="h-3.5 w-3.5" /> },
@@ -48,59 +46,55 @@ const navItems: NavItem[] = [
     label: "Sites",
     to: "/sites",
     icon: <MapPin className="h-4 w-4" />,
-    roles: ["director","ops_manager","hr_manager","office_manager","supervisor"],
+    permission: "sites",
   },
   {
     label: "Compliance",
     to: "/compliance",
     icon: <ShieldCheck className="h-4 w-4" />,
-    roles: ["director","ops_manager","hr_manager","supervisor"],
+    permission: "compliance",
   },
   {
     label: "Pending Review",
     to: "/pending-review",
     icon: <ClipboardCheck className="h-4 w-4" />,
-    roles: ["director","ops_manager"],
+    permission: "pending_review",
   },
   {
     label: "Team Access",
     to: "/users",
     icon: <KeyRound className="h-4 w-4" />,
-    roles: ["director"],
+    directorOnly: true,
+  },
+  {
+    label: "Manage Roles",
+    to: "/roles",
+    icon: <Shield className="h-4 w-4" />,
+    directorOnly: true,
   },
 ]
-
-function roleLabel(role: UserRole): string {
-  const labels: Record<UserRole, string> = {
-    director: "Director", ops_manager: "Ops Manager", hr_manager: "HR Manager",
-    office_manager: "Office Manager", accounts: "Accounts", media: "Media",
-    supervisor: "Supervisor", fleet_manager: "Fleet Manager", staff: "Staff",
-  }
-  return labels[role]
-}
 
 export default function DashboardLayout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [staffExpanded, setStaffExpanded] = useState(false)
   const [fleetExpanded, setFleetExpanded] = useState(false)
 
   useEffect(() => {
-    if (location.pathname.startsWith("/staff")) setStaffExpanded(true)
     if (location.pathname.startsWith("/fleet")) setFleetExpanded(true)
   }, [location.pathname])
 
-  const visibleNav = navItems.filter((item) => user && item.roles.includes(user.role))
+  const visibleNav = navItems.filter((item) => {
+    if (!user) return false
+    if (item.directorOnly) return user.role === "director"
+    if (!item.permission) return true
+    return user.role === "director" || !!user.permissions?.[item.permission]
+  })
 
   async function handleLogout() {
     await logout()
     navigate("/login", { replace: true })
-  }
-
-  function isStaffActive() {
-    return location.pathname.startsWith("/staff")
   }
 
   function isFleetActive() {
@@ -153,12 +147,10 @@ export default function DashboardLayout() {
               )
             }
 
-            // ── Expandable sections (Staff, Fleet) ──
-            const isActive = item.to.startsWith("/staff") ? isStaffActive() : isFleetActive()
-            const isExpanded = item.to.startsWith("/staff") ? staffExpanded : fleetExpanded
-            const toggleExpanded = item.to.startsWith("/staff")
-              ? () => setStaffExpanded((p) => !p)
-              : () => setFleetExpanded((p) => !p)
+            // ── Expandable section (Fleet — the only nav item left with children) ──
+            const isActive = isFleetActive()
+            const isExpanded = fleetExpanded
+            const toggleExpanded = () => setFleetExpanded((p) => !p)
 
             return (
               <div key={item.to}>
@@ -211,7 +203,7 @@ export default function DashboardLayout() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium leading-tight">{user?.full_name}</p>
-              <p className="truncate text-xs leading-tight text-sidebar-foreground/50">{user ? roleLabel(user.role) : ""}</p>
+              <p className="truncate text-xs leading-tight text-sidebar-foreground/50">{user?.role_name ?? ""}</p>
             </div>
             <span className="h-2 w-2 shrink-0 rounded-full bg-success shadow-[0_0_6px_rgba(34,197,94,0.8)]" />
           </div>

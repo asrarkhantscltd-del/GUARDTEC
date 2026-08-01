@@ -11,6 +11,7 @@ import FleetPage from "@/pages/FleetPage"
 import CompliancePage from "@/pages/CompliancePage"
 import SitesPage from "@/pages/SitesPage"
 import UsersPage from "@/pages/UsersPage"
+import ManageRolesPage from "@/pages/ManageRolesPage"
 import PendingReviewPage from "@/pages/PendingReviewPage"
 import MyProfilePage from "@/pages/MyProfilePage"
 import type { ReactNode } from "react"
@@ -64,6 +65,7 @@ function AuthenticatedApp() {
         <Route path="sites" element={<SitesPage />} />
         <Route path="compliance" element={<CompliancePage />} />
         <Route path="users" element={<UsersPage />} />
+        <Route path="roles" element={<ManageRolesPage />} />
         <Route path="pending-review" element={<PendingReviewPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

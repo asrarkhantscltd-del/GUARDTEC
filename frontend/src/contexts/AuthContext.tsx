@@ -6,6 +6,9 @@ import {
   type ReactNode,
 } from "react"
 
+// Built-in role slugs — kept for special-cased checks (role === "director",
+// role === "staff"). Custom roles a Director creates are arbitrary strings,
+// so `role` itself is typed as `string`, not this union.
 export type UserRole =
   | "director"
   | "ops_manager"
@@ -17,12 +20,19 @@ export type UserRole =
   | "fleet_manager"
   | "staff"
 
+export type Permissions = Partial<Record<
+  "staff" | "fleet" | "sites" | "compliance" | "pending_review",
+  boolean
+>>
+
 export interface User {
   id: number
   username: string
   full_name: string
-  role: UserRole
+  role: string
+  role_name?: string
   staff_id?: string | null
+  permissions?: Permissions
   departments: string[]
 }
 

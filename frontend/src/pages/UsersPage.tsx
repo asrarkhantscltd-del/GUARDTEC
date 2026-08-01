@@ -20,19 +20,13 @@ interface PortalUser {
   created_at: string
 }
 
-const ROLES = [
-  { value: "director",       label: "Director" },
-  { value: "ops_manager",    label: "Operations Manager" },
-  { value: "hr_manager",     label: "HR Manager" },
-  { value: "office_manager", label: "Office Manager" },
-  { value: "accounts",       label: "Accounts" },
-  { value: "media",          label: "Media" },
-  { value: "supervisor",     label: "Supervisor" },
-  { value: "fleet_manager",  label: "Fleet Manager" },
-  { value: "staff",          label: "Staff (self-service only)" },
-]
+interface RoleOption {
+  slug: string
+  name: string
+  is_system: boolean
+}
 
-const ROLE_COLORS: Record<string, string> = {
+const KNOWN_ROLE_COLORS: Record<string, string> = {
   director:       "bg-red-100 text-red-800",
   ops_manager:    "bg-orange-100 text-orange-800",
   hr_manager:     "bg-purple-100 text-purple-800",
@@ -44,8 +38,17 @@ const ROLE_COLORS: Record<string, string> = {
   staff:          "bg-slate-100 text-slate-600",
 }
 
-function roleLabel(role: string) {
-  return ROLES.find((r) => r.value === role)?.label ?? role
+const FALLBACK_ROLE_COLORS = [
+  "bg-indigo-100 text-indigo-800", "bg-cyan-100 text-cyan-800",
+  "bg-lime-100 text-lime-800", "bg-fuchsia-100 text-fuchsia-800",
+  "bg-rose-100 text-rose-800", "bg-emerald-100 text-emerald-800",
+]
+
+function roleColor(slug: string) {
+  if (KNOWN_ROLE_COLORS[slug]) return KNOWN_ROLE_COLORS[slug]
+  let hash = 0
+  for (let i = 0; i < slug.length; i++) hash = (hash * 31 + slug.charCodeAt(i)) >>> 0
+  return FALLBACK_ROLE_COLORS[hash % FALLBACK_ROLE_COLORS.length]
 }
 
 function initials(name: string) {
@@ -66,8 +69,13 @@ export default function UsersPage() {
   const { user: me } = useAuth()
 
   const [users, setUsers]     = useState<PortalUser[]>([])
+  const [roleOptions, setRoleOptions] = useState<RoleOption[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState("")
+
+  function roleLabel(role: string) {
+    return roleOptions.find((r) => r.slug === role)?.name ?? role
+  }
 
   // Add / Edit panel
   const [panel, setPanel]           = useState(false)
@@ -92,9 +100,14 @@ export default function UsersPage() {
   async function loadUsers() {
     setLoading(true)
     try {
-      const r = await fetch("/api/users", { credentials: "include" })
-      const d = await r.json()
-      setUsers(d.users ?? [])
+      const [uRes, rRes] = await Promise.all([
+        fetch("/api/users", { credentials: "include" }),
+        fetch("/api/roles", { credentials: "include" }),
+      ])
+      const uData = await uRes.json()
+      const rData = await rRes.json()
+      setUsers(uData.users ?? [])
+      setRoleOptions(rData.roles ?? [])
     } catch {
       setError("Failed to load users.")
     }
@@ -233,7 +246,7 @@ export default function UsersPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell">
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${ROLE_COLORS[u.role] ?? "bg-gray-100 text-gray-700"}`}>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${roleColor(u.role)}`}>
                       {roleLabel(u.role)}
                     </span>
                   </td>
@@ -314,10 +327,13 @@ export default function UsersPage() {
                 <Label>Role</Label>
                 <select value={draft.role} onChange={(e) => setF("role", e.target.value)}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
-                  {ROLES.map((r) => (
-                    <option key={r.value} value={r.value}>{r.label}</option>
+                  {roleOptions.filter((r) => r.slug !== "staff").map((r) => (
+                    <option key={r.slug} value={r.slug}>{r.name}</option>
                   ))}
                 </select>
+                <p className="text-xs text-muted-foreground">
+                  Need a different role? Create it under <span className="font-medium">Manage Roles</span> first.
+                </p>
               </div>
 
               <div className="space-y-1.5">

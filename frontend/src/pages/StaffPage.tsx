@@ -5,7 +5,7 @@ import {
   Search, ChevronRight, Loader2, LayoutList, LayoutGrid,
   Table2, StretchHorizontal, Grid2x2, MapPin, Clock,
   CircleCheck, ShieldCheck, HardHat, FileCheck, Building2, Plus, X,
-  BarChart3, FileWarning,
+  BarChart3, FileWarning, UserX, RotateCcw, Archive,
 } from "lucide-react"
 import { StatusBadge } from "@/components/ui/status-badge"
 
@@ -26,6 +26,14 @@ interface StaffMember {
   visa?: { type?: string; expiry?: string }
   deployStatus?: string
   currentSite?: string
+}
+
+interface ExStaffMember {
+  folderId: string
+  name: string
+  nationality?: string
+  gender?: string
+  overall: string
 }
 
 type ViewMode = "details" | "list" | "tiles" | "icons" | "small"
@@ -166,6 +174,13 @@ export default function StaffPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
 
+  // Ex-Staff panel
+  const [exPanel, setExPanel]         = useState(false)
+  const [exStaff, setExStaff]         = useState<ExStaffMember[]>([])
+  const [exLoading, setExLoading]     = useState(false)
+  const [restoringId, setRestoringId] = useState<string | null>(null)
+  const [exError, setExError]         = useState("")
+
   // Which section tab is active — defaults to Compliance Status if the URL
   // doesn't specify one (e.g. clicking the parent "Staff" nav item)
   const sectionParam = searchParams.get("section") as SectionId | null
@@ -186,6 +201,42 @@ export default function StaffPage() {
       .then((d) => setSites(d.sites ?? []))
       .catch(() => {})
   }, [])
+
+  async function openExStaff() {
+    setExPanel(true); setExLoading(true); setExError("")
+    try {
+      const r = await fetch("/api/exstaff", { credentials: "include" })
+      const d = await r.json()
+      setExStaff(Array.isArray(d) ? d : [])
+    } catch {
+      setExError("Failed to load ex-staff.")
+    } finally {
+      setExLoading(false)
+    }
+  }
+
+  async function restoreExStaff(folderId: string) {
+    setRestoringId(folderId); setExError("")
+    try {
+      const r = await fetch("/api/exstaff/restore", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ folderId }),
+      })
+      const d = await r.json()
+      if (!d.ok) { setExError(d.error ?? "Failed to restore."); return }
+      setExStaff((prev) => prev.filter((e) => e.folderId !== folderId))
+      fetch("/api/staff", { credentials: "include" })
+        .then((r2) => r2.json())
+        .then((data) => setStaff(Array.isArray(data) ? data : []))
+        .catch(() => {})
+    } catch {
+      setExError("Network error.")
+    } finally {
+      setRestoringId(null)
+    }
+  }
 
   async function updateDeploy(staffId: string, deployStatus: string, currentSite?: string) {
     await fetch(`/api/staff/${staffId}/deploy`, {
@@ -275,9 +326,15 @@ export default function StaffPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Staff</h2>
-        <p className="text-muted-foreground text-sm">{staff.length} active staff members</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">Staff</h2>
+          <p className="text-muted-foreground text-sm">{staff.length} active staff members</p>
+        </div>
+        <button onClick={openExStaff}
+          className="flex shrink-0 items-center gap-1.5 rounded-md border bg-background px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+          <UserX className="h-4 w-4" />Ex-Staff
+        </button>
       </div>
 
       {/* ── Section tabs ── */}
@@ -580,6 +637,67 @@ export default function StaffPage() {
             ))}
           </div>
         )
+      )}
+
+      {/* ── Ex-Staff panel ── */}
+      {exPanel && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/40" onClick={() => setExPanel(false)} />
+          <div className="flex h-full w-full max-w-lg flex-col bg-background shadow-2xl">
+            <div className="flex items-center justify-between border-b px-6 py-4">
+              <div>
+                <h2 className="flex items-center gap-2 text-lg font-semibold">
+                  <Archive className="h-4 w-4 text-muted-foreground" />Ex-Staff
+                </h2>
+                <p className="text-xs text-muted-foreground">Restore a returning employee back to Active Staff</p>
+              </div>
+              <button onClick={() => setExPanel(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-5">
+              {exError && (
+                <p className="mb-4 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{exError}</p>
+              )}
+
+              {exLoading ? (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /><span className="text-sm">Loading ex-staff…</span>
+                </div>
+              ) : exStaff.length === 0 ? (
+                <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed py-16 text-center">
+                  <UserX className="mb-4 h-12 w-12 text-muted-foreground/25" />
+                  <h3 className="font-semibold text-muted-foreground">No ex-staff found</h3>
+                  <p className="mt-1 max-w-xs text-sm text-muted-foreground/70">
+                    Staff moved out of Active Staff will appear here — nothing is ever permanently deleted.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {exStaff.map((e) => (
+                    <div key={e.folderId} className="flex items-center gap-3 rounded-lg border bg-card px-4 py-3">
+                      <InitialsAvatar name={e.name} status={e.overall} size="sm" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">{e.name}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {[e.nationality, e.gender].filter(Boolean).join(" · ") || "No details on file"}
+                        </p>
+                      </div>
+                      <button onClick={() => restoreExStaff(e.folderId)} disabled={restoringId === e.folderId}
+                        className="flex shrink-0 items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50">
+                        {restoringId === e.folderId
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          : <RotateCcw className="h-3.5 w-3.5" />}
+                        Restore
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

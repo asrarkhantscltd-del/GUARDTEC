@@ -149,11 +149,13 @@ app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
 // ── LOGIN / LOGOUT (no gatekeeper — these ARE the gate) ───────────────────────
-async function resolvePermissions(role) {
-  if (role === 'director') return { staff: true, fleet: true, sites: true, compliance: true, pending_review: true };
+async function resolveRoleInfo(role) {
+  if (role === 'director') {
+    return { name: 'Director', permissions: { staff: true, fleet: true, sites: true, compliance: true, pending_review: true } };
+  }
   var roles = await loadRoles();
   var def = roles.find(function(r){ return r.slug === role; });
-  return (def && def.permissions) || {};
+  return { name: (def && def.name) || role, permissions: (def && def.permissions) || {} };
 }
 
 app.post('/api/login', async function(req, res) {
@@ -180,6 +182,7 @@ app.post('/api/login', async function(req, res) {
       secure: false, // TODO: set true once Phase 7 adds HTTPS — a secure cookie is silently dropped over plain HTTP
       maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days, matches the token's own expiry
     });
+    var roleInfo = await resolveRoleInfo(user.role);
     res.json({
       ok: true,
       token: token,
@@ -188,8 +191,9 @@ app.post('/api/login', async function(req, res) {
         username: user.username,
         full_name: user.full_name || user.username,
         role: user.role || 'supervisor',
+        role_name: roleInfo.name,
         staff_id: user.staff_id || null,
-        permissions: await resolvePermissions(user.role),
+        permissions: roleInfo.permissions,
         departments: deptResult.rows.map(function(d) { return d.slug; })
       }
     });
@@ -240,6 +244,7 @@ app.post('/api/register', async function(req, res) {
       secure: false,
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
+    var registerRoleInfo = await resolveRoleInfo(user.role);
     res.json({
       ok: true,
       user: {
@@ -247,8 +252,9 @@ app.post('/api/register', async function(req, res) {
         username: user.username,
         full_name: user.full_name || user.username,
         role: user.role,
+        role_name: registerRoleInfo.name,
         staff_id: user.staff_id,
-        permissions: await resolvePermissions(user.role),
+        permissions: registerRoleInfo.permissions,
         departments: []
       }
     });
@@ -269,14 +275,16 @@ app.get('/api/me', async function(req, res) {
       'SELECT d.slug, d.name FROM user_departments ud JOIN departments d ON d.id = ud.department_id WHERE ud.user_id = $1',
       [user.id]
     ).catch(function() { return { rows: [] }; });
+    var meRoleInfo = await resolveRoleInfo(user.role);
     res.json({
       user: {
         id: user.id,
         username: user.username,
         full_name: user.full_name || user.username,
         role: user.role || 'supervisor',
+        role_name: meRoleInfo.name,
         staff_id: user.staff_id || null,
-        permissions: await resolvePermissions(user.role),
+        permissions: meRoleInfo.permissions,
         departments: deptResult.rows.map(function(d) { return d.slug; })
       }
     });
@@ -1254,7 +1262,7 @@ app.post('/api/staff', requireLogin, function(req, res) {
   }
 });
 
-app.delete('/api/staff/:id', requireLogin, function(req, res) {
+app.delete('/api/staff/:id', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -1293,7 +1301,7 @@ app.delete('/api/staff/:id', requireLogin, function(req, res) {
   }
 });
 
-app.get('/api/exstaff', requireLogin, function(req, res) {
+app.get('/api/exstaff', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var exDir = path.join(BASE, '02 - Vetting & Screening', 'Ex-Staff');
     if (!fs.existsSync(exDir)) return res.json([]);
@@ -1321,7 +1329,7 @@ app.get('/api/exstaff', requireLogin, function(req, res) {
   }
 });
 
-app.post('/api/exstaff/restore', requireLogin, function(req, res) {
+app.post('/api/exstaff/restore', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var folderId = req.body.folderId;
     if (!folderId) return res.status(400).json({ ok: false, error: 'No folderId provided' });
