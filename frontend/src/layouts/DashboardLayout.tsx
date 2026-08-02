@@ -84,11 +84,19 @@ export default function DashboardLayout() {
   const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const photoInputRef = useRef<HTMLInputElement>(null)
+  const [alertCount, setAlertCount] = useState(0)
 
   useEffect(() => {
     fetch("/api/me/photo", { credentials: "include" })
       .then(r => r.ok ? r.blob() : null)
       .then(blob => { if (blob) setMyPhotoUrl(URL.createObjectURL(blob)) })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    fetch("/api/compliance/alerts", { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setAlertCount(d.total ?? 0) })
       .catch(() => {})
   }, [])
 
@@ -269,9 +277,15 @@ export default function DashboardLayout() {
             <p className="hidden text-xs text-muted-foreground md:block">
               {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
             </p>
-            <button className="relative rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+            <button onClick={() => navigate("/compliance")}
+              className="relative rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              title="Compliance alerts">
               <Bell className="h-4.5 w-4.5" />
-              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background" />
+              {alertCount > 0 && (
+                <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-white ring-2 ring-background">
+                  {alertCount > 9 ? "9+" : alertCount}
+                </span>
+              )}
             </button>
             <button onClick={() => photoInputRef.current?.click()}
               className="relative h-8 w-8 shrink-0 cursor-pointer group rounded-full overflow-hidden"

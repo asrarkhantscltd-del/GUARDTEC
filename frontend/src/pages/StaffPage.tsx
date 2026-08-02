@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
+import { toast } from "sonner"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -277,6 +278,7 @@ export default function StaffPage() {
         .then((data) => setStaff(Array.isArray(data) ? data : []))
         .catch(() => {})
       setAddPanel(false)
+      toast.success("Staff member added successfully")
     } catch {
       setAddError("Network error.")
     } finally {

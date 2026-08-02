@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react"
 import { useSearchParams } from "react-router-dom"
+import { toast } from "sonner"
 import {
   Truck, Users, AlertTriangle, CheckCircle2, Search, Plus,
   Car, UserCheck, Trash2, X, Save, Loader2, Camera, ImageOff,
@@ -263,6 +264,7 @@ export default function FleetPage() {
         setDrivers(prev => [...prev, driver])
         setShowPanel(false)
         setEditDriver(BLANK_DRIVER)
+        toast.success("Driver added successfully")
       }
     } finally {
       setSaving(false)
@@ -279,6 +281,7 @@ export default function FleetPage() {
       if (res.ok) {
         setDrivers(prev => prev.filter(d => d.id !== deleteId))
         setDeleteId(null)
+        toast.success("Driver removed")
       }
     } finally {
       setDeleting(false)
@@ -330,6 +333,7 @@ export default function FleetPage() {
 
       setVehicles(prev => [...prev, vehicle])
       closeVehiclePanel()
+      toast.success("Vehicle added successfully")
     } finally {
       setSavingVehicle(false)
     }
@@ -345,6 +349,7 @@ export default function FleetPage() {
       if (res.ok) {
         setVehicles(prev => prev.filter(v => v.id !== deleteVehicleId))
         setDeleteVehicleId(null)
+        toast.success("Vehicle removed")
       }
     } finally {
       setDeletingVehicle(false)
@@ -394,6 +399,7 @@ export default function FleetPage() {
       if (!d.ok) { setDocError(d.error ?? "Upload failed."); return }
       setDocs(prev => [...prev, d.doc])
       setUploadDocFile(null)
+      toast.success("Document uploaded")
     } catch {
       setDocError("Network error — please try again.")
     } finally {

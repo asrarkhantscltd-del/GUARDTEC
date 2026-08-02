@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
+import { Toaster } from "sonner"
 import { AuthProvider, useAuth } from "@/contexts/AuthContext"
 import DashboardLayout from "@/layouts/DashboardLayout"
 import StaffLayout from "@/layouts/StaffLayout"
@@ -77,6 +78,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <Toaster richColors position="bottom-right" />
         <Routes>
           <Route
             path="/login"
