@@ -130,7 +130,7 @@ export default function DashboardPage() {
                 </div>
               </div>
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-white/40">Fleet Compliance</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-white/40">Staff Compliance</p>
                 <p className="mt-0.5 text-sm text-white/60">{stats?.compliant ?? 0} of {stats?.totalStaff ?? 0} officers</p>
                 <p className="mt-0.5 text-xs text-white/30">fully documented &amp; deployable</p>
               </div>

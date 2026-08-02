@@ -5,8 +5,8 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import {
-  Search, ChevronRight, Loader2, LayoutList, LayoutGrid,
-  Table2, StretchHorizontal, Grid2x2, MapPin, Clock,
+  Search, ChevronRight, Loader2,
+  Table2, StretchHorizontal, MapPin, Clock,
   CircleCheck, ShieldCheck, HardHat, FileCheck, Building2, Plus, X,
   BarChart3, FileWarning, UserX, RotateCcw, Archive, Briefcase,
 } from "lucide-react"
@@ -40,7 +40,15 @@ interface ExStaffMember {
   overall: string
 }
 
-type ViewMode = "details" | "list" | "tiles" | "icons" | "small"
+type ViewMode = "details" | "tiles"
+type SortKey = "name" | "sia" | "cscs" | "rtw"
+
+function staffDaysUntil(dateStr?: string): number {
+  if (!dateStr) return Infinity
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return Infinity
+  return Math.floor((d.getTime() - Date.now()) / 86400000)
+}
 
 function normDeploy(raw?: string): "onsite" | "available" | "offduty" | "unknown" {
   const v = (raw ?? "").toLowerCase().replace(/[\s_-]/g, "")
@@ -148,11 +156,8 @@ function SiteSelect({
 }
 
 const viewButtons: { mode: ViewMode; icon: React.ReactNode; label: string }[] = [
-  { mode: "details", icon: <Table2 className="h-4 w-4" />,           label: "Details" },
-  { mode: "tiles",   icon: <StretchHorizontal className="h-4 w-4" />, label: "Tiles" },
-  { mode: "icons",   icon: <Grid2x2 className="h-4 w-4" />,           label: "Icons" },
-  { mode: "small",   icon: <LayoutGrid className="h-4 w-4" />,         label: "Small icons" },
-  { mode: "list",    icon: <LayoutList className="h-4 w-4" />,         label: "List" },
+  { mode: "details", icon: <Table2 className="h-4 w-4" />,           label: "Table" },
+  { mode: "tiles",   icon: <StretchHorizontal className="h-4 w-4" />, label: "Cards" },
 ]
 
 type SectionId = "compliance" | "deployment" | "documents"
@@ -172,7 +177,9 @@ export default function StaffPage() {
   const [deployFilter, setDeployFilter] = useState("all")
   const [siteFilter, setSiteFilter]     = useState("all")
   const [docFilter, setDocFilter]       = useState("all")
-  const [view, setView]       = useState<ViewMode>("details")
+  const [view, setView]       = useState<ViewMode>(() => (localStorage.getItem("staff-view") as ViewMode) ?? "details")
+  const [sortKey, setSortKey] = useState<SortKey>("name")
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
   const [newSiteName, setNewSiteName]   = useState("")
   const [addingSite, setAddingSite]     = useState(false)
   const navigate = useNavigate()
@@ -339,6 +346,7 @@ export default function StaffPage() {
     if (compFilter !== "all" && s.overall !== compFilter) return false
     if (deployFilter !== "all" && normDeploy(s.deployStatus) !== deployFilter) return false
     if (siteFilter !== "all") {
+
       if (siteFilter === "__none__") return normDeploy(s.deployStatus) === "onsite" && !s.currentSite
       return s.currentSite === siteFilter
     }
@@ -346,6 +354,13 @@ export default function StaffPage() {
     if (docFilter === "cscs") return docStatus(s.cscs?.expiry) !== "ok"
     if (docFilter === "rtw")  return docStatus(s.visa?.expiry) !== "ok"
     return true
+  }).sort((a, b) => {
+    let cmp = 0
+    if (sortKey === "name") cmp = a.name.localeCompare(b.name)
+    else if (sortKey === "sia")  cmp = staffDaysUntil(a.sia?.expiry)  - staffDaysUntil(b.sia?.expiry)
+    else if (sortKey === "cscs") cmp = staffDaysUntil(a.cscs?.expiry) - staffDaysUntil(b.cscs?.expiry)
+    else if (sortKey === "rtw")  cmp = staffDaysUntil(a.visa?.expiry) - staffDaysUntil(b.visa?.expiry)
+    return sortDir === "asc" ? cmp : -cmp
   })
 
   const compCounts = {
@@ -371,6 +386,13 @@ export default function StaffPage() {
   }
 
   function goToStaff(id: string) { navigate(`/staff/${id}`) }
+
+  function changeView(v: ViewMode) { setView(v); localStorage.setItem("staff-view", v) }
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc")
+    else { setSortKey(key); setSortDir("asc") }
+  }
 
   return (
     <div className="space-y-4">
@@ -543,7 +565,7 @@ export default function StaffPage() {
         </div>
         <div className="flex items-center gap-1 rounded-md border bg-muted/30 p-1">
           {viewButtons.map(({ mode, icon, label }) => (
-            <button key={mode} onClick={() => setView(mode)} title={label}
+            <button key={mode} onClick={() => changeView(mode)} title={label}
               className={`rounded p-1.5 transition-colors ${
                 view === mode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
               }`}>
@@ -568,13 +590,29 @@ export default function StaffPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
-                  <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">
+                    <button onClick={() => toggleSort("name")} className="flex items-center gap-1 hover:text-foreground transition-colors">
+                      Name {sortKey === "name" ? (sortDir === "asc" ? "↑" : "↓") : <span className="opacity-30">↕</span>}
+                    </button>
+                  </th>
                   <th className="px-4 py-3">Compliance</th>
                   <th className="hidden sm:table-cell px-4 py-3">Deployment</th>
                   <th className="hidden sm:table-cell px-4 py-3">Site</th>
-                  <th className="hidden sm:table-cell px-4 py-3">SIA Expiry</th>
-                  <th className="hidden md:table-cell px-4 py-3">CSCS Expiry</th>
-                  <th className="hidden lg:table-cell px-4 py-3">RTW Expiry</th>
+                  <th className="hidden sm:table-cell px-4 py-3">
+                    <button onClick={() => toggleSort("sia")} className="flex items-center gap-1 hover:text-foreground transition-colors">
+                      SIA Expiry {sortKey === "sia" ? (sortDir === "asc" ? "↑" : "↓") : <span className="opacity-30">↕</span>}
+                    </button>
+                  </th>
+                  <th className="hidden md:table-cell px-4 py-3">
+                    <button onClick={() => toggleSort("cscs")} className="flex items-center gap-1 hover:text-foreground transition-colors">
+                      CSCS Expiry {sortKey === "cscs" ? (sortDir === "asc" ? "↑" : "↓") : <span className="opacity-30">↕</span>}
+                    </button>
+                  </th>
+                  <th className="hidden lg:table-cell px-4 py-3">
+                    <button onClick={() => toggleSort("rtw")} className="flex items-center gap-1 hover:text-foreground transition-colors">
+                      RTW Expiry {sortKey === "rtw" ? (sortDir === "asc" ? "↑" : "↓") : <span className="opacity-30">↕</span>}
+                    </button>
+                  </th>
                   <th className="px-4 py-3 w-8"></th>
                 </tr>
               </thead>

@@ -1,7 +1,7 @@
 import { Outlet, useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
 import { Button } from "@/components/ui/button"
-import { LogOut, Camera, Loader2 } from "lucide-react"
+import { LogOut, Camera, Loader2, Sun, Moon } from "lucide-react"
 import { useState, useEffect } from "react"
 
 export default function StaffLayout() {
@@ -9,6 +9,18 @@ export default function StaffLayout() {
   const navigate = useNavigate()
   const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains("dark"))
+
+  function toggleTheme() {
+    const html = document.documentElement
+    if (html.classList.contains("dark")) {
+      html.classList.remove("dark"); html.classList.add("light")
+      localStorage.setItem("theme", "light"); setIsDark(false)
+    } else {
+      html.classList.remove("light"); html.classList.add("dark")
+      localStorage.setItem("theme", "dark"); setIsDark(true)
+    }
+  }
 
   useEffect(() => {
     fetch("/api/me/photo", { credentials: "include" })
@@ -70,6 +82,10 @@ export default function StaffLayout() {
               disabled={uploadingPhoto}
               onChange={e => handleMyPhotoUpload(e.target.files?.[0] ?? null)} />
           </label>
+          <Button variant="ghost" size="icon-sm" onClick={toggleTheme} title={isDark ? "Light mode" : "Dark mode"}
+            className="text-white/70 hover:bg-white/10 hover:text-white">
+            {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </Button>
           <Button variant="ghost" size="icon-sm" onClick={handleLogout}
             className="text-white/70 hover:bg-white/10 hover:text-white" title="Sign out">
             <LogOut className="h-4 w-4" />

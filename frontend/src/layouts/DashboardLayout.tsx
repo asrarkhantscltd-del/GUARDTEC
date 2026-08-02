@@ -1,11 +1,11 @@
-import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom"
+import { Outlet, NavLink, useNavigate } from "react-router-dom"
 import { useAuth, type Permissions } from "@/contexts/AuthContext"
 import { Button } from "@/components/ui/button"
 import {
   LayoutDashboard, Users, Truck, ShieldCheck, LogOut,
-  Menu, X, ChevronDown, MapPin,
-  Car, UserCheck, KeyRound, Bell, ClipboardCheck, Shield,
-  Camera, Loader2,
+  Menu, X, MapPin,
+  KeyRound, Bell, ClipboardCheck, Shield,
+  Camera, Loader2, Sun, Moon,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 
@@ -13,12 +13,8 @@ interface NavItem {
   label: string
   to: string
   icon: React.ReactNode
-  // undefined = visible to everyone logged in; a permission key = gated by
-  // that module permission (director always passes); directorOnly = never
-  // configurable, hardcoded to the Director role only.
   permission?: keyof Permissions
   directorOnly?: boolean
-  children?: { label: string; to: string; icon: React.ReactNode }[]
 }
 
 const navItems: NavItem[] = [
@@ -38,10 +34,6 @@ const navItems: NavItem[] = [
     to: "/fleet",
     icon: <Truck className="h-4 w-4" />,
     permission: "fleet",
-    children: [
-      { label: "Vehicles",   to: "/fleet?tab=vehicles", icon: <Car className="h-3.5 w-3.5" /> },
-      { label: "Drivers",    to: "/fleet?tab=drivers",  icon: <UserCheck className="h-3.5 w-3.5" /> },
-    ],
   },
   {
     label: "Sites",
@@ -78,9 +70,8 @@ const navItems: NavItem[] = [
 export default function DashboardLayout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
-  const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [fleetExpanded, setFleetExpanded] = useState(false)
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains("dark"))
   const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const photoInputRef = useRef<HTMLInputElement>(null)
@@ -121,10 +112,6 @@ export default function DashboardLayout() {
     }
   }
 
-  useEffect(() => {
-    if (location.pathname.startsWith("/fleet")) setFleetExpanded(true)
-  }, [location.pathname])
-
   const visibleNav = navItems.filter((item) => {
     if (!user) return false
     if (item.directorOnly) return user.role === "director"
@@ -132,13 +119,24 @@ export default function DashboardLayout() {
     return user.role === "director" || !!user.permissions?.[item.permission]
   })
 
+  function toggleTheme() {
+    const html = document.documentElement
+    if (html.classList.contains("dark")) {
+      html.classList.remove("dark")
+      html.classList.add("light")
+      localStorage.setItem("theme", "light")
+      setIsDark(false)
+    } else {
+      html.classList.remove("light")
+      html.classList.add("dark")
+      localStorage.setItem("theme", "dark")
+      setIsDark(true)
+    }
+  }
+
   async function handleLogout() {
     await logout()
     navigate("/login", { replace: true })
-  }
-
-  function isFleetActive() {
-    return location.pathname.startsWith("/fleet")
   }
 
   return (
@@ -164,76 +162,25 @@ export default function DashboardLayout() {
         </button>
 
         <nav className="flex-1 space-y-0.5 overflow-y-auto p-3">
-          {visibleNav.map((item) => {
-            if (!item.children) {
-              return (
-                <NavLink key={item.to} to={item.to} end={item.to === "/"}
-                  onClick={() => setSidebarOpen(false)}
-                  className={({ isActive }) =>
-                    `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ${
-                      isActive
-                        ? "bg-gradient-to-r from-sidebar-primary to-sidebar-primary/80 text-sidebar-primary-foreground shadow-[0_4px_14px_-2px_rgba(228,6,19,0.4)]"
-                        : "text-sidebar-foreground hover:translate-x-0.5 hover:bg-sidebar-accent/60"
-                    }`
-                  }>
-                  {({ isActive }) => (
-                    <>
-                      {isActive && <span className="absolute -left-3 h-5 w-1 rounded-r-full bg-sidebar-primary" />}
-                      <span className={`transition-transform duration-200 ${!isActive ? "group-hover:scale-110" : ""}`}>{item.icon}</span>
-                      {item.label}
-                    </>
-                  )}
-                </NavLink>
-              )
-            }
-
-            // ── Expandable section (Fleet — the only nav item left with children) ──
-            const isActive = isFleetActive()
-            const isExpanded = fleetExpanded
-            const toggleExpanded = () => setFleetExpanded((p) => !p)
-
-            return (
-              <div key={item.to}>
-                <div className="group relative flex items-center gap-1">
+          {visibleNav.map((item) => (
+            <NavLink key={item.to} to={item.to} end={item.to === "/"}
+              onClick={() => setSidebarOpen(false)}
+              className={({ isActive }) =>
+                `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ${
+                  isActive
+                    ? "bg-gradient-to-r from-sidebar-primary to-sidebar-primary/80 text-sidebar-primary-foreground shadow-[0_4px_14px_-2px_rgba(228,6,19,0.4)]"
+                    : "text-sidebar-foreground hover:translate-x-0.5 hover:bg-sidebar-accent/60"
+                }`
+              }>
+              {({ isActive }) => (
+                <>
                   {isActive && <span className="absolute -left-3 h-5 w-1 rounded-r-full bg-sidebar-primary" />}
-                  <NavLink to={item.to}
-                    onClick={() => setSidebarOpen(false)}
-                    className={`flex flex-1 items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ${
-                      isActive
-                        ? "bg-gradient-to-r from-sidebar-primary to-sidebar-primary/80 text-sidebar-primary-foreground shadow-[0_4px_14px_-2px_rgba(228,6,19,0.4)]"
-                        : "text-sidebar-foreground hover:translate-x-0.5 hover:bg-sidebar-accent/60"
-                    }`}>
-                    <span className={`transition-transform duration-200 ${!isActive ? "group-hover:scale-110" : ""}`}>{item.icon}</span>
-                    {item.label}
-                  </NavLink>
-                  <button
-                    onClick={toggleExpanded}
-                    className={`rounded-lg p-1.5 transition-colors hover:bg-sidebar-accent/50 ${
-                      isActive ? "text-sidebar-primary-foreground" : "text-sidebar-foreground"
-                    }`}>
-                    <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`} />
-                  </button>
-                </div>
-
-                {isExpanded && (
-                  <div className="ml-4 mt-0.5 space-y-0.5 border-l border-sidebar-accent/30 pl-3 animate-fade-in-up">
-                    {item.children!.map((child) => (
-                      <NavLink key={child.to} to={child.to}
-                        onClick={() => setSidebarOpen(false)}
-                        className={({ isActive: ca }) =>
-                          `flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors ${
-                            ca ? "bg-sidebar-primary/80 text-sidebar-primary-foreground shadow-sm"
-                               : "text-sidebar-foreground/80 hover:bg-sidebar-accent/40 hover:text-sidebar-foreground"
-                          }`
-                        }>
-                        {child.icon}{child.label}
-                      </NavLink>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
-          })}
+                  <span className={`transition-transform duration-200 ${!isActive ? "group-hover:scale-110" : ""}`}>{item.icon}</span>
+                  {item.label}
+                </>
+              )}
+            </NavLink>
+          ))}
         </nav>
 
         <div className="border-t border-sidebar-border p-3">
@@ -257,9 +204,15 @@ export default function DashboardLayout() {
             </div>
             <span className="h-2 w-2 shrink-0 rounded-full bg-success shadow-[0_0_6px_rgba(34,197,94,0.8)]" />
           </div>
-          <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-sidebar-foreground hover:bg-destructive/10 hover:text-destructive" onClick={handleLogout}>
-            <LogOut className="h-4 w-4" />Sign out
-          </Button>
+          <div className="flex gap-1">
+            <Button variant="ghost" size="sm" className="flex-1 justify-start gap-2 text-sidebar-foreground hover:bg-destructive/10 hover:text-destructive" onClick={handleLogout}>
+              <LogOut className="h-4 w-4" />Sign out
+            </Button>
+            <Button variant="ghost" size="icon" onClick={toggleTheme} title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+              className="shrink-0 text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground">
+              {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </Button>
+          </div>
         </div>
       </aside>
 
