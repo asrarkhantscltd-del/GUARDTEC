@@ -1,26 +1,16 @@
 import { Outlet, useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
+import { useTheme } from "@/contexts/ThemeContext"
 import { Button } from "@/components/ui/button"
 import { LogOut, Camera, Loader2, Sun, Moon } from "lucide-react"
 import { useState, useEffect } from "react"
 
 export default function StaffLayout() {
   const { user, logout } = useAuth()
+  const { isDark, toggleTheme } = useTheme()
   const navigate = useNavigate()
   const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
-  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains("dark"))
-
-  function toggleTheme() {
-    const html = document.documentElement
-    if (html.classList.contains("dark")) {
-      html.classList.remove("dark"); html.classList.add("light")
-      localStorage.setItem("theme", "light"); setIsDark(false)
-    } else {
-      html.classList.remove("light"); html.classList.add("dark")
-      localStorage.setItem("theme", "dark"); setIsDark(true)
-    }
-  }
 
   useEffect(() => {
     fetch("/api/me/photo", { credentials: "include" })
@@ -57,17 +47,25 @@ export default function StaffLayout() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <header className="flex h-16 items-center gap-3 border-b bg-sidebar px-4 text-sidebar-foreground md:px-8">
-        <img src="/logo-white.png" alt="GuardTec" className="h-9 w-auto" />
+      <header className={`flex h-16 items-center gap-3 border-b px-4 md:px-8 ${
+        isDark
+          ? "border-[hsl(228_12%_11%)] bg-[hsl(228_14%_7%)] text-[hsl(220_14%_72%)]"
+          : "border-[hsl(220_13%_91%)] bg-white text-[hsl(224_14%_15%)]"
+      }`}>
+        <img
+          src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
+          alt="GuardTec"
+          className="h-9 w-auto"
+        />
         <div>
-          <p className="text-sm font-bold leading-tight text-white">GuardTec</p>
-          <p className="text-[10px] leading-tight text-white/40">Staff Portal</p>
+          <p className="text-sm font-bold leading-tight">GuardTec</p>
+          <p className="text-[10px] leading-tight opacity-40">Staff Portal</p>
         </div>
 
         <div className="ml-auto flex items-center gap-3">
           <div className="hidden text-right sm:block">
-            <p className="text-sm font-medium leading-tight text-white">{user?.full_name}</p>
-            <p className="text-[11px] leading-tight text-white/40">My Profile</p>
+            <p className="text-sm font-medium leading-tight">{user?.full_name}</p>
+            <p className="text-[11px] leading-tight opacity-40">My Profile</p>
           </div>
           <label className="relative h-8 w-8 shrink-0 cursor-pointer group" title="Change profile photo">
             {myPhotoUrl
@@ -83,11 +81,11 @@ export default function StaffLayout() {
               onChange={e => handleMyPhotoUpload(e.target.files?.[0] ?? null)} />
           </label>
           <Button variant="ghost" size="icon-sm" onClick={toggleTheme} title={isDark ? "Light mode" : "Dark mode"}
-            className="text-white/70 hover:bg-white/10 hover:text-white">
+            className="text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground">
             {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
           <Button variant="ghost" size="icon-sm" onClick={handleLogout}
-            className="text-white/70 hover:bg-white/10 hover:text-white" title="Sign out">
+            className="text-sidebar-foreground/70 hover:bg-destructive/10 hover:text-destructive" title="Sign out">
             <LogOut className="h-4 w-4" />
           </Button>
         </div>

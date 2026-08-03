@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { Toaster } from "sonner"
 import { AuthProvider, useAuth } from "@/contexts/AuthContext"
+import { ThemeProvider } from "@/contexts/ThemeContext"
 import DashboardLayout from "@/layouts/DashboardLayout"
 import StaffLayout from "@/layouts/StaffLayout"
 import LoginPage from "@/pages/LoginPage"
@@ -77,6 +78,7 @@ function AuthenticatedApp() {
 export default function App() {
   return (
     <BrowserRouter>
+      <ThemeProvider>
       <AuthProvider>
         <Toaster richColors position="bottom-right" />
         <Routes>
@@ -106,6 +108,7 @@ export default function App() {
           />
         </Routes>
       </AuthProvider>
+      </ThemeProvider>
     </BrowserRouter>
   )
 }

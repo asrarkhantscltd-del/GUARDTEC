@@ -1,5 +1,6 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom"
 import { useAuth, type Permissions } from "@/contexts/AuthContext"
+import { useTheme } from "@/contexts/ThemeContext"
 import { Button } from "@/components/ui/button"
 import {
   LayoutDashboard, Users, Truck, ShieldCheck, LogOut,
@@ -69,9 +70,9 @@ const navItems: NavItem[] = [
 
 export default function DashboardLayout() {
   const { user, logout } = useAuth()
+  const { isDark, toggleTheme } = useTheme()
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains("dark"))
   const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const photoInputRef = useRef<HTMLInputElement>(null)
@@ -119,21 +120,6 @@ export default function DashboardLayout() {
     return user.role === "director" || !!user.permissions?.[item.permission]
   })
 
-  function toggleTheme() {
-    const html = document.documentElement
-    if (html.classList.contains("dark")) {
-      html.classList.remove("dark")
-      html.classList.add("light")
-      localStorage.setItem("theme", "light")
-      setIsDark(false)
-    } else {
-      html.classList.remove("light")
-      html.classList.add("dark")
-      localStorage.setItem("theme", "dark")
-      setIsDark(true)
-    }
-  }
-
   async function handleLogout() {
     await logout()
     navigate("/login", { replace: true })
@@ -145,20 +131,26 @@ export default function DashboardLayout() {
         <div className="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
-      <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-transform md:relative md:translate-x-0 ${
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r transition-transform md:relative md:translate-x-0 ${
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
+      } ${isDark
+        ? "border-[hsl(228_12%_11%)] bg-[hsl(228_14%_7%)] text-[hsl(220_14%_72%)]"
+        : "border-[hsl(220_13%_91%)] bg-white text-[hsl(224_14%_15%)]"
       }`}>
         <button
           onClick={() => { navigate("/"); setSidebarOpen(false) }}
-          className="relative flex h-20 w-full shrink-0 items-center gap-3 overflow-hidden border-b border-sidebar-border px-4 transition-colors hover:bg-sidebar-accent/10"
+          className={`relative flex h-20 w-full shrink-0 items-center justify-center overflow-hidden border-b px-4 transition-colors ${
+            isDark
+              ? "border-[hsl(228_12%_11%)] hover:bg-white/5"
+              : "border-[hsl(220_13%_91%)] hover:bg-black/5"
+          }`}
         >
           <div className="glow-blob absolute -left-6 -top-10 h-24 w-24" />
-          <img src="/logo-white.png" alt="GuardTec" className="relative z-10 h-14 w-auto shrink-0" />
-          <div className="relative z-10 text-left">
-            <p className="text-sm font-bold leading-tight tracking-tight">GuardTec</p>
-            <p className="text-xs leading-tight text-sidebar-foreground/60">Security &amp; Patrol Ltd</p>
-            <p className="mt-0.5 text-[10px] font-medium leading-tight tracking-wide text-primary/80">COMPLIANCE PORTAL</p>
-          </div>
+          <img
+            src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
+            alt="GuardTec"
+            className="relative z-10 h-12 w-auto"
+          />
         </button>
 
         <nav className="flex-1 space-y-0.5 overflow-y-auto p-3">
@@ -168,13 +160,15 @@ export default function DashboardLayout() {
               className={({ isActive }) =>
                 `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ${
                   isActive
-                    ? "bg-gradient-to-r from-sidebar-primary to-sidebar-primary/80 text-sidebar-primary-foreground shadow-[0_4px_14px_-2px_rgba(228,6,19,0.4)]"
-                    : "text-sidebar-foreground hover:translate-x-0.5 hover:bg-sidebar-accent/60"
+                    ? "bg-gradient-to-r from-[hsl(354_96%_46%)] to-[hsl(354_96%_46%)]/80 text-white shadow-[0_4px_14px_-2px_rgba(228,6,19,0.4)]"
+                    : isDark
+                      ? "hover:translate-x-0.5 hover:bg-white/8"
+                      : "hover:translate-x-0.5 hover:bg-black/5"
                 }`
               }>
               {({ isActive }) => (
                 <>
-                  {isActive && <span className="absolute -left-3 h-5 w-1 rounded-r-full bg-sidebar-primary" />}
+                  {isActive && <span className="absolute -left-3 h-5 w-1 rounded-r-full bg-[hsl(354_96%_46%)]" />}
                   <span className={`transition-transform duration-200 ${!isActive ? "group-hover:scale-110" : ""}`}>{item.icon}</span>
                   {item.label}
                 </>
@@ -183,12 +177,14 @@ export default function DashboardLayout() {
           ))}
         </nav>
 
-        <div className="border-t border-sidebar-border p-3">
-          <div className="mb-2 flex items-center gap-2.5 rounded-lg bg-sidebar-accent/40 px-3 py-2.5">
+        <div className={`border-t p-3 ${isDark ? "border-[hsl(228_12%_11%)]" : "border-[hsl(220_13%_91%)]"}`}>
+          <div className={`mb-2 flex items-center gap-2.5 rounded-lg px-3 py-2.5 ${
+            isDark ? "bg-white/5" : "bg-black/5"
+          }`}>
             <label className="relative h-9 w-9 shrink-0 cursor-pointer group" title="Change profile photo">
               {myPhotoUrl
                 ? <img src={myPhotoUrl} alt="Profile" className="h-9 w-9 rounded-full object-cover" />
-                : <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-xs font-bold text-primary-foreground shadow-[0_2px_8px_rgba(228,6,19,0.35)]">
+                : <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-xs font-bold text-white shadow-[0_2px_8px_rgba(228,6,19,0.35)]">
                     {user?.full_name?.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase()}
                   </div>}
               <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
@@ -200,16 +196,16 @@ export default function DashboardLayout() {
             </label>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium leading-tight">{user?.full_name}</p>
-              <p className="truncate text-xs leading-tight text-sidebar-foreground/50">{user?.role_name ?? ""}</p>
+              <p className="truncate text-xs leading-tight opacity-50">{user?.role_name ?? ""}</p>
             </div>
             <span className="h-2 w-2 shrink-0 rounded-full bg-success shadow-[0_0_6px_rgba(34,197,94,0.8)]" />
           </div>
           <div className="flex gap-1">
-            <Button variant="ghost" size="sm" className="flex-1 justify-start gap-2 text-sidebar-foreground hover:bg-destructive/10 hover:text-destructive" onClick={handleLogout}>
+            <Button variant="ghost" size="sm" className="flex-1 justify-start gap-2 opacity-80 hover:bg-destructive/10 hover:text-destructive hover:opacity-100" onClick={handleLogout}>
               <LogOut className="h-4 w-4" />Sign out
             </Button>
             <Button variant="ghost" size="icon" onClick={toggleTheme} title={isDark ? "Switch to light mode" : "Switch to dark mode"}
-              className="shrink-0 text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground">
+              className={`shrink-0 opacity-60 hover:opacity-100 ${isDark ? "hover:bg-white/10" : "hover:bg-black/5"}`}>
               {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
           </div>

@@ -1,4 +1,5 @@
 import { useAuth } from "@/contexts/AuthContext"
+import { useTheme } from "@/contexts/ThemeContext"
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import {
@@ -70,6 +71,7 @@ function greeting() {
 
 export default function DashboardPage() {
   const { user } = useAuth()
+  const { isDark } = useTheme()
   const navigate = useNavigate()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [sites, setSites] = useState<Site[]>([])
@@ -94,14 +96,19 @@ export default function DashboardPage() {
     <div className="space-y-6">
 
       {/* ── Hero banner ── */}
-      <div className="relative overflow-hidden rounded-2xl p-8"
-        style={{ background: "linear-gradient(135deg, #0c0d0e 0%, #17191f 55%, #100f13 100%)" }}>
-
-        <div className="glow-blob absolute -right-16 -top-24 h-72 w-72 animate-glow-pulse" />
-        <div className="glow-blob absolute -bottom-20 left-1/3 h-56 w-56 opacity-60" />
-        <div className="bg-dot-grid absolute inset-0 text-white opacity-[0.04]" />
+      <div className={`relative overflow-hidden rounded-2xl p-8 ${
+        isDark ? "text-white" : "text-[hsl(224_14%_10%)]"
+      }`} style={{
+        background: isDark
+          ? "linear-gradient(135deg, #0c0d0e 0%, #17191f 55%, #100f13 100%)"
+          : "linear-gradient(135deg, hsl(0 0% 100%) 0%, hsl(220 20% 96%) 55%, hsl(220 14% 94%) 100%)",
+      }}>
+        {isDark && <div className="glow-blob absolute -right-16 -top-24 h-72 w-72 animate-glow-pulse" />}
+        {isDark && <div className="glow-blob absolute -bottom-20 left-1/3 h-56 w-56 opacity-60" />}
+        <div className={`bg-dot-grid absolute inset-0 opacity-[0.04] ${isDark ? "text-white" : "text-black"}`} />
 
         <div className="relative z-10 flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+          {/* Left: greeting text */}
           <div>
             <div className="mb-3 flex items-center gap-2">
               <Sparkles className="h-3.5 w-3.5 text-primary" />
@@ -109,30 +116,45 @@ export default function DashboardPage() {
                 {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
               </span>
             </div>
-            <h2 className="text-3xl font-black tracking-tight text-white md:text-4xl"
+            <h2 className="text-3xl font-black tracking-tight md:text-4xl"
               style={{ fontFamily: "'Orbitron', sans-serif" }}>
               {greeting()}, {user?.full_name?.split(" ")[0]}
             </h2>
-            <p className="mt-2 max-w-md text-sm leading-relaxed text-white/50">
+            <p className={`mt-2 max-w-md text-sm leading-relaxed ${isDark ? "text-white/50" : "text-[hsl(224_14%_10%)]/60"}`}>
               Here's your live operations overview — officers, sites and fleet, all in one place.
             </p>
           </div>
 
-          {/* Compliance ring */}
+          {/* Center: GuardTec logo */}
+          <div className="hidden md:flex shrink-0 items-center justify-center">
+            <img
+              src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
+              alt="GuardTec"
+              className="h-20 w-auto opacity-90 drop-shadow-lg"
+            />
+          </div>
+
+          {/* Right: compliance ring */}
           {compliancePct !== null && (
-            <div className="flex items-center gap-4 rounded-2xl border border-white/10 bg-white/5 px-6 py-4 backdrop-blur-sm">
+            <div className={`flex shrink-0 items-center gap-4 rounded-2xl border px-6 py-4 backdrop-blur-sm ${
+              isDark ? "border-white/10 bg-white/5" : "border-black/10 bg-black/5"
+            }`}>
               <div className="relative flex h-20 w-20 shrink-0 items-center justify-center rounded-full"
                 style={{
-                  background: `conic-gradient(#22c55e ${compliancePct * 3.6}deg, rgba(255,255,255,0.1) 0deg)`,
+                  background: isDark
+                    ? `conic-gradient(#22c55e ${compliancePct * 3.6}deg, rgba(255,255,255,0.1) 0deg)`
+                    : `conic-gradient(#22c55e ${compliancePct * 3.6}deg, rgba(0,0,0,0.08) 0deg)`,
                 }}>
-                <div className="flex h-[62px] w-[62px] items-center justify-center rounded-full bg-[#0c0d0e]">
-                  <span className="text-lg font-bold text-white">{compliancePct}%</span>
+                <div className={`flex h-[62px] w-[62px] items-center justify-center rounded-full ${
+                  isDark ? "bg-[#0c0d0e]" : "bg-white"
+                }`}>
+                  <span className={`text-lg font-bold ${isDark ? "text-white" : "text-[hsl(224_14%_10%)]"}`}>{compliancePct}%</span>
                 </div>
               </div>
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-white/40">Staff Compliance</p>
-                <p className="mt-0.5 text-sm text-white/60">{stats?.compliant ?? 0} of {stats?.totalStaff ?? 0} officers</p>
-                <p className="mt-0.5 text-xs text-white/30">fully documented &amp; deployable</p>
+                <p className={`text-xs font-semibold uppercase tracking-wide ${isDark ? "text-white/40" : "text-black/40"}`}>Staff Compliance</p>
+                <p className={`mt-0.5 text-sm ${isDark ? "text-white/60" : "text-black/60"}`}>{stats?.compliant ?? 0} of {stats?.totalStaff ?? 0} officers</p>
+                <p className={`mt-0.5 text-xs ${isDark ? "text-white/30" : "text-black/30"}`}>fully documented &amp; deployable</p>
               </div>
             </div>
           )}

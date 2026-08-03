@@ -33,7 +33,7 @@
   --color-chart-4: hsl(43 74% 66%);
   --color-chart-5: hsl(27 87% 67%);
 
-  /* Sidebar — always GuardTec dark (both modes) */
+  /* Sidebar — light mode defaults (used by Tailwind utility generation) */
   --color-sidebar: hsl(228 14% 7%);
   --color-sidebar-foreground: hsl(220 14% 72%);
   --color-sidebar-primary: hsl(354 96% 46%);
@@ -49,43 +49,6 @@
   --color-danger: hsl(0 84% 60%);
 }
 
-@media (prefers-color-scheme: dark) {
-  @theme inline {
-    --color-background: hsl(228 16% 8%);
-    --color-foreground: hsl(220 14% 92%);
-    --color-card: hsl(228 15% 11%);
-    --color-card-foreground: hsl(220 14% 92%);
-    --color-popover: hsl(228 14% 11%);
-    --color-popover-foreground: hsl(220 14% 92%);
-    --color-primary: hsl(354 96% 50%);
-    --color-primary-foreground: hsl(0 0% 100%);
-    --color-secondary: hsl(228 12% 16%);
-    --color-secondary-foreground: hsl(220 14% 92%);
-    --color-muted: hsl(228 12% 16%);
-    --color-muted-foreground: hsl(220 9% 55%);
-    --color-accent: hsl(228 12% 16%);
-    --color-accent-foreground: hsl(220 14% 92%);
-    --color-destructive: hsl(0 62% 40%);
-    --color-destructive-foreground: hsl(0 0% 98%);
-    --color-border: hsl(228 12% 17%);
-    --color-input: hsl(228 12% 16%);
-    --color-ring: hsl(354 96% 50%);
-
-    /* Sidebar same in dark mode */
-    --color-sidebar: hsl(228 14% 7%);
-    --color-sidebar-foreground: hsl(220 14% 72%);
-    --color-sidebar-primary: hsl(354 96% 46%);
-    --color-sidebar-primary-foreground: hsl(0 0% 100%);
-    --color-sidebar-accent: hsl(228 12% 13%);
-    --color-sidebar-accent-foreground: hsl(0 0% 95%);
-    --color-sidebar-border: hsl(228 12% 11%);
-    --color-sidebar-ring: hsl(354 96% 46%);
-
-    --color-success: hsl(142 71% 45%);
-    --color-warning: hsl(38 92% 50%);
-    --color-danger: hsl(0 62% 40%);
-  }
-}
 
 /* ── Manual theme overrides (class wins over media query) ──────────────────── */
 html.dark {
