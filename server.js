@@ -359,6 +359,77 @@ app.post('/api/staff/:id/photo', requireLogin, function(req, res) {
   }
 });
 
+// ── STAFF DOCUMENT FILES ──────────────────────────────────────────────────────
+var ALLOWED_DOC_KEYS = [
+  'siaPhysical','passport','brpCard','proofOfAddress1','proofOfAddress2',
+  'p45','bankLetter','application','assignmentInstructions'
+];
+
+function findDocFile(folderPath, docKey) {
+  var exts = ['.pdf','.jpg','.jpeg','.png','.webp'];
+  for (var e of exts) {
+    var dp = path.join(folderPath, 'doc_' + docKey + e);
+    if (fs.existsSync(dp)) return dp;
+  }
+  return null;
+}
+
+app.get('/api/staff/:id/documents/:docKey', requireLogin, function(req, res) {
+  var docKey = req.params.docKey;
+  if (!ALLOWED_DOC_KEYS.includes(docKey)) return res.status(400).end();
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp || !emp._folderPath) return res.status(404).end();
+    var fp = findDocFile(emp._folderPath, docKey);
+    if (!fp) return res.status(404).end();
+    var ext = path.extname(fp).toLowerCase();
+    var mime = ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', 'inline; filename="' + docKey + ext + '"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(fp));
+  } catch(e) {
+    res.status(500).end();
+  }
+});
+
+app.post('/api/staff/:id/documents/:docKey', requireLogin, function(req, res) {
+  var docKey = req.params.docKey;
+  if (!ALLOWED_DOC_KEYS.includes(docKey)) return res.status(400).json({ ok:false, error:'Invalid document key' });
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp || !emp._folderPath) return res.status(404).json({ ok:false, error:'Staff not found' });
+    var chunks = [];
+    req.on('data', function(c){ chunks.push(c); });
+    req.on('end', function() {
+      var buf = Buffer.concat(chunks);
+      // Detect file type from magic bytes
+      var ext = '.pdf';
+      if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
+      else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
+      // Remove any existing file for this docKey
+      ['.pdf','.jpg','.jpeg','.png','.webp'].forEach(function(e){
+        var old = path.join(emp._folderPath, 'doc_' + docKey + e);
+        if (fs.existsSync(old)) fs.unlinkSync(old);
+      });
+      fs.writeFileSync(path.join(emp._folderPath, 'doc_' + docKey + ext), buf);
+      // Auto-update metadata in staff_data.json
+      var jp = path.join(emp._folderPath, 'staff_data.json');
+      var data = JSON.parse(fs.readFileSync(jp, 'utf8'));
+      if (!data.documents) data.documents = {};
+      var today = new Date().toISOString().split('T')[0];
+      data.documents[docKey] = { uploaded: true, date: today };
+      fs.writeFileSync(jp, JSON.stringify(data, null, 2));
+      console.log('[DOCS] Saved', docKey, 'for', emp.name);
+      res.json({ ok:true, date: today });
+    });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
 // ── USER (ACCOUNT) PROFILE PHOTOS ────────────────────────────────────────────
 // One photo per logged-in account (stored by postgres user id, not staff id).
 // Works for every role — director, manager, staff — anyone with a login.

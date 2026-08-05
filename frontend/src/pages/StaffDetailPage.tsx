@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -117,10 +117,12 @@ function DocStatusChip({ status }: { status: DocStatus }) {
 }
 
 function DocRow({
-  icon, label, status, uploadedDate, expiry, note,
+  icon, label, status, uploadedDate, expiry, note, onEdit, viewUrl,
 }: {
   icon: React.ReactNode; label: string; status: DocStatus
   uploadedDate?: string; expiry?: string; note?: string
+  onEdit?: () => void
+  viewUrl?: string
 }) {
   return (
     <div className="flex items-center gap-3 py-2.5 border-b last:border-0">
@@ -133,14 +135,17 @@ function DocRow({
       </div>
       <div className="flex items-center gap-2 shrink-0">
         <DocStatusChip status={status} />
-        {status === "uploaded" ? (
-          <Button size="sm" variant="outline" className="h-7 px-2 text-xs gap-1" disabled>
-            <Eye className="h-3 w-3" />View
-          </Button>
-        ) : (
-          <Button size="sm" variant="outline" className="h-7 px-2 text-xs gap-1" disabled>
-            <Upload className="h-3 w-3" />Upload
-          </Button>
+        {viewUrl && (
+          <a href={viewUrl} target="_blank" rel="noopener noreferrer"
+            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="View document">
+            <Eye className="h-3.5 w-3.5" />
+          </a>
+        )}
+        {onEdit && (
+          <button onClick={onEdit}
+            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Edit / Upload">
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
         )}
       </div>
     </div>
@@ -240,6 +245,21 @@ export default function StaffDetailPage() {
   const [editSaving, setEditSaving]   = useState(false)
   const [editError, setEditError]     = useState("")
 
+  // Document editing
+  const [editingDocKey, setEditingDocKey] = useState<string | null>(null)
+  const [docDraft, setDocDraft]           = useState<{ uploaded: boolean; date: string }>({ uploaded: false, date: "" })
+  const [docSaving, setDocSaving]         = useState(false)
+  const [uploadingDoc, setUploadingDoc]   = useState(false)
+  const [docFileName, setDocFileName]     = useState("")
+  const docFileInputRef                   = useRef<HTMLInputElement>(null)
+
+  // Vetting editing
+  const [editingVetting, setEditingVetting] = useState<"dbs" | "bs7858" | "ref1" | "ref2" | null>(null)
+  const [vettingDraft, setVettingDraft]     = useState<Record<string, string | boolean>>({})
+  const [vettingSaving, setVettingSaving]   = useState(false)
+  const [newHistoryEntry, setNewHistoryEntry] = useState("")
+  const [historyAdding, setHistoryAdding]   = useState(false)
+
   useEffect(() => {
     fetch("/api/staff", { credentials: "include" })
       .then((r) => r.json())
@@ -281,6 +301,9 @@ export default function StaffDetailPage() {
       cscs_expiry: staff.cscs?.expiry ?? "",
       rtw_type:    staff.visa?.type ?? "",
       rtw_expiry:  staff.visa?.expiry ?? "",
+      ec_name:     staff.emergencyContact?.name ?? "",
+      ec_phone:    staff.emergencyContact?.phone ?? "",
+      ec_rel:      staff.emergencyContact?.relationship ?? "",
     })
     setEditError("")
     setEditOpen(true)
@@ -307,6 +330,11 @@ export default function StaffDetailPage() {
         sia:  { ...staff.sia,  number: profileDraft.sia_number || undefined, type: profileDraft.sia_type || undefined, expiry: profileDraft.sia_expiry || undefined },
         cscs: { ...staff.cscs, number: profileDraft.cscs_number || undefined, expiry: profileDraft.cscs_expiry || undefined },
         visa: { ...staff.visa, type: profileDraft.rtw_type || undefined, expiry: profileDraft.rtw_expiry || undefined },
+        emergencyContact: {
+          name:         profileDraft.ec_name || undefined,
+          phone:        profileDraft.ec_phone || undefined,
+          relationship: profileDraft.ec_rel || undefined,
+        },
       }
       const res = await fetch(`/api/staff/${id}`, {
         method: "PUT",
@@ -466,6 +494,148 @@ export default function StaffDetailPage() {
     setTrainingData(updated); patchTraining(updated)
     setAddDraft({ label: "", completed: false, date: "", expiry: "", number: "", provider: "" })
     setShowAddForm(false)
+  }
+
+  // ── Generic field patcher ──
+  async function patchField(updates: Partial<StaffMember>) {
+    if (!staff || !id) return
+    const merged = { ...staff, ...updates }
+    await fetch(`/api/staff/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(merged),
+    })
+    const refreshRes = await fetch("/api/staff", { credentials: "include" })
+    const data: StaffMember[] = await refreshRes.json()
+    const updated = data.find(s => s.id === id) ?? null
+    setStaff(updated)
+    if (updated?.training) setTrainingData(updated.training)
+  }
+
+  // ── Document helpers ──
+  function openDocEdit(docKey: string) {
+    const existing = (staff?.documents as Record<string, { uploaded?: boolean; date?: string }>)?.[docKey]
+    setEditingDocKey(docKey)
+    setDocDraft({ uploaded: existing?.uploaded ?? false, date: existing?.date ?? "" })
+    setDocFileName("")
+  }
+
+  async function uploadDocFile(file: File) {
+    if (!editingDocKey || !id) return
+    setUploadingDoc(true)
+    try {
+      const res = await fetch(`/api/staff/${id}/documents/${editingDocKey}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      })
+      const d = await res.json()
+      if (d.ok) {
+        setDocDraft({ uploaded: true, date: d.date })
+        setDocFileName(file.name)
+        // Refresh staff record so DocRow shows updated status
+        const refreshRes = await fetch("/api/staff", { credentials: "include" })
+        const data: StaffMember[] = await refreshRes.json()
+        const updated = data.find(s => s.id === id) ?? null
+        setStaff(updated)
+        if (updated?.training) setTrainingData(updated.training)
+      }
+    } finally {
+      setUploadingDoc(false)
+    }
+  }
+
+  async function saveDoc() {
+    if (!editingDocKey || !staff) return
+    setDocSaving(true)
+    const updatedDocs = {
+      ...staff.documents,
+      [editingDocKey]: { uploaded: docDraft.uploaded, date: docDraft.date || undefined },
+    }
+    await patchField({ documents: updatedDocs })
+    setEditingDocKey(null)
+    setDocSaving(false)
+  }
+
+  // ── Vetting helpers ──
+  function openVettingEdit(section: "dbs" | "bs7858" | "ref1" | "ref2") {
+    if (!staff) return
+    setEditingVetting(section)
+    if (section === "dbs") {
+      setVettingDraft({
+        type:          staff.dbs?.type ?? "",
+        checkDate:     staff.dbs?.checkDate ?? "",
+        certificateNo: staff.dbs?.certificateNo ?? "",
+      })
+    } else if (section === "bs7858") {
+      setVettingDraft({
+        completed:       staff.bs7858?.completed ?? false,
+        completionDate:  staff.bs7858?.completionDate ?? "",
+        reviewer:        staff.bs7858?.reviewer ?? "",
+      })
+    } else {
+      const ref = staff.references?.[section]
+      setVettingDraft({
+        name:        ref?.name ?? "",
+        company:     ref?.company ?? "",
+        email:       ref?.email ?? "",
+        phone:       ref?.phone ?? "",
+        status:      ref?.status ?? "Not Started",
+      })
+    }
+  }
+
+  async function saveVetting() {
+    if (!editingVetting || !staff) return
+    setVettingSaving(true)
+    if (editingVetting === "dbs") {
+      await patchField({
+        dbs: {
+          type:          (vettingDraft.type as string) || undefined,
+          checkDate:     (vettingDraft.checkDate as string) || undefined,
+          certificateNo: (vettingDraft.certificateNo as string) || undefined,
+        },
+      })
+    } else if (editingVetting === "bs7858") {
+      await patchField({
+        bs7858: {
+          completed:      vettingDraft.completed as boolean,
+          completionDate: (vettingDraft.completionDate as string) || undefined,
+          reviewer:       (vettingDraft.reviewer as string) || undefined,
+        },
+      })
+    } else {
+      await patchField({
+        references: {
+          ...staff.references,
+          [editingVetting]: {
+            name:    (vettingDraft.name as string) || undefined,
+            company: (vettingDraft.company as string) || undefined,
+            email:   (vettingDraft.email as string) || undefined,
+            phone:   (vettingDraft.phone as string) || undefined,
+            status:  (vettingDraft.status as string) || undefined,
+          },
+        },
+      })
+    }
+    setEditingVetting(null)
+    setVettingSaving(false)
+  }
+
+  async function addHistoryEntry() {
+    if (!newHistoryEntry.trim() || !staff) return
+    setHistoryAdding(true)
+    await patchField({ employmentHistory: [...(staff.employmentHistory ?? []), newHistoryEntry.trim()] })
+    setNewHistoryEntry("")
+    setHistoryAdding(false)
+  }
+
+  async function deleteHistoryEntry(index: number) {
+    if (!staff) return
+    const updated = (staff.employmentHistory ?? []).filter((_, i) => i !== index)
+    await patchField({ employmentHistory: updated })
   }
 
   if (loading) {
@@ -721,10 +891,62 @@ export default function StaffDetailPage() {
       {/* ════════ DOCUMENTS ════════ */}
       {tab === "documents" && (
         <div className="space-y-4">
-          <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-            <AlertCircle className="h-3.5 w-3.5" />
-            Document upload is coming in a future release. This page shows which documents are on file.
-          </p>
+          {/* Inline doc edit / upload form */}
+          {editingDocKey && (
+            <div className="rounded-lg border bg-muted/20 p-4 space-y-4">
+              <p className="text-sm font-semibold">Edit document record</p>
+
+              {/* ── File upload section ── */}
+              <div className="rounded-md border border-dashed border-border bg-background p-3 space-y-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Upload file</p>
+                <input ref={docFileInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png"
+                  className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) uploadDocFile(f) }} />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => docFileInputRef.current?.click()}
+                    disabled={uploadingDoc}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50">
+                    <Upload className="h-3.5 w-3.5" />
+                    {uploadingDoc ? "Uploading…" : "Choose file"}
+                  </button>
+                  <span className="text-xs text-muted-foreground truncate max-w-[180px]">
+                    {docFileName || (docDraft.uploaded ? "File already uploaded" : "PDF, JPG, or PNG")}
+                  </span>
+                </div>
+                {docDraft.uploaded && (
+                  <a href={`/api/staff/${id}/documents/${editingDocKey}`} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                    <Eye className="h-3 w-3" />View current document
+                  </a>
+                )}
+              </div>
+
+              {/* ── Manual mark as on file ── */}
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Or mark manually</p>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={docDraft.uploaded}
+                    onChange={e => setDocDraft(p => ({ ...p, uploaded: e.target.checked }))}
+                    className="rounded" />
+                  Document is on file
+                </label>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-0.5">Date received / uploaded</p>
+                  <input type="date" value={docDraft.date}
+                    onChange={e => setDocDraft(p => ({ ...p, date: e.target.value }))}
+                    className="rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <Button size="sm" className="h-7 text-xs" onClick={saveDoc} disabled={docSaving}>
+                  {docSaving ? "Saving…" : "Save"}
+                </Button>
+                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingDocKey(null)}>Cancel</Button>
+              </div>
+            </div>
+          )}
 
           <Card>
             <CardHeader className="pb-2">
@@ -735,13 +957,19 @@ export default function StaffDetailPage() {
             <CardContent className="px-4">
               <DocRow icon={<ShieldCheck className="h-4 w-4" />} label="SIA Licence (physical scan)"
                 status={docStatusOf(docs.siaPhysical?.uploaded)} uploadedDate={docs.siaPhysical?.date}
-                note="Front and back of the physical SIA badge" />
+                note="Front and back of the physical SIA badge"
+                viewUrl={docs.siaPhysical?.uploaded ? `/api/staff/${id}/documents/siaPhysical` : undefined}
+                onEdit={canEdit ? () => openDocEdit("siaPhysical") : undefined} />
               <DocRow icon={<FileText className="h-4 w-4" />} label="Passport"
                 status={docStatusOf(docs.passport?.uploaded)} uploadedDate={docs.passport?.date}
-                note="Required for BS 7858 identity verification" />
+                note="Required for BS 7858 identity verification"
+                viewUrl={docs.passport?.uploaded ? `/api/staff/${id}/documents/passport` : undefined}
+                onEdit={canEdit ? () => openDocEdit("passport") : undefined} />
               <DocRow icon={<CreditCard className="h-4 w-4" />} label="BRP / Share Code / RTW Evidence"
                 status={docStatusOf(docs.brpCard?.uploaded)} uploadedDate={docs.brpCard?.date}
-                note="Biometric Residence Permit or right to work share code proof" />
+                note="Biometric Residence Permit or right to work share code proof"
+                viewUrl={docs.brpCard?.uploaded ? `/api/staff/${id}/documents/brpCard` : undefined}
+                onEdit={canEdit ? () => openDocEdit("brpCard") : undefined} />
             </CardContent>
           </Card>
 
@@ -754,10 +982,14 @@ export default function StaffDetailPage() {
             <CardContent className="px-4">
               <DocRow icon={<FileText className="h-4 w-4" />} label="Proof of Address 1 (utility bill / bank statement)"
                 status={docStatusOf(docs.proofOfAddress1?.uploaded)} uploadedDate={docs.proofOfAddress1?.date}
-                note="Must be dated within the last 3 months" />
+                note="Must be dated within the last 3 months"
+                viewUrl={docs.proofOfAddress1?.uploaded ? `/api/staff/${id}/documents/proofOfAddress1` : undefined}
+                onEdit={canEdit ? () => openDocEdit("proofOfAddress1") : undefined} />
               <DocRow icon={<FileText className="h-4 w-4" />} label="Proof of Address 2"
                 status={docStatusOf(docs.proofOfAddress2?.uploaded)} uploadedDate={docs.proofOfAddress2?.date}
-                note="Second document, also within last 3 months" />
+                note="Second document, also within last 3 months"
+                viewUrl={docs.proofOfAddress2?.uploaded ? `/api/staff/${id}/documents/proofOfAddress2` : undefined}
+                onEdit={canEdit ? () => openDocEdit("proofOfAddress2") : undefined} />
             </CardContent>
           </Card>
 
@@ -770,16 +1002,22 @@ export default function StaffDetailPage() {
             <CardContent className="px-4">
               <DocRow icon={<FileText className="h-4 w-4" />} label="Application Form"
                 status={docStatusOf(docs.application?.uploaded)} uploadedDate={docs.application?.date}
-                note="Signed job application / new starter form" />
+                note="Signed job application / new starter form"
+                viewUrl={docs.application?.uploaded ? `/api/staff/${id}/documents/application` : undefined}
+                onEdit={canEdit ? () => openDocEdit("application") : undefined} />
               <DocRow icon={<FileText className="h-4 w-4" />} label="Employment Contract"
                 status={staff.contract && staff.contract.toLowerCase() !== "not signed" ? "uploaded" : "missing"}
                 note={`Status: ${staff.contract || "Not signed"}`} />
               <DocRow icon={<FileText className="h-4 w-4" />} label="P45 / P60 (previous employer)"
                 status={docStatusOf(docs.p45?.uploaded)} uploadedDate={docs.p45?.date}
-                note="Last employer's P45 or most recent P60" />
+                note="Last employer's P45 or most recent P60"
+                viewUrl={docs.p45?.uploaded ? `/api/staff/${id}/documents/p45` : undefined}
+                onEdit={canEdit ? () => openDocEdit("p45") : undefined} />
               <DocRow icon={<FileText className="h-4 w-4" />} label="Bank Account Letter / Void Cheque"
                 status={docStatusOf(docs.bankLetter?.uploaded)} uploadedDate={docs.bankLetter?.date}
-                note="Required for payroll setup" />
+                note="Required for payroll setup"
+                viewUrl={docs.bankLetter?.uploaded ? `/api/staff/${id}/documents/bankLetter` : undefined}
+                onEdit={canEdit ? () => openDocEdit("bankLetter") : undefined} />
             </CardContent>
           </Card>
 
@@ -792,7 +1030,9 @@ export default function StaffDetailPage() {
             <CardContent className="px-4">
               <DocRow icon={<FileText className="h-4 w-4" />} label="Assignment Instructions (signed)"
                 status={docStatusOf(docs.assignmentInstructions?.uploaded)} uploadedDate={docs.assignmentInstructions?.date}
-                note="Site-specific assignment instructions, legally required per SIA" />
+                note="Site-specific assignment instructions, legally required per SIA"
+                viewUrl={docs.assignmentInstructions?.uploaded ? `/api/staff/${id}/documents/assignmentInstructions` : undefined}
+                onEdit={canEdit ? () => openDocEdit("assignmentInstructions") : undefined} />
             </CardContent>
           </Card>
         </div>
@@ -801,62 +1041,141 @@ export default function StaffDetailPage() {
       {/* ════════ VETTING (BS 7858) ════════ */}
       {tab === "vetting" && (
         <div className="space-y-4">
+
+          {/* ── DBS ── */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Fingerprint className="h-4 w-4" />DBS Check
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="grid sm:grid-cols-2 gap-3 text-sm px-4 py-3">
-              {[
-                { label: "Check Type",       val: staff.dbs?.type ?? "—" },
-                { label: "Check Date",       val: staff.dbs?.checkDate ? fmtDate(staff.dbs.checkDate) : "—" },
-                { label: "Certificate No.",  val: staff.dbs?.certificateNo ?? "—" },
-              ].map(({ label, val }) => (
-                <div key={label}>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">{label}</p>
-                  <p className="mt-0.5">{val}</p>
-                </div>
-              ))}
-              <div className="sm:col-span-2">
-                <DocStatusChip status={staff.dbs?.checkDate ? "uploaded" : "missing"} />
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Fingerprint className="h-4 w-4" />DBS Check
+                </CardTitle>
+                {canEdit && editingVetting !== "dbs" && (
+                  <button onClick={() => openVettingEdit("dbs")}
+                    className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Edit">
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
+            </CardHeader>
+            <CardContent className="px-4 py-3">
+              {editingVetting === "dbs" ? (
+                <div className="space-y-3">
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    {[
+                      { field: "type",          label: "Check type",       type: "text",  placeholder: "e.g. Enhanced, Basic" },
+                      { field: "checkDate",     label: "Check date",       type: "date",  placeholder: "" },
+                      { field: "certificateNo", label: "Certificate No.",  type: "text",  placeholder: "" },
+                    ].map(({ field, label, type, placeholder }) => (
+                      <div key={field}>
+                        <p className="text-xs text-muted-foreground mb-0.5">{label}</p>
+                        <input type={type} value={vettingDraft[field] as string} placeholder={placeholder}
+                          onChange={e => setVettingDraft(p => ({ ...p, [field]: e.target.value }))}
+                          className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" className="h-7 text-xs" onClick={saveVetting} disabled={vettingSaving}>
+                      {vettingSaving ? "Saving…" : "Save"}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingVetting(null)}>Cancel</Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid sm:grid-cols-2 gap-3 text-sm">
+                  {[
+                    { label: "Check Type",       val: staff.dbs?.type ?? "—" },
+                    { label: "Check Date",       val: staff.dbs?.checkDate ? fmtDate(staff.dbs.checkDate) : "—" },
+                    { label: "Certificate No.",  val: staff.dbs?.certificateNo ?? "—" },
+                  ].map(({ label, val }) => (
+                    <div key={label}>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">{label}</p>
+                      <p className="mt-0.5">{val}</p>
+                    </div>
+                  ))}
+                  <div className="sm:col-span-2">
+                    <DocStatusChip status={staff.dbs?.checkDate ? "uploaded" : "missing"} />
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 
+          {/* ── BS 7858 ── */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2">
-                <UserCheck className="h-4 w-4" />BS 7858 Screening
-              </CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <UserCheck className="h-4 w-4" />BS 7858 Screening
+                </CardTitle>
+                {canEdit && editingVetting !== "bs7858" && (
+                  <button onClick={() => openVettingEdit("bs7858")}
+                    className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Edit">
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
             </CardHeader>
-            <CardContent className="grid sm:grid-cols-2 gap-3 text-sm px-4 py-3">
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Status</p>
-                <p className="mt-1">
-                  <DocStatusChip status={staff.bs7858?.completed ? "uploaded" : "missing"} />
-                </p>
-              </div>
-              {staff.bs7858?.completionDate && (
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Completed On</p>
-                  <p className="mt-0.5">{fmtDate(staff.bs7858.completionDate)}</p>
+            <CardContent className="px-4 py-3">
+              {editingVetting === "bs7858" ? (
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={vettingDraft.completed as boolean}
+                      onChange={e => setVettingDraft(p => ({ ...p, completed: e.target.checked }))}
+                      className="rounded" />
+                    BS 7858 screening completed
+                  </label>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    {[
+                      { field: "completionDate", label: "Completion date", type: "date" },
+                      { field: "reviewer",       label: "Reviewed by",     type: "text" },
+                    ].map(({ field, label, type }) => (
+                      <div key={field}>
+                        <p className="text-xs text-muted-foreground mb-0.5">{label}</p>
+                        <input type={type} value={vettingDraft[field] as string}
+                          onChange={e => setVettingDraft(p => ({ ...p, [field]: e.target.value }))}
+                          className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" className="h-7 text-xs" onClick={saveVetting} disabled={vettingSaving}>
+                      {vettingSaving ? "Saving…" : "Save"}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingVetting(null)}>Cancel</Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid sm:grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Status</p>
+                    <p className="mt-1">
+                      <DocStatusChip status={staff.bs7858?.completed ? "uploaded" : "missing"} />
+                    </p>
+                  </div>
+                  {staff.bs7858?.completionDate && (
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Completed On</p>
+                      <p className="mt-0.5">{fmtDate(staff.bs7858.completionDate)}</p>
+                    </div>
+                  )}
+                  {staff.bs7858?.reviewer && (
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Reviewed By</p>
+                      <p className="mt-0.5">{staff.bs7858.reviewer}</p>
+                    </div>
+                  )}
+                  <div className="sm:col-span-2 mt-1">
+                    <p className="text-xs text-muted-foreground">
+                      BS 7858 requires 5-year employment history, address history, two character references, criminal record check, and financial probity for key roles.
+                    </p>
+                  </div>
                 </div>
               )}
-              {staff.bs7858?.reviewer && (
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Reviewed By</p>
-                  <p className="mt-0.5">{staff.bs7858.reviewer}</p>
-                </div>
-              )}
-              <div className="sm:col-span-2 mt-1">
-                <p className="text-xs text-muted-foreground">
-                  BS 7858 requires 5-year employment history, address history, two character references, criminal record check, and financial probity for key roles.
-                </p>
-              </div>
             </CardContent>
           </Card>
 
+          {/* ── References ── */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base flex items-center gap-2">
@@ -866,10 +1185,54 @@ export default function StaffDetailPage() {
             <CardContent className="divide-y px-4">
               {(["ref1", "ref2"] as const).map((key, i) => {
                 const ref = staff.references?.[key]
+                const isEditing = editingVetting === key
                 return (
                   <div key={key} className="py-3">
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Reference {i + 1}</p>
-                    {ref?.name ? (
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Reference {i + 1}</p>
+                      {canEdit && !isEditing && (
+                        <button onClick={() => openVettingEdit(key)}
+                          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Edit">
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    {isEditing ? (
+                      <div className="space-y-2">
+                        <div className="grid sm:grid-cols-2 gap-2">
+                          {[
+                            { field: "name",    label: "Name",    type: "text" },
+                            { field: "company", label: "Company", type: "text" },
+                            { field: "email",   label: "Email",   type: "email" },
+                            { field: "phone",   label: "Phone",   type: "tel" },
+                          ].map(({ field, label, type }) => (
+                            <div key={field}>
+                              <p className="text-xs text-muted-foreground mb-0.5">{label}</p>
+                              <input type={type} value={vettingDraft[field] as string}
+                                onChange={e => setVettingDraft(p => ({ ...p, [field]: e.target.value }))}
+                                className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
+                            </div>
+                          ))}
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-0.5">Status</p>
+                          <select value={vettingDraft.status as string}
+                            onChange={e => setVettingDraft(p => ({ ...p, status: e.target.value }))}
+                            className="rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring">
+                            <option value="Not Started">Not Started</option>
+                            <option value="Requested">Requested</option>
+                            <option value="Satisfactory">Satisfactory</option>
+                            <option value="Unsatisfactory">Unsatisfactory</option>
+                          </select>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" className="h-7 text-xs" onClick={saveVetting} disabled={vettingSaving}>
+                            {vettingSaving ? "Saving…" : "Save"}
+                          </Button>
+                          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingVetting(null)}>Cancel</Button>
+                        </div>
+                      </div>
+                    ) : ref?.name ? (
                       <div className="grid sm:grid-cols-2 gap-2 text-sm">
                         <div><p className="text-xs text-muted-foreground">Name</p><p>{ref.name}</p></div>
                         {ref.company  && <div><p className="text-xs text-muted-foreground">Company</p><p>{ref.company}</p></div>}
@@ -894,22 +1257,47 @@ export default function StaffDetailPage() {
             </CardContent>
           </Card>
 
-          {staff.employmentHistory && staff.employmentHistory.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Building2 className="h-4 w-4" />Employment History
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="px-4 pb-3">
-                <ol className="space-y-1 text-sm list-decimal list-inside text-muted-foreground">
-                  {staff.employmentHistory.map((entry, i) => (
-                    <li key={i}>{entry}</li>
+          {/* ── Employment History ── */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Building2 className="h-4 w-4" />Employment History
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 pb-3 space-y-2">
+              {(staff.employmentHistory ?? []).length > 0 ? (
+                <ol className="space-y-1 text-sm list-decimal list-inside">
+                  {(staff.employmentHistory ?? []).map((entry, i) => (
+                    <li key={i} className="flex items-start gap-2 group">
+                      <span className="flex-1 text-muted-foreground">{entry}</span>
+                      {canEdit && (
+                        <button onClick={() => deleteHistoryEntry(i)}
+                          className="p-0.5 rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive hover:bg-destructive/10 transition-all" title="Remove">
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
+                    </li>
                   ))}
                 </ol>
-              </CardContent>
-            </Card>
-          )}
+              ) : (
+                <p className="text-sm text-muted-foreground">No employment history recorded.</p>
+              )}
+              {canEdit && (
+                <div className="flex gap-2 pt-1">
+                  <input
+                    type="text"
+                    value={newHistoryEntry}
+                    onChange={e => setNewHistoryEntry(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && addHistoryEntry()}
+                    placeholder="Add employer (e.g. ABC Security 2021–2023)"
+                    className="flex-1 rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
+                  <Button size="sm" className="h-7 text-xs" onClick={addHistoryEntry} disabled={historyAdding || !newHistoryEntry.trim()}>
+                    <Plus className="h-3 w-3" />
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       )}
 
@@ -1348,6 +1736,33 @@ export default function StaffDetailPage() {
                   <Label>Expiry date <span className="font-normal text-muted-foreground">(leave blank if British)</span></Label>
                   <Input type="date" value={profileDraft.rtw_expiry}
                     onChange={e => setProfileDraft(d => ({ ...d, rtw_expiry: e.target.value }))} />
+                </div>
+              </section>
+
+              {/* Emergency Contact */}
+              <section className="space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground border-b pb-1.5 flex items-center gap-1.5">
+                  <Contact className="h-3.5 w-3.5" />Emergency Contact
+                </p>
+                <div className="space-y-1.5">
+                  <Label>Contact name</Label>
+                  <Input value={profileDraft.ec_name}
+                    onChange={e => setProfileDraft(d => ({ ...d, ec_name: e.target.value }))}
+                    placeholder="Full name" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Phone</Label>
+                    <Input value={profileDraft.ec_phone}
+                      onChange={e => setProfileDraft(d => ({ ...d, ec_phone: e.target.value }))}
+                      placeholder="+44..." />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Relationship</Label>
+                    <Input value={profileDraft.ec_rel}
+                      onChange={e => setProfileDraft(d => ({ ...d, ec_rel: e.target.value }))}
+                      placeholder="e.g. Spouse, Parent" />
+                  </div>
                 </div>
               </section>
             </div>
