@@ -47,11 +47,7 @@ export default function StaffLayout() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <header className={`flex h-16 items-center gap-3 border-b px-4 md:px-8 ${
-        isDark
-          ? "border-[hsl(228_12%_11%)] bg-[hsl(228_14%_7%)] text-[hsl(220_14%_72%)]"
-          : "border-[hsl(220_13%_91%)] bg-white text-[hsl(224_14%_15%)]"
-      }`}>
+      <header className="flex h-16 items-center gap-3 border-b border-sidebar-border bg-sidebar text-sidebar-foreground px-4 md:px-8">
         <img
           src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
           alt="GuardTec"

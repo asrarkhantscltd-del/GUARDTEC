@@ -111,17 +111,23 @@ export default function DashboardPage() {
         {/* Dot grid texture */}
         <div className={`bg-dot-grid absolute inset-0 opacity-[0.035] ${isDark ? "text-white" : "text-slate-900"}`} />
 
-        {/* Watermark logo — huge, subtle, behind everything */}
-        <img
-          src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
-          aria-hidden
-          className="pointer-events-none absolute -right-6 top-1/2 hidden -translate-y-1/2 select-none md:block"
-          style={{ height: "210px", width: "auto", opacity: isDark ? 0.07 : 0.055 }}
-        />
-
         <div className="relative z-10 flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-          {/* Left: greeting */}
+
+          {/* Left: logo + greeting */}
           <div>
+            {/* Logo row — top of left section */}
+            <div className="mb-4 flex items-center gap-2.5">
+              <img
+                src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
+                alt="GuardTec"
+                className="h-7 w-auto"
+              />
+              <div className={`h-4 w-px ${isDark ? "bg-white/20" : "bg-black/15"}`} />
+              <span className={`text-[10px] font-semibold uppercase tracking-[0.2em] ${isDark ? "text-white/40" : "opacity-40"}`}>
+                Security &amp; Patrol Ltd
+              </span>
+            </div>
+
             <div className="mb-3 flex items-center gap-2">
               <Sparkles className="h-3.5 w-3.5 text-primary" />
               <span className="text-xs font-semibold uppercase tracking-[0.25em] text-primary">
@@ -137,27 +143,19 @@ export default function DashboardPage() {
             <p className={`mt-2 max-w-md text-sm leading-relaxed ${isDark ? "text-white/50" : "opacity-55"}`}>
               Here's your live operations overview — officers, sites and fleet, all in one place.
             </p>
-
-            {/* Branded pill — logo + company name */}
-            <div className={`mt-5 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 ${
-              isDark ? "border-white/10 bg-white/5" : "border-black/10 bg-black/[0.04]"
-            }`}>
-              <img
-                src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
-                className="h-3.5 w-auto"
-                aria-hidden
-              />
-              <span className={`text-[10px] font-semibold uppercase tracking-[0.2em] ${isDark ? "text-white/40" : "opacity-40"}`}>
-                Security &amp; Patrol Ltd
-              </span>
-            </div>
           </div>
 
-          {/* Right: compliance ring */}
+          {/* Right: compliance ring — clickable, goes to /compliance */}
           {compliancePct !== null && (
-            <div className={`flex shrink-0 items-center gap-4 rounded-2xl border px-6 py-4 backdrop-blur-sm ${
-              isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-black/[0.03]"
-            }`}>
+            <button
+              onClick={() => navigate("/compliance")}
+              className={`group flex shrink-0 cursor-pointer items-center gap-4 rounded-2xl border px-6 py-4 backdrop-blur-sm transition-all duration-200 hover:scale-[1.02] hover:shadow-lg ${
+                isDark
+                  ? "border-white/10 bg-white/[0.04] hover:border-white/20 hover:bg-white/[0.07]"
+                  : "border-black/10 bg-black/[0.03] hover:border-black/20 hover:bg-black/[0.06]"
+              }`}
+              title="Click to open Compliance Dashboard"
+            >
               <div
                 className="relative flex h-20 w-20 shrink-0 items-center justify-center rounded-full"
                 style={{
@@ -170,14 +168,17 @@ export default function DashboardPage() {
                   <span className="text-lg font-bold">{compliancePct}%</span>
                 </div>
               </div>
-              <div>
+              <div className="text-left">
                 <p className={`text-xs font-semibold uppercase tracking-wide ${isDark ? "text-white/40" : "opacity-40"}`}>Staff Compliance</p>
                 <p className={`mt-0.5 text-sm ${isDark ? "text-white/60" : "opacity-60"}`}>
                   {stats?.compliant ?? 0} of {stats?.totalStaff ?? 0} officers
                 </p>
                 <p className={`mt-0.5 text-xs ${isDark ? "text-white/30" : "opacity-30"}`}>fully documented &amp; deployable</p>
+                <p className={`mt-1.5 text-[10px] font-medium opacity-0 transition-opacity group-hover:opacity-100 ${isDark ? "text-white/50" : "opacity-50"}`}>
+                  View compliance →
+                </p>
               </div>
-            </div>
+            </button>
           )}
         </div>
       </div>
@@ -328,14 +329,14 @@ export default function DashboardPage() {
 
 type Tint = "blue" | "teal" | "amber" | "purple" | "green" | "red" | "gray"
 
-const TINTS: Record<Tint, { bg: string; text: string }> = {
-  blue:   { bg: "bg-blue-500/10",   text: "text-blue-600 dark:text-blue-400" },
-  teal:   { bg: "bg-teal-500/10",   text: "text-teal-600 dark:text-teal-400" },
-  amber:  { bg: "bg-amber-500/10",  text: "text-amber-600 dark:text-amber-400" },
-  purple: { bg: "bg-purple-500/10", text: "text-purple-600 dark:text-purple-400" },
-  green:  { bg: "bg-success/10",    text: "text-success" },
-  red:    { bg: "bg-destructive/10", text: "text-destructive" },
-  gray:   { bg: "bg-muted",         text: "text-muted-foreground" },
+const TINTS: Record<Tint, { bg: string; text: string; strip: string }> = {
+  blue:   { bg: "bg-blue-500/10",    text: "text-blue-500",              strip: "#3b82f6" },
+  teal:   { bg: "bg-teal-500/10",    text: "text-teal-500",              strip: "#14b8a6" },
+  amber:  { bg: "bg-amber-500/10",   text: "text-amber-500",             strip: "#f59e0b" },
+  purple: { bg: "bg-purple-500/10",  text: "text-purple-500",            strip: "#a855f7" },
+  green:  { bg: "bg-[#22c55e]/10",   text: "text-[#22c55e]",             strip: "#22c55e" },
+  red:    { bg: "bg-[#ef4444]/10",   text: "text-[#ef4444]",             strip: "#ef4444" },
+  gray:   { bg: "bg-muted",          text: "text-muted-foreground",      strip: "#6b7280" },
 }
 
 interface StatCardProps {
@@ -354,15 +355,18 @@ function StatCard({ label, value, sub, icon, tint, highlight, clickable, onClick
   return (
     <div
       onClick={onClick}
-      className={`surface p-4 ${highlight ? "border-destructive/30" : ""} ${clickable ? "surface-hover cursor-pointer" : ""}`}
+      className={`surface relative overflow-hidden p-4 pl-5 ${highlight ? "border-[#ef4444]/40" : ""} ${clickable ? "surface-hover cursor-pointer" : ""}`}
     >
+      {/* Status strip — left border, Trust & Authority pattern */}
+      <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl" style={{ background: t.strip }} />
+
       <div className="mb-3 flex items-center justify-between">
         <div className={`icon-badge ${t.bg} ${t.text}`}>{icon}</div>
         {clickable && <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground/40" />}
       </div>
-      <p className={`text-2xl font-bold tracking-tight ${highlight ? "text-destructive" : ""}`}>{value}</p>
-      <p className="mt-0.5 text-xs font-medium text-muted-foreground">{label}</p>
-      <p className="text-[11px] text-muted-foreground/70">{sub}</p>
+      <p className={`text-3xl font-black tracking-tight tabular-nums ${highlight ? "text-[#ef4444]" : ""}`}>{value}</p>
+      <p className="mt-0.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="text-[11px] text-muted-foreground/60">{sub}</p>
     </div>
   )
 }

@@ -2,8 +2,9 @@
 
 @variant dark (&:where(.dark, .dark *));
 
-@theme inline {
-  /* ── Light mode ── */
+/* @theme (without inline) → utility classes use var(--color-xxx), so html.dark overrides work */
+@theme {
+  /* ── Light mode defaults ── */
   --color-background: hsl(220 20% 97%);
   --color-foreground: hsl(224 14% 10%);
   --color-card: hsl(0 0% 100%);
@@ -11,7 +12,6 @@
   --color-popover: hsl(0 0% 100%);
   --color-popover-foreground: hsl(224 14% 10%);
 
-  /* GuardTec Red as primary */
   --color-primary: hsl(354 96% 46%);
   --color-primary-foreground: hsl(0 0% 100%);
 
@@ -33,14 +33,14 @@
   --color-chart-4: hsl(43 74% 66%);
   --color-chart-5: hsl(27 87% 67%);
 
-  /* Sidebar — light mode defaults (used by Tailwind utility generation) */
-  --color-sidebar: hsl(228 14% 7%);
-  --color-sidebar-foreground: hsl(220 14% 72%);
+  /* Sidebar — LIGHT mode defaults */
+  --color-sidebar: hsl(0 0% 100%);
+  --color-sidebar-foreground: hsl(224 14% 15%);
   --color-sidebar-primary: hsl(354 96% 46%);
   --color-sidebar-primary-foreground: hsl(0 0% 100%);
-  --color-sidebar-accent: hsl(228 12% 13%);
-  --color-sidebar-accent-foreground: hsl(0 0% 95%);
-  --color-sidebar-border: hsl(228 12% 11%);
+  --color-sidebar-accent: hsl(220 13% 91%);
+  --color-sidebar-accent-foreground: hsl(224 14% 10%);
+  --color-sidebar-border: hsl(220 13% 91%);
   --color-sidebar-ring: hsl(354 96% 46%);
 
   --radius: 0.75rem;
@@ -50,7 +50,7 @@
 }
 
 
-/* ── Manual theme overrides (class wins over media query) ──────────────────── */
+/* ── Dark mode overrides ────────────────────────────────────────────────────── */
 html.dark {
   --color-background: hsl(228 16% 8%);
   --color-foreground: hsl(220 14% 92%);
@@ -74,8 +74,18 @@ html.dark {
   --color-success: hsl(142 71% 45%);
   --color-warning: hsl(38 92% 50%);
   --color-danger: hsl(0 62% 40%);
+  /* Sidebar — dark overrides */
+  --color-sidebar: hsl(228 14% 7%);
+  --color-sidebar-foreground: hsl(220 14% 72%);
+  --color-sidebar-primary: hsl(354 96% 50%);
+  --color-sidebar-primary-foreground: hsl(0 0% 100%);
+  --color-sidebar-accent: hsl(228 12% 13%);
+  --color-sidebar-accent-foreground: hsl(0 0% 95%);
+  --color-sidebar-border: hsl(228 12% 11%);
+  --color-sidebar-ring: hsl(354 96% 50%);
 }
 
+/* ── Light mode explicit overrides (when user toggles to light) ─────────────── */
 html.light {
   --color-background: hsl(220 20% 97%);
   --color-foreground: hsl(224 14% 10%);
@@ -99,6 +109,15 @@ html.light {
   --color-success: hsl(142 71% 45%);
   --color-warning: hsl(38 92% 50%);
   --color-danger: hsl(0 84% 60%);
+  /* Sidebar — light overrides */
+  --color-sidebar: hsl(0 0% 100%);
+  --color-sidebar-foreground: hsl(224 14% 15%);
+  --color-sidebar-primary: hsl(354 96% 46%);
+  --color-sidebar-primary-foreground: hsl(0 0% 100%);
+  --color-sidebar-accent: hsl(220 13% 91%);
+  --color-sidebar-accent-foreground: hsl(224 14% 10%);
+  --color-sidebar-border: hsl(220 13% 91%);
+  --color-sidebar-ring: hsl(354 96% 46%);
 }
 
 @layer base {
