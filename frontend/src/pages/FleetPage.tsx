@@ -191,8 +191,8 @@ export default function FleetPage() {
     async function load() {
       try {
         const [vRes, dRes] = await Promise.all([
-          fetch("/api/vehicles"),
-          fetch("/api/fleet-drivers"),
+          fetch("/api/vehicles", { credentials: "include" }),
+          fetch("/api/fleet-drivers", { credentials: "include" }),
         ])
         if (cancelled) return
         if (vRes.ok) {
@@ -256,6 +256,7 @@ export default function FleetPage() {
     try {
       const res = await fetch("/api/fleet-drivers", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(editDriver),
       })
@@ -265,6 +266,8 @@ export default function FleetPage() {
         setShowPanel(false)
         setEditDriver(BLANK_DRIVER)
         toast.success("Driver added successfully")
+      } else {
+        toast.error("Failed to add driver")
       }
     } finally {
       setSaving(false)
@@ -277,11 +280,13 @@ export default function FleetPage() {
     if (!deleteId) return
     setDeleting(true)
     try {
-      const res = await fetch(`/api/fleet-drivers/${deleteId}`, { method: "DELETE" })
+      const res = await fetch(`/api/fleet-drivers/${deleteId}`, { method: "DELETE", credentials: "include" })
       if (res.ok) {
         setDrivers(prev => prev.filter(d => d.id !== deleteId))
         setDeleteId(null)
         toast.success("Driver removed")
+      } else {
+        toast.error("Failed to remove driver")
       }
     } finally {
       setDeleting(false)
@@ -316,15 +321,17 @@ export default function FleetPage() {
     try {
       const res = await fetch("/api/vehicles", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(editVehicle),
       })
-      if (!res.ok) return
+      if (!res.ok) { toast.error("Failed to add vehicle"); return }
       const { vehicle } = await res.json()
 
       if (vehiclePhoto) {
         await fetch(`/api/vehicles/${vehicle.id}/photo`, {
           method: "POST",
+          credentials: "include",
           headers: { "Content-Type": vehiclePhoto.type || "application/octet-stream" },
           body: vehiclePhoto,
         })
@@ -345,11 +352,13 @@ export default function FleetPage() {
     if (!deleteVehicleId) return
     setDeletingVehicle(true)
     try {
-      const res = await fetch(`/api/vehicles/${deleteVehicleId}`, { method: "DELETE" })
+      const res = await fetch(`/api/vehicles/${deleteVehicleId}`, { method: "DELETE", credentials: "include" })
       if (res.ok) {
         setVehicles(prev => prev.filter(v => v.id !== deleteVehicleId))
         setDeleteVehicleId(null)
         toast.success("Vehicle removed")
+      } else {
+        toast.error("Failed to remove vehicle")
       }
     } finally {
       setDeletingVehicle(false)
@@ -417,7 +426,9 @@ export default function FleetPage() {
       if ((await res.json()).ok) {
         setDocs(prev => prev.filter(d => d.filename !== filename))
       }
-    } catch { /* ignore */ }
+    } catch {
+      toast.error("Failed to delete document")
+    }
   }
 
   // ── Toggle licence category ───────────────────────────────────────────────────

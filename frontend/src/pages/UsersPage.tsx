@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
+import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
 import {
   Plus, Pencil, Trash2, X, KeyRound, ShieldCheck,
@@ -196,6 +197,7 @@ export default function UsersPage() {
       })
       const d = await r.json()
       if (!d.ok) { setPanelError(d.error ?? "Failed to save."); setSaving(false); return }
+      toast.success(editing ? "User updated" : "User created")
       await loadUsers(); closePanel()
     } catch { setPanelError("Network error.") }
     setSaving(false)
@@ -217,6 +219,7 @@ export default function UsersPage() {
       })
       const d = await r.json()
       if (!d.ok) { setResetError(d.error ?? "Failed to reset password."); setResetting(false); return }
+      toast.success("Password reset successfully")
       closeReset()
     } catch { setResetError("Network error.") }
     setResetting(false)
@@ -226,8 +229,14 @@ export default function UsersPage() {
 
   async function confirmDelete() {
     if (!deleteUser) return
-    await fetch(`/api/users/${deleteUser.id}`, { method: "DELETE", credentials: "include" })
-    setDeleteUser(null); await loadUsers()
+    try {
+      const res = await fetch(`/api/users/${deleteUser.id}`, { method: "DELETE", credentials: "include" })
+      if (!res.ok) { toast.error("Failed to delete user — please try again"); return }
+      toast.success("User account deleted")
+      setDeleteUser(null); await loadUsers()
+    } catch {
+      toast.error("Network error — could not delete user")
+    }
   }
 
   // ── Filtered list ──────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { toast } from "sonner"
 import {
   ClipboardCheck, Check, X, Loader2, Clock, Camera,
 } from "lucide-react"
@@ -57,8 +58,12 @@ export default function PendingReviewPage() {
   async function approve(id: string) {
     setBusyId(id)
     try {
-      await fetch(`/api/staff/${id}/approve`, { method: "POST", credentials: "include" })
+      const res = await fetch(`/api/staff/${id}/approve`, { method: "POST", credentials: "include" })
+      if (!res.ok) { toast.error("Failed to approve — please try again"); return }
+      toast.success("Submission approved")
       await load()
+    } catch {
+      toast.error("Network error — could not approve")
     } finally {
       setBusyId(null)
     }
@@ -67,14 +72,18 @@ export default function PendingReviewPage() {
   async function reject(id: string) {
     setBusyId(id)
     try {
-      await fetch(`/api/staff/${id}/reject`, {
+      const res = await fetch(`/api/staff/${id}/reject`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason }),
       })
+      if (!res.ok) { toast.error("Failed to reject — please try again"); return }
+      toast.success("Submission rejected")
       setRejectingId(null)
       setReason("")
       await load()
+    } catch {
+      toast.error("Network error — could not reject")
     } finally {
       setBusyId(null)
     }

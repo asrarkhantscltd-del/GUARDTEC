@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { toast } from "sonner"
 import {
   Plus, Pencil, Trash2, X, Users, Truck, MapPin,
   ShieldCheck, ClipboardCheck, Lock, UserCog, UserX,
@@ -83,6 +84,7 @@ export default function ManageRolesPage() {
       })
       const d = await r.json()
       if (!d.ok) { setPanelError(d.error ?? "Failed to save."); setSaving(false); return }
+      toast.success(editing ? "Role updated" : "Role created")
       await load(); closePanel()
     } catch {
       setPanelError("Network error.")
@@ -98,6 +100,7 @@ export default function ManageRolesPage() {
       const r = await fetch(`/api/roles/${deleteRole.slug}`, { method: "DELETE", credentials: "include" })
       const d = await r.json()
       if (!d.ok) { setDeleteError(d.error ?? "Failed to delete."); setDeleting(false); return }
+      toast.success("Role deleted")
       setDeleteRole(null); await load()
     } catch {
       setDeleteError("Network error.")

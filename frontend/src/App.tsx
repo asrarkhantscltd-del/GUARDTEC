@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { Toaster } from "sonner"
 import { AuthProvider, useAuth } from "@/contexts/AuthContext"
 import { ThemeProvider } from "@/contexts/ThemeContext"
@@ -16,6 +17,7 @@ import UsersPage from "@/pages/UsersPage"
 import ManageRolesPage from "@/pages/ManageRolesPage"
 import PendingReviewPage from "@/pages/PendingReviewPage"
 import MyProfilePage from "@/pages/MyProfilePage"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
 import type { ReactNode } from "react"
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -75,8 +77,22 @@ function AuthenticatedApp() {
   )
 }
 
+// One QueryClient for the app's lifetime — created outside the component so
+// it survives re-renders. Internal LAN tool, modest traffic: don't refetch
+// on every window focus, but do retry once on a transient network blip.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60_000,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+})
+
 export default function App() {
   return (
+    <QueryClientProvider client={queryClient}>
     <BrowserRouter>
       <ThemeProvider>
       <AuthProvider>
@@ -102,7 +118,9 @@ export default function App() {
             path="/*"
             element={
               <RequireAuth>
-                <AuthenticatedApp />
+                <ErrorBoundary>
+                  <AuthenticatedApp />
+                </ErrorBoundary>
               </RequireAuth>
             }
           />
@@ -110,5 +128,6 @@ export default function App() {
       </AuthProvider>
       </ThemeProvider>
     </BrowserRouter>
+    </QueryClientProvider>
   )
 }

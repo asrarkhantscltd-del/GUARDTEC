@@ -113,11 +113,17 @@ export default function CompliancePage() {
   useEffect(() => {
     fetch("/api/staff", { credentials: "include" })
       .then(r => {
-        if (!r.ok) throw new Error("Forbidden")
+        if (r.status === 401) throw new Error("unauthorized")
+        if (r.status === 403) throw new Error("forbidden")
+        if (!r.ok) throw new Error("error")
         return r.json()
       })
       .then(data => setStaff(Array.isArray(data) ? data : []))
-      .catch(() => setError("Could not load compliance data. Make sure you have Staff access."))
+      .catch(err => {
+        if (err.message === "unauthorized") setError("Your session has expired — please log out and back in.")
+        else if (err.message === "forbidden") setError("Access denied — contact your administrator.")
+        else setError("Could not load compliance data. Check your connection and try again.")
+      })
       .finally(() => setLoading(false))
   }, [])
 

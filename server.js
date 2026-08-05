@@ -6,6 +6,7 @@ const XLSX         = require('xlsx');
 const cookieParser = require('cookie-parser');
 const jwt          = require('jsonwebtoken');
 const bcrypt       = require('bcryptjs');
+const crypto       = require('crypto');
 const { Pool }     = require('pg');
 
 const app  = express();
@@ -96,6 +97,20 @@ function signToken(user) {
   return jwt.sign({ id: user.id, username: user.username, role: user.role || 'supervisor', staff_id: user.staff_id || null }, JWT_SECRET, { expiresIn: '7d' });
 }
 
+// Double-submit CSRF token — readable by JS (unlike the httpOnly auth cookie)
+// so the frontend can echo it back as a header on every mutating request.
+// Defense-in-depth on top of sameSite:'strict', which already blocks the
+// auth cookie from being sent on any cross-site request.
+function issueCsrfCookie(res) {
+  var csrfToken = crypto.randomBytes(24).toString('hex');
+  res.cookie('csrf_token', csrfToken, {
+    httpOnly: false,
+    sameSite: 'strict',
+    secure: false, // TODO: set true once Phase 7 adds HTTPS, matches the auth cookie's own TODO
+    maxAge: 7 * 24 * 60 * 60 * 1000
+  });
+}
+
 // Pulls the token from wherever it might be — cookie (web/PWA) or Authorization
 // header (future native mobile app) — without sending any response itself.
 function getAuthedUser(req) {
@@ -148,6 +163,23 @@ function getTodayStr() { return new Date().toISOString().split('T')[0]; }
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
+// ── CSRF double-submit check ──────────────────────────────────────────────────
+// Every mutating request must echo the csrf_token cookie back as a header.
+// A cross-site attacker's page can trigger the request but can never read the
+// cookie to put in the header, so the two won't match. Login/register are
+// exempt — no CSRF cookie exists yet before the user is authenticated.
+var CSRF_EXEMPT_PATHS = ['/api/login', '/api/register'];
+app.use(function(req, res, next) {
+  if (['GET', 'HEAD', 'OPTIONS'].indexOf(req.method) !== -1) return next();
+  if (CSRF_EXEMPT_PATHS.indexOf(req.path) !== -1) return next();
+  var cookieToken = req.cookies && req.cookies.csrf_token;
+  var headerToken = req.headers['x-csrf-token'];
+  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+    return res.status(403).json({ ok: false, error: 'Invalid or missing CSRF token. Please log out and back in.' });
+  }
+  next();
+});
+
 // ── LOGIN / LOGOUT (no gatekeeper — these ARE the gate) ───────────────────────
 async function resolveRoleInfo(role) {
   if (role === 'director') {
@@ -182,6 +214,7 @@ app.post('/api/login', async function(req, res) {
       secure: false, // TODO: set true once Phase 7 adds HTTPS — a secure cookie is silently dropped over plain HTTP
       maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days, matches the token's own expiry
     });
+    issueCsrfCookie(res);
     var roleInfo = await resolveRoleInfo(user.role);
     res.json({
       ok: true,
@@ -204,6 +237,7 @@ app.post('/api/login', async function(req, res) {
 
 app.post('/api/logout', function(req, res) {
   res.clearCookie('token');
+  res.clearCookie('csrf_token');
   res.json({ ok: true });
 });
 
@@ -244,6 +278,7 @@ app.post('/api/register', async function(req, res) {
       secure: false,
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
+    issueCsrfCookie(res);
     var registerRoleInfo = await resolveRoleInfo(user.role);
     res.json({
       ok: true,

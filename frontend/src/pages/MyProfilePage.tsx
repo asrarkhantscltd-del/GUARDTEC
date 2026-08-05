@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
+import { toast } from "sonner"
 import {
   ShieldCheck, AlertTriangle, Clock, Camera, ImageOff,
-  Loader2, Save, User as UserIcon,
+  Loader2, Save, User as UserIcon, Upload,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -80,12 +81,13 @@ export default function MyProfilePage() {
       if (!data.ok) { setError(data.error || "Failed to submit"); setSaving(false); return }
 
       if (photo) {
-        await fetch("/api/my-profile/photo", {
+        const photoRes = await fetch("/api/my-profile/photo", {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": photo.type || "application/octet-stream" },
           body: photo,
         })
+        if (!photoRes.ok) toast.error("Profile saved but photo upload failed — please try again.")
       }
 
       await load()
@@ -286,6 +288,26 @@ export default function MyProfilePage() {
           ))}
         </Section>
 
+        {/* Documents */}
+        {profile.id && (
+          <Section title="Supporting Documents">
+            <p className="mb-4 text-xs text-muted-foreground">
+              Upload copies of your compliance documents. Files are stored securely and reviewed by your manager.
+            </p>
+            <div className="space-y-3">
+              {DOC_UPLOADS.map((doc) => (
+                <DocUploadRow
+                  key={doc.key}
+                  label={doc.label}
+                  hint={doc.hint}
+                  staffId={profile.id}
+                  docKey={doc.key}
+                />
+              ))}
+            </div>
+          </Section>
+        )}
+
         <div className="sticky bottom-4 flex justify-end">
           <Button type="submit" disabled={saving} className="gap-2 shadow-lg">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -293,6 +315,70 @@ export default function MyProfilePage() {
           </Button>
         </div>
       </form>
+    </div>
+  )
+}
+
+// ── Document uploads ──────────────────────────────────────────────────────────
+
+const DOC_UPLOADS = [
+  { key: "siaPhysical",     label: "SIA Licence Copy",   hint: "Front of your SIA licence card — PDF, JPG or PNG" },
+  { key: "passport",        label: "Passport / Photo ID", hint: "Photo page of your passport or national ID" },
+  { key: "brpCard",         label: "BRP Card",            hint: "Biometric Residence Permit — if applicable" },
+  { key: "proofOfAddress1", label: "Proof of Address",    hint: "Utility bill or bank statement (within 3 months)" },
+]
+
+function DocUploadRow({ label, hint, staffId, docKey }: {
+  label: string; hint: string; staffId: string; docKey: string
+}) {
+  const [uploading, setUploading] = useState(false)
+  const [uploaded, setUploaded] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  async function handleFile(file: File) {
+    setUploading(true)
+    try {
+      const res = await fetch(`/api/staff/${staffId}/documents/${docKey}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      })
+      const data = await res.json()
+      if (data.ok) {
+        setUploaded(true)
+        toast.success(`${label} uploaded`)
+      } else {
+        toast.error(data.error ?? `Failed to upload ${label}`)
+      }
+    } catch {
+      toast.error("Network error — please try again")
+    } finally {
+      setUploading(false)
+      if (inputRef.current) inputRef.current.value = ""
+    }
+  }
+
+  return (
+    <div className="flex items-start gap-3 rounded-lg border bg-muted/20 px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium">{label}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>
+      </div>
+      <div className="shrink-0">
+        {uploaded ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-700 dark:bg-green-950/40 dark:text-green-400">
+            <ShieldCheck className="h-3 w-3" /> Uploaded
+          </span>
+        ) : (
+          <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted ${uploading ? "pointer-events-none opacity-50" : ""}`}>
+            {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+            {uploading ? "Uploading…" : "Upload"}
+            <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
+          </label>
+        )}
+      </div>
     </div>
   )
 }

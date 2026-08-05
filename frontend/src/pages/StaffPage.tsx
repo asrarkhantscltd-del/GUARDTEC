@@ -303,19 +303,24 @@ export default function StaffPage() {
   }
 
   async function updateDeploy(staffId: string, deployStatus: string, currentSite?: string) {
-    await fetch(`/api/staff/${staffId}/deploy`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ deployStatus, currentSite }),
-    })
-    setStaff((prev) =>
-      prev.map((s) =>
-        s.id === staffId
-          ? { ...s, deployStatus, ...(currentSite !== undefined ? { currentSite } : {}) }
-          : s
+    try {
+      const res = await fetch(`/api/staff/${staffId}/deploy`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ deployStatus, currentSite }),
+      })
+      if (!res.ok) { toast.error("Failed to update deployment status"); return }
+      setStaff((prev) =>
+        prev.map((s) =>
+          s.id === staffId
+            ? { ...s, deployStatus, ...(currentSite !== undefined ? { currentSite } : {}) }
+            : s
+        )
       )
-    )
+    } catch {
+      toast.error("Network error — could not update deployment")
+    }
   }
 
   async function addSite() {
@@ -333,6 +338,9 @@ export default function StaffPage() {
       if (d.ok) {
         setSites((prev) => [...prev, d.site])
         setNewSiteName("")
+        toast.success("Site added")
+      } else {
+        toast.error("Failed to add site")
       }
     } finally {
       setAddingSite(false)
@@ -340,9 +348,15 @@ export default function StaffPage() {
   }
 
   async function removeSite(id: string) {
-    await fetch(`/api/sites/${id}`, { method: "DELETE", credentials: "include" })
-    setSites((prev) => prev.filter((s) => s.id !== id))
-    if (siteFilter === id) setSiteFilter("all")
+    try {
+      const res = await fetch(`/api/sites/${id}`, { method: "DELETE", credentials: "include" })
+      if (!res.ok) { toast.error("Failed to remove site"); return }
+      setSites((prev) => prev.filter((s) => s.id !== id))
+      if (siteFilter === id) setSiteFilter("all")
+      toast.success("Site removed")
+    } catch {
+      toast.error("Network error — could not remove site")
+    }
   }
 
   function getSiteName(id?: string) {

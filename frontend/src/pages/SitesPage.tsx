@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
+import { toast } from "sonner"
 import {
   MapPin, Plus, Pencil, Trash2, X, Building2, Car, Layers,
   Briefcase, Store, MoreHorizontal, Phone, Mail, Package,
@@ -144,10 +145,15 @@ export default function SitesPage() {
   // ── Data loaders ────────────────────────────────────────────────────────────
 
   async function loadSites() {
-    const r = await fetch("/api/sites", { credentials: "include" })
-    const d = await r.json()
-    setSites(d.sites ?? [])
-    setLoading(false)
+    try {
+      const r = await fetch("/api/sites", { credentials: "include" })
+      const d = await r.json()
+      setSites(d.sites ?? [])
+    } catch {
+      toast.error("Failed to load sites")
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { loadSites() }, [])
@@ -177,14 +183,22 @@ export default function SitesPage() {
       const d = await r.json()
       if (!d.ok) { setSiteError(d.error ?? "Failed to save"); setSiteSaving(false); return }
       await loadSites(); closeSitePanel()
+      toast.success(editingSite ? "Site updated" : "Site added")
     } catch { setSiteError("Network error") }
     setSiteSaving(false)
   }
 
   async function deleteSite() {
     if (!deleteId) return
-    await fetch(`/api/sites/${deleteId}`, { method: "DELETE", credentials: "include" })
-    setDeleteId(null); await loadSites()
+    try {
+      await fetch(`/api/sites/${deleteId}`, { method: "DELETE", credentials: "include" })
+      setDeleteId(null)
+      await loadSites()
+      toast.success("Site deleted")
+    } catch {
+      toast.error("Failed to delete site")
+      setDeleteId(null)
+    }
   }
 
   // ── Welfare CRUD ─────────────────────────────────────────────────────────────
@@ -230,14 +244,22 @@ export default function SitesPage() {
       const d = await r.json()
       if (!d.ok) { setItemError(d.error ?? "Failed to save"); setItemSaving(false); return }
       await refreshWelfare(welfareSite.id); closeItemPanel()
+      toast.success(editingItem ? "Item updated" : "Item added")
     } catch { setItemError("Network error") }
     setItemSaving(false)
   }
 
   async function confirmDeleteItem() {
     if (!deleteItemId || !welfareSite) return
-    await fetch(`/api/sites/${welfareSite.id}/welfare/${deleteItemId}`, { method: "DELETE", credentials: "include" })
-    setDeleteItemId(null); await refreshWelfare(welfareSite.id)
+    try {
+      await fetch(`/api/sites/${welfareSite.id}/welfare/${deleteItemId}`, { method: "DELETE", credentials: "include" })
+      setDeleteItemId(null)
+      await refreshWelfare(welfareSite.id)
+      toast.success("Item removed")
+    } catch {
+      toast.error("Failed to remove item")
+      setDeleteItemId(null)
+    }
   }
 
   // ── Staff CRUD ───────────────────────────────────────────────────────────────
@@ -266,24 +288,42 @@ export default function SitesPage() {
 
   async function assignStaff(staffId: string) {
     if (!staffSite) return
-    await fetch(`/api/sites/${staffSite.id}/staff`, {
-      method: "POST", credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ staff_id: staffId }),
-    })
-    await refreshSiteStaff(staffSite.id)
+    try {
+      await fetch(`/api/sites/${staffSite.id}/staff`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ staff_id: staffId }),
+      })
+      await refreshSiteStaff(staffSite.id)
+      toast.success("Staff assigned to site")
+    } catch {
+      toast.error("Failed to assign staff")
+    }
   }
 
   async function confirmRemoveStaff() {
     if (!deleteStaffId || !staffSite) return
-    await fetch(`/api/sites/${staffSite.id}/staff/${deleteStaffId}`, { method: "DELETE", credentials: "include" })
-    setDeleteStaffId(null); await refreshSiteStaff(staffSite.id)
+    try {
+      await fetch(`/api/sites/${staffSite.id}/staff/${deleteStaffId}`, { method: "DELETE", credentials: "include" })
+      setDeleteStaffId(null)
+      await refreshSiteStaff(staffSite.id)
+      toast.success("Staff removed from site")
+    } catch {
+      toast.error("Failed to remove staff")
+      setDeleteStaffId(null)
+    }
   }
 
-  const assignedIds = new Set(assignedStaff.map((s) => s.id))
-  const unassigned  = allStaff.filter(
-    (s) => !assignedIds.has(s.id) &&
-      (!staffSearch || s.name.toLowerCase().includes(staffSearch.toLowerCase()))
+  const assignedIds = useMemo(
+    () => new Set(assignedStaff.map((s) => s.id)),
+    [assignedStaff]
+  )
+  const unassigned = useMemo(
+    () => allStaff.filter(
+      (s) => !assignedIds.has(s.id) &&
+        (!staffSearch || s.name.toLowerCase().includes(staffSearch.toLowerCase()))
+    ),
+    [allStaff, assignedIds, staffSearch]
   )
 
   // ── Derived ──────────────────────────────────────────────────────────────────

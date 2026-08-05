@@ -1,7 +1,8 @@
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
-import { useEffect, useState } from "react"
 import { useNavigate, useOutletContext } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
+import { api } from "@/lib/api"
 import {
   Users, ShieldCheck, AlertTriangle, Truck, XCircle, MapPin, UserCheck,
   ArrowUpRight, Sparkles, ChevronRight,
@@ -83,21 +84,18 @@ export default function DashboardPage() {
   const { user } = useAuth()
   const { isDark } = useTheme()
   const navigate = useNavigate()
-  const [stats, setStats] = useState<DashboardStats | null>(null)
-  const [sites, setSites] = useState<Site[]>([])
   const { ringHidden } = useOutletContext<{ ringHidden: boolean; toggleRing: () => void }>()
 
-  useEffect(() => {
-    fetch("/api/dashboard/stats", { credentials: "include" })
-      .then((r) => r.json())
-      .then(setStats)
-      .catch(() => {})
+  const { data: stats } = useQuery({
+    queryKey: ["dashboard-stats"],
+    queryFn: () => api.get<DashboardStats>("/api/dashboard/stats"),
+  })
 
-    fetch("/api/sites", { credentials: "include" })
-      .then((r) => r.json())
-      .then((d) => setSites((d.sites ?? []).filter((s: Site) => s.status !== "inactive")))
-      .catch(() => {})
-  }, [])
+  const { data: sitesData } = useQuery({
+    queryKey: ["sites"],
+    queryFn: () => api.get<{ sites: Site[] }>("/api/sites"),
+  })
+  const sites = (sitesData?.sites ?? []).filter((s) => s.status !== "inactive")
 
   const compliancePct = stats && stats.totalStaff > 0
     ? Math.round((stats.compliant / stats.totalStaff) * 100)
