@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { motion } from "framer-motion"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { Input } from "@/components/ui/input"
@@ -11,6 +12,14 @@ import {
   BarChart3, FileWarning, UserX, RotateCcw, Archive, Briefcase,
 } from "lucide-react"
 import { StatusBadge } from "@/components/ui/status-badge"
+
+const stagger = {
+  container: { animate: { transition: { staggerChildren: 0.05 } } },
+  item: {
+    initial: { opacity: 0, y: 16, scale: 0.97 },
+    animate: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.35, ease: [0.16, 1, 0.3, 1] } },
+  },
+}
 
 interface Site {
   id: string
@@ -646,9 +655,14 @@ export default function StaffPage() {
 
         /* ── TILES VIEW ── */
         ) : view === "tiles" ? (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <motion.div
+            className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
+            variants={stagger.container}
+            initial="initial"
+            animate="animate"
+          >
             {filtered.map((s) => (
-              <div key={s.id} onClick={() => goToStaff(s.id)}
+              <motion.div key={s.id} variants={stagger.item} onClick={() => goToStaff(s.id)}
                 className="flex items-center gap-3 rounded-lg border bg-card p-3 cursor-pointer hover:bg-muted/30 transition-colors">
                 <InitialsAvatar name={s.name} status={s.overall} size="lg" />
                 <div className="flex-1 min-w-0">
@@ -682,13 +696,18 @@ export default function StaffPage() {
                 </div>
               </div>
             ))}
-          </div>
+          </motion.div>
 
         /* ── ICONS (MEDIUM) VIEW ── */
         ) : view === "icons" ? (
-          <div className="grid gap-3 grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+          <motion.div
+            className="grid gap-3 grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8"
+            variants={stagger.container}
+            initial="initial"
+            animate="animate"
+          >
             {filtered.map((s) => (
-              <div key={s.id} onClick={() => goToStaff(s.id)}
+              <motion.div key={s.id} variants={stagger.item} onClick={() => goToStaff(s.id)}
                 className="flex flex-col items-center gap-2 rounded-lg p-3 cursor-pointer hover:bg-muted/40 transition-colors text-center">
                 <InitialsAvatar name={s.name} status={s.overall} size="lg" />
                 <p className="text-xs font-medium leading-tight line-clamp-2">{s.name}</p>
@@ -696,21 +715,26 @@ export default function StaffPage() {
                 {s.currentSite && (
                   <p className="text-xs text-muted-foreground line-clamp-1">{getSiteName(s.currentSite)}</p>
                 )}
-              </div>
+              </motion.div>
             ))}
-          </div>
+          </motion.div>
 
         /* ── SMALL ICONS VIEW ── */
         ) : view === "small" ? (
-          <div className="grid gap-2 grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10">
+          <motion.div
+            className="grid gap-2 grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10"
+            variants={stagger.container}
+            initial="initial"
+            animate="animate"
+          >
             {filtered.map((s) => (
-              <div key={s.id} onClick={() => goToStaff(s.id)}
+              <motion.div key={s.id} variants={stagger.item} onClick={() => goToStaff(s.id)}
                 className="flex flex-col items-center gap-1.5 rounded-lg p-2 cursor-pointer hover:bg-muted/40 transition-colors text-center">
                 <InitialsAvatar name={s.name} status={s.overall} size="sm" />
                 <p className="text-xs leading-tight line-clamp-1 w-full">{s.name.split(" ")[0]}</p>
-              </div>
+              </motion.div>
             ))}
-          </div>
+          </motion.div>
 
         /* ── LIST VIEW ── */
         ) : (

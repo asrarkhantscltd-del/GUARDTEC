@@ -7,6 +7,15 @@ import {
   ArrowUpRight, Sparkles, ChevronRight, Eye, EyeOff,
 } from "lucide-react"
 import { ShaderGradientCanvas, ShaderGradient } from "@shadergradient/react"
+import { motion } from "framer-motion"
+
+const stagger = {
+  container: { animate: { transition: { staggerChildren: 0.07 } } },
+  item: {
+    initial: { opacity: 0, y: 20, scale: 0.96 },
+    animate: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] } },
+  },
+}
 
 interface DashboardStats {
   totalStaff: number
@@ -249,69 +258,42 @@ export default function DashboardPage() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <StatCard
-          label="Total staff"
-          value={stats?.totalStaff ?? "--"}
-          sub="across all sites"
-          icon={<Users className="h-5 w-5" />}
-          tint="blue"
-          onClick={() => navigate("/staff")}
-          clickable
-        />
-        <StatCard
-          label="Active sites"
-          value={stats?.activeSites ?? "--"}
-          sub="currently running"
-          icon={<MapPin className="h-5 w-5" />}
-          tint="teal"
-          onClick={() => navigate("/sites")}
-          clickable
-        />
-        <StatCard
-          label="Vehicles"
-          value={stats?.vehicles ?? "--"}
-          sub="in fleet"
-          icon={<Truck className="h-5 w-5" />}
-          tint="amber"
-          onClick={() => navigate("/fleet?tab=vehicles")}
-          clickable
-        />
-        <StatCard
-          label="Drivers"
-          value={stats?.drivers ?? "--"}
-          sub="registered"
-          icon={<UserCheck className="h-5 w-5" />}
-          tint="purple"
-          onClick={() => navigate("/fleet?tab=drivers")}
-          clickable
-        />
-        <StatCard
-          label="Compliant"
-          value={stats?.compliant ?? "--"}
-          sub="all docs valid"
-          icon={<ShieldCheck className="h-5 w-5" />}
-          tint="green"
-        />
-        {stats && stats.expired > 0 ? (
-          <StatCard
-            label="Expired"
-            value={stats.expired}
-            sub="immediate action"
-            icon={<XCircle className="h-5 w-5" />}
-            tint="red"
-            highlight
-          />
-        ) : (
-          <StatCard
-            label="Expiring soon"
-            value={stats?.expiringSoon ?? "--"}
-            sub="within 90 days"
-            icon={<AlertTriangle className="h-5 w-5" />}
-            tint={stats && stats.expiringSoon > 0 ? "amber" : "gray"}
-          />
-        )}
-      </div>
+      <motion.div
+        className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6"
+        variants={stagger.container}
+        initial="initial"
+        animate="animate"
+      >
+        <motion.div variants={stagger.item}>
+          <StatCard label="Total staff" value={stats?.totalStaff ?? "--"} sub="across all sites"
+            icon={<Users className="h-5 w-5" />} tint="blue" onClick={() => navigate("/staff")} clickable />
+        </motion.div>
+        <motion.div variants={stagger.item}>
+          <StatCard label="Active sites" value={stats?.activeSites ?? "--"} sub="currently running"
+            icon={<MapPin className="h-5 w-5" />} tint="teal" onClick={() => navigate("/sites")} clickable />
+        </motion.div>
+        <motion.div variants={stagger.item}>
+          <StatCard label="Vehicles" value={stats?.vehicles ?? "--"} sub="in fleet"
+            icon={<Truck className="h-5 w-5" />} tint="amber" onClick={() => navigate("/fleet?tab=vehicles")} clickable />
+        </motion.div>
+        <motion.div variants={stagger.item}>
+          <StatCard label="Drivers" value={stats?.drivers ?? "--"} sub="registered"
+            icon={<UserCheck className="h-5 w-5" />} tint="purple" onClick={() => navigate("/fleet?tab=drivers")} clickable />
+        </motion.div>
+        <motion.div variants={stagger.item}>
+          <StatCard label="Compliant" value={stats?.compliant ?? "--"} sub="all docs valid"
+            icon={<ShieldCheck className="h-5 w-5" />} tint="green" />
+        </motion.div>
+        <motion.div variants={stagger.item}>
+          {stats && stats.expired > 0 ? (
+            <StatCard label="Expired" value={stats.expired} sub="immediate action"
+              icon={<XCircle className="h-5 w-5" />} tint="red" highlight />
+          ) : (
+            <StatCard label="Expiring soon" value={stats?.expiringSoon ?? "--"} sub="within 90 days"
+              icon={<AlertTriangle className="h-5 w-5" />} tint={stats && stats.expiringSoon > 0 ? "amber" : "gray"} />
+          )}
+        </motion.div>
+      </motion.div>
 
       {/* Sites overview */}
       <div>
@@ -333,13 +315,18 @@ export default function DashboardPage() {
             </button>
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <motion.div
+            className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
+            variants={stagger.container}
+            initial="initial"
+            animate="animate"
+          >
             {sites.map((site, i) => (
-              <div
+              <motion.div
                 key={site.id}
+                variants={stagger.item}
                 onClick={() => navigate("/sites")}
-                className="surface surface-hover animate-fade-in-up cursor-pointer p-4"
-                style={{ animationDelay: `${i * 40}ms` }}
+                className="surface surface-hover cursor-pointer p-4"
               >
                 <div className="mb-3 flex items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -383,9 +370,9 @@ export default function DashboardPage() {
                     {site.address}
                   </p>
                 )}
-              </div>
+              </motion.div>
             ))}
-          </div>
+          </motion.div>
         )}
       </div>
     </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { motion } from "framer-motion"
 import { useAuth } from "@/contexts/AuthContext"
 import {
   Plus, Pencil, Trash2, X, KeyRound, ShieldCheck,
@@ -264,8 +265,15 @@ export default function UsersPage() {
 
       {/* ── Stats cards ── */}
       {!loading && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="surface relative overflow-hidden p-4 pl-5">
+        <motion.div
+          className="grid grid-cols-2 gap-3 sm:grid-cols-4"
+          initial="hidden"
+          animate="show"
+          variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08 } } }}
+        >
+          <motion.div
+            variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16,1,0.3,1] } } }}
+            className="surface relative overflow-hidden p-4 pl-5">
             <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl bg-primary" />
             <div className="mb-2 flex items-center justify-between">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
@@ -274,8 +282,10 @@ export default function UsersPage() {
             </div>
             <p className="text-3xl font-black tabular-nums">{users.length}</p>
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total accounts</p>
-          </div>
-          <div className="surface relative overflow-hidden p-4 pl-5 cursor-pointer hover:border-success/40 transition-colors"
+          </motion.div>
+          <motion.div
+            variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16,1,0.3,1] } } }}
+            className="surface relative overflow-hidden p-4 pl-5 cursor-pointer hover:border-success/40 transition-colors"
             onClick={() => setFilterStatus(f => f === "active" ? "all" : "active")}>
             <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl bg-success" />
             <div className="mb-2 flex items-center justify-between">
@@ -286,8 +296,10 @@ export default function UsersPage() {
             </div>
             <p className="text-3xl font-black tabular-nums text-success">{activeCount}</p>
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Active</p>
-          </div>
-          <div className="surface relative overflow-hidden p-4 pl-5 cursor-pointer hover:border-muted-foreground/30 transition-colors"
+          </motion.div>
+          <motion.div
+            variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16,1,0.3,1] } } }}
+            className="surface relative overflow-hidden p-4 pl-5 cursor-pointer hover:border-muted-foreground/30 transition-colors"
             onClick={() => setFilterStatus(f => f === "suspended" ? "all" : "suspended")}>
             <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl bg-muted-foreground/40" />
             <div className="mb-2 flex items-center justify-between">
@@ -298,8 +310,10 @@ export default function UsersPage() {
             </div>
             <p className="text-3xl font-black tabular-nums">{suspendedCount}</p>
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Suspended</p>
-          </div>
-          <div className="surface relative overflow-hidden p-4 pl-5">
+          </motion.div>
+          <motion.div
+            variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16,1,0.3,1] } } }}
+            className="surface relative overflow-hidden p-4 pl-5">
             <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl bg-purple-500" />
             <div className="mb-2 flex items-center justify-between">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-500/10">
@@ -308,8 +322,8 @@ export default function UsersPage() {
             </div>
             <p className="text-3xl font-black tabular-nums">{rolesUsed}</p>
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Roles in use</p>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
 
       {/* ── Search + filter bar ── */}
