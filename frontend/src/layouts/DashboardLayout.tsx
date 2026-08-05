@@ -110,20 +110,18 @@ export default function DashboardLayout() {
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
       }`}>
 
-        {/* Logo area */}
+        {/* Logo area — brand zone, generous space */}
         <button
           onClick={() => { navigate("/"); setSidebarOpen(false) }}
-          className="relative flex h-20 w-full shrink-0 flex-col items-center justify-center gap-1 overflow-hidden border-b border-sidebar-border px-4 transition-colors hover:bg-sidebar-accent"
+          className="relative flex h-28 w-full shrink-0 flex-col items-center justify-center overflow-hidden border-b border-sidebar-border px-6 transition-colors hover:bg-sidebar-accent"
         >
-          <div className="glow-blob absolute -left-6 -top-10 h-24 w-24" />
+          {/* Red glow behind logo */}
+          <div className="glow-blob absolute left-1/2 top-1/2 h-32 w-32 -translate-x-1/2 -translate-y-1/2 opacity-60" />
           <img
             src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
-            alt="GuardTec"
-            className="relative z-10 h-14 w-auto"
+            alt="GuardTec Security"
+            className="relative z-10 h-20 w-auto drop-shadow-lg"
           />
-          <span className="relative z-10 text-[9px] font-semibold uppercase tracking-[0.25em] opacity-30">
-            Compliance
-          </span>
         </button>
 
         {/* Nav */}

@@ -3,6 +3,8 @@ import { useParams, useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { StatusBadge } from "@/components/ui/status-badge"
 import {
   ArrowLeft, Phone, Mail, User, ShieldCheck, CreditCard, FileText,
@@ -232,6 +234,12 @@ export default function StaffDetailPage() {
   const [showAddForm, setShowAddForm]     = useState(false)
   const [addDraft, setAddDraft]           = useState({ label: "", completed: false, date: "", expiry: "", number: "", provider: "" })
 
+  // Profile edit panel
+  const [editOpen, setEditOpen]       = useState(false)
+  const [profileDraft, setProfileDraft] = useState<Record<string, string>>({})
+  const [editSaving, setEditSaving]   = useState(false)
+  const [editError, setEditError]     = useState("")
+
   useEffect(() => {
     fetch("/api/staff", { credentials: "include" })
       .then((r) => r.json())
@@ -250,6 +258,76 @@ export default function StaffDetailPage() {
   }, [id])
 
   const canManagePortalAccess = me?.role === "director" || me?.role === "ops_manager"
+  const canEdit   = me?.role === "director" || !!me?.permissions?.edit_staff
+  const canDelete = me?.role === "director" || !!me?.permissions?.delete_staff
+
+  function openEdit() {
+    if (!staff) return
+    setProfileDraft({
+      name:        staff.name ?? "",
+      jobRole:     staff.jobRole ?? "",
+      email:       staff.email ?? "",
+      phone:       staff.phone ?? "",
+      nationality: staff.nationality ?? "",
+      gender:      staff.gender ?? "",
+      dob:         staff.dob || staff.dateOfBirth || "",
+      ni:          staff.ni ?? "",
+      address:     staff.address ?? "",
+      contract:    staff.contract ?? "",
+      sia_number:  staff.sia?.number ?? "",
+      sia_type:    staff.sia?.type ?? "",
+      sia_expiry:  staff.sia?.expiry ?? "",
+      cscs_number: staff.cscs?.number ?? "",
+      cscs_expiry: staff.cscs?.expiry ?? "",
+      rtw_type:    staff.visa?.type ?? "",
+      rtw_expiry:  staff.visa?.expiry ?? "",
+    })
+    setEditError("")
+    setEditOpen(true)
+  }
+
+  async function saveEdit() {
+    if (!staff || !id) return
+    if (!profileDraft.name?.trim()) { setEditError("Name is required."); return }
+    setEditSaving(true); setEditError("")
+    try {
+      const body = {
+        ...staff,
+        name:        profileDraft.name.trim(),
+        jobRole:     profileDraft.jobRole || undefined,
+        email:       profileDraft.email || undefined,
+        phone:       profileDraft.phone || undefined,
+        nationality: profileDraft.nationality || undefined,
+        gender:      profileDraft.gender || undefined,
+        dob:         profileDraft.dob || undefined,
+        dateOfBirth: profileDraft.dob || undefined,
+        ni:          profileDraft.ni || undefined,
+        address:     profileDraft.address || undefined,
+        contract:    profileDraft.contract || undefined,
+        sia:  { ...staff.sia,  number: profileDraft.sia_number || undefined, type: profileDraft.sia_type || undefined, expiry: profileDraft.sia_expiry || undefined },
+        cscs: { ...staff.cscs, number: profileDraft.cscs_number || undefined, expiry: profileDraft.cscs_expiry || undefined },
+        visa: { ...staff.visa, type: profileDraft.rtw_type || undefined, expiry: profileDraft.rtw_expiry || undefined },
+      }
+      const res = await fetch(`/api/staff/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(body),
+      })
+      const d = await res.json()
+      if (!d.ok) { setEditError(d.error ?? "Failed to save."); setEditSaving(false); return }
+      const refreshRes = await fetch("/api/staff", { credentials: "include" })
+      const data: StaffMember[] = await refreshRes.json()
+      const updated = data.find(s => s.id === id) ?? null
+      setStaff(updated)
+      if (updated?.training) setTrainingData(updated.training)
+      setEditOpen(false)
+    } catch {
+      setEditError("Network error.")
+    } finally {
+      setEditSaving(false)
+    }
+  }
 
   useEffect(() => {
     if (!canManagePortalAccess || !id) return
@@ -440,10 +518,19 @@ export default function StaffDetailPage() {
         <Button variant="ghost" size="sm" onClick={() => navigate("/staff")}>
           <ArrowLeft className="mr-2 h-4 w-4" />Back to Staff
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => setExConfirm(true)}
-          className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
-          <UserX className="mr-2 h-4 w-4" />Move to Ex-Staff
-        </Button>
+        <div className="flex items-center gap-2">
+          {canEdit && (
+            <Button variant="outline" size="sm" onClick={openEdit} className="gap-1.5">
+              <Pencil className="h-3.5 w-3.5" />Edit Profile
+            </Button>
+          )}
+          {canDelete && (
+            <Button variant="ghost" size="sm" onClick={() => setExConfirm(true)}
+              className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+              <UserX className="mr-2 h-4 w-4" />Move to Ex-Staff
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* ── Profile header ── */}
@@ -1096,6 +1183,182 @@ export default function StaffDetailPage() {
               <AcsCheckRow label="Emergency contact recorded"       done={acs.emergencyContact} note="Name, phone, and relationship" />
             </CardContent>
           </Card>
+        </div>
+      )}
+
+      {/* ── Edit Profile slide-over ── */}
+      {editOpen && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/40" onClick={() => setEditOpen(false)} />
+          <div className="flex w-full max-w-md flex-col bg-background shadow-xl overflow-hidden">
+            <div className="flex items-center justify-between border-b px-5 py-4">
+              <h3 className="text-base font-semibold">Edit Profile — {staff.name}</h3>
+              <button onClick={() => setEditOpen(false)}
+                className="rounded-md p-1 text-muted-foreground hover:bg-muted transition-colors">
+                <XIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
+              {editError && (
+                <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{editError}</p>
+              )}
+
+              {/* Basic Info */}
+              <section className="space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground border-b pb-1.5">Basic Info</p>
+                <div className="space-y-1.5">
+                  <Label>Full name *</Label>
+                  <Input value={profileDraft.name}
+                    onChange={e => setProfileDraft(d => ({ ...d, name: e.target.value }))}
+                    placeholder="Full name" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Job role / title</Label>
+                  <Input value={profileDraft.jobRole}
+                    onChange={e => setProfileDraft(d => ({ ...d, jobRole: e.target.value }))}
+                    placeholder="e.g. Security Officer" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Phone</Label>
+                    <Input value={profileDraft.phone}
+                      onChange={e => setProfileDraft(d => ({ ...d, phone: e.target.value }))}
+                      placeholder="+44..." />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Email</Label>
+                    <Input value={profileDraft.email}
+                      onChange={e => setProfileDraft(d => ({ ...d, email: e.target.value }))}
+                      placeholder="name@email.com" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Nationality</Label>
+                    <Input value={profileDraft.nationality}
+                      onChange={e => setProfileDraft(d => ({ ...d, nationality: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Gender</Label>
+                    <select value={profileDraft.gender}
+                      onChange={e => setProfileDraft(d => ({ ...d, gender: e.target.value }))}
+                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm">
+                      <option value="">—</option>
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Date of birth</Label>
+                    <Input type="date" value={profileDraft.dob}
+                      onChange={e => setProfileDraft(d => ({ ...d, dob: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>NI number</Label>
+                    <Input value={profileDraft.ni}
+                      onChange={e => setProfileDraft(d => ({ ...d, ni: e.target.value }))}
+                      placeholder="AB123456C" />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Home address</Label>
+                  <Input value={profileDraft.address}
+                    onChange={e => setProfileDraft(d => ({ ...d, address: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Contract status</Label>
+                  <select value={profileDraft.contract}
+                    onChange={e => setProfileDraft(d => ({ ...d, contract: e.target.value }))}
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm">
+                    <option value="">—</option>
+                    <option value="Signed">Signed</option>
+                    <option value="Not signed">Not signed</option>
+                    <option value="Pending">Pending</option>
+                  </select>
+                </div>
+              </section>
+
+              {/* SIA Licence */}
+              <section className="space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground border-b pb-1.5 flex items-center gap-1.5">
+                  <ShieldCheck className="h-3.5 w-3.5" />SIA Licence
+                </p>
+                <div className="space-y-1.5">
+                  <Label>Licence number</Label>
+                  <Input value={profileDraft.sia_number}
+                    onChange={e => setProfileDraft(d => ({ ...d, sia_number: e.target.value }))}
+                    placeholder="e.g. 1234-5678-9012-3456" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Licence type</Label>
+                  <select value={profileDraft.sia_type}
+                    onChange={e => setProfileDraft(d => ({ ...d, sia_type: e.target.value }))}
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm">
+                    <option value="">—</option>
+                    <option value="Door Supervisor">Door Supervisor</option>
+                    <option value="Security Guard">Security Guard</option>
+                    <option value="CCTV (Public Space Surveillance)">CCTV (Public Space Surveillance)</option>
+                    <option value="Close Protection">Close Protection</option>
+                    <option value="Cash and Valuables in Transit">Cash and Valuables in Transit</option>
+                    <option value="Key Holding">Key Holding</option>
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Expiry date</Label>
+                  <Input type="date" value={profileDraft.sia_expiry}
+                    onChange={e => setProfileDraft(d => ({ ...d, sia_expiry: e.target.value }))} />
+                </div>
+              </section>
+
+              {/* CSCS Card */}
+              <section className="space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground border-b pb-1.5 flex items-center gap-1.5">
+                  <CreditCard className="h-3.5 w-3.5" />CSCS Card
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Card number</Label>
+                    <Input value={profileDraft.cscs_number}
+                      onChange={e => setProfileDraft(d => ({ ...d, cscs_number: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Expiry date</Label>
+                    <Input type="date" value={profileDraft.cscs_expiry}
+                      onChange={e => setProfileDraft(d => ({ ...d, cscs_expiry: e.target.value }))} />
+                  </div>
+                </div>
+              </section>
+
+              {/* Right to Work */}
+              <section className="space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground border-b pb-1.5 flex items-center gap-1.5">
+                  <FileText className="h-3.5 w-3.5" />Right to Work
+                </p>
+                <div className="space-y-1.5">
+                  <Label>Visa / RTW type</Label>
+                  <Input value={profileDraft.rtw_type}
+                    onChange={e => setProfileDraft(d => ({ ...d, rtw_type: e.target.value }))}
+                    placeholder="e.g. Skilled Worker Visa, ILR, British Citizen..." />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Expiry date <span className="font-normal text-muted-foreground">(leave blank if British)</span></Label>
+                  <Input type="date" value={profileDraft.rtw_expiry}
+                    onChange={e => setProfileDraft(d => ({ ...d, rtw_expiry: e.target.value }))} />
+                </div>
+              </section>
+            </div>
+
+            <div className="flex gap-2 border-t px-5 py-4">
+              <Button variant="outline" className="flex-1" onClick={() => setEditOpen(false)}>Cancel</Button>
+              <Button className="flex-1" onClick={saveEdit} disabled={editSaving}>
+                {editSaving ? "Saving…" : "Save changes"}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 

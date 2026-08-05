@@ -21,7 +21,7 @@ export type UserRole =
   | "staff"
 
 export type Permissions = Partial<Record<
-  "staff" | "fleet" | "sites" | "compliance" | "pending_review",
+  "staff" | "fleet" | "sites" | "compliance" | "pending_review" | "edit_staff" | "delete_staff",
   boolean
 >>
 

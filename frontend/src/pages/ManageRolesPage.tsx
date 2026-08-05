@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import {
   Plus, Pencil, Trash2, X, Users, Truck, MapPin,
-  ShieldCheck, ClipboardCheck, Lock,
+  ShieldCheck, ClipboardCheck, Lock, UserCog, UserX,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -20,9 +20,11 @@ const MODULES = [
   { key: "sites",          label: "Sites",          icon: MapPin },
   { key: "compliance",     label: "Compliance",     icon: ShieldCheck },
   { key: "pending_review", label: "Pending Review", icon: ClipboardCheck },
+  { key: "edit_staff",     label: "Edit Staff",     icon: UserCog },
+  { key: "delete_staff",   label: "Ex-Staff",       icon: UserX },
 ] as const
 
-const BLANK_PERMISSIONS = { staff: false, fleet: false, sites: false, compliance: false, pending_review: false }
+const BLANK_PERMISSIONS = { staff: false, fleet: false, sites: false, compliance: false, pending_review: false, edit_staff: false, delete_staff: false }
 
 export default function ManageRolesPage() {
   const [roles, setRoles]     = useState<Role[]>([])

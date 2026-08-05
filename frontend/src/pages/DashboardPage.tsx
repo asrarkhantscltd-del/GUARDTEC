@@ -113,19 +113,15 @@ export default function DashboardPage() {
 
         <div className="relative z-10 flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
 
-          {/* Left: logo + greeting */}
+          {/* Left: brand logo + greeting */}
           <div>
-            {/* Logo row — top of left section */}
-            <div className="mb-4 flex items-center gap-2.5">
+            {/* Brand logo — DOMINANT element, seen before anything else */}
+            <div className="mb-6">
               <img
                 src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
-                alt="GuardTec"
-                className="h-7 w-auto"
+                alt="GuardTec Security & Patrol"
+                className="h-20 w-auto drop-shadow-lg"
               />
-              <div className={`h-4 w-px ${isDark ? "bg-white/20" : "bg-black/15"}`} />
-              <span className={`text-[10px] font-semibold uppercase tracking-[0.2em] ${isDark ? "text-white/40" : "opacity-40"}`}>
-                Security &amp; Patrol Ltd
-              </span>
             </div>
 
             <div className="mb-3 flex items-center gap-2">
