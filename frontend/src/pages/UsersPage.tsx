@@ -3,6 +3,7 @@ import { useAuth } from "@/contexts/AuthContext"
 import {
   Plus, Pencil, Trash2, X, KeyRound, ShieldCheck,
   ShieldOff, UserCog, Mail, Eye, EyeOff, User,
+  Search, Users, Shield, Activity, Filter,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -115,6 +116,10 @@ export default function UsersPage() {
   // Delete confirm
   const [deleteUser, setDeleteUser] = useState<PortalUser | null>(null)
 
+  // Search + filter
+  const [search, setSearch]         = useState("")
+  const [filterStatus, setFilterStatus] = useState<"all" | "active" | "suspended">("all")
+
   // View profile photo modal
   const [viewUser, setViewUser]         = useState<PortalUser | null>(null)
   const [viewPhotoUrl, setViewPhotoUrl] = useState<string | null>(null)
@@ -224,17 +229,30 @@ export default function UsersPage() {
     setDeleteUser(null); await loadUsers()
   }
 
+  // ── Filtered list ──────────────────────────────────────────────────────────
+
+  const filteredUsers = users.filter((u) => {
+    const q = search.toLowerCase()
+    const matchSearch = !q || u.full_name.toLowerCase().includes(q) || u.username.toLowerCase().includes(q) || (u.email ?? "").toLowerCase().includes(q) || roleLabel(u.role).toLowerCase().includes(q)
+    const matchStatus = filterStatus === "all" || (filterStatus === "active" ? u.is_active : !u.is_active)
+    return matchSearch && matchStatus
+  })
+
   // ── Render ─────────────────────────────────────────────────────────────────
+
+  const activeCount    = users.filter((u) => u.is_active).length
+  const suspendedCount = users.filter((u) => !u.is_active).length
+  const rolesUsed      = new Set(users.map((u) => u.role)).size
 
   return (
     <div className="space-y-5">
 
-      {/* Header */}
+      {/* ── Header ── */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold tracking-tight">Team Access</h2>
+          <h2 className="text-xl font-bold tracking-tight">Account Control Panel</h2>
           <p className="text-sm text-muted-foreground">
-            Manage portal accounts for your team — {users.filter((u) => u.is_active).length} active
+            Manage all portal accounts, roles, and access from one place
           </p>
         </div>
         <Button onClick={openAdd} size="sm" className="gap-1.5">
@@ -244,20 +262,103 @@ export default function UsersPage() {
 
       {error && <p className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>}
 
-      {/* Users list */}
+      {/* ── Stats cards ── */}
+      {!loading && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="surface relative overflow-hidden p-4 pl-5">
+            <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl bg-primary" />
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
+                <Users className="h-4 w-4 text-primary" />
+              </div>
+            </div>
+            <p className="text-3xl font-black tabular-nums">{users.length}</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total accounts</p>
+          </div>
+          <div className="surface relative overflow-hidden p-4 pl-5 cursor-pointer hover:border-success/40 transition-colors"
+            onClick={() => setFilterStatus(f => f === "active" ? "all" : "active")}>
+            <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl bg-success" />
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-success/10">
+                <ShieldCheck className="h-4 w-4 text-success" />
+              </div>
+              {filterStatus === "active" && <span className="text-[10px] font-medium text-success bg-success/10 rounded-full px-2 py-0.5">Filtered</span>}
+            </div>
+            <p className="text-3xl font-black tabular-nums text-success">{activeCount}</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Active</p>
+          </div>
+          <div className="surface relative overflow-hidden p-4 pl-5 cursor-pointer hover:border-muted-foreground/30 transition-colors"
+            onClick={() => setFilterStatus(f => f === "suspended" ? "all" : "suspended")}>
+            <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl bg-muted-foreground/40" />
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-muted">
+                <ShieldOff className="h-4 w-4 text-muted-foreground" />
+              </div>
+              {filterStatus === "suspended" && <span className="text-[10px] font-medium text-muted-foreground bg-muted rounded-full px-2 py-0.5">Filtered</span>}
+            </div>
+            <p className="text-3xl font-black tabular-nums">{suspendedCount}</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Suspended</p>
+          </div>
+          <div className="surface relative overflow-hidden p-4 pl-5">
+            <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl bg-purple-500" />
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-500/10">
+                <Shield className="h-4 w-4 text-purple-500" />
+              </div>
+            </div>
+            <p className="text-3xl font-black tabular-nums">{rolesUsed}</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Roles in use</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Search + filter bar ── */}
+      {!loading && users.length > 0 && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by name, username, email or role…"
+              className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          {filterStatus !== "all" && (
+            <button
+              onClick={() => setFilterStatus("all")}
+              className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted transition-colors"
+            >
+              <Filter className="h-3 w-3" />
+              {filterStatus === "active" ? "Active only" : "Suspended only"}
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Users list ── */}
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
+          <Activity className="h-4 w-4 animate-pulse" />Loading accounts…
+        </div>
       ) : users.length === 0 ? (
         <div className="rounded-xl border border-dashed p-12 text-center">
           <UserCog className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
           <p className="text-sm font-medium">No portal users yet</p>
+          <p className="mt-1 text-xs text-muted-foreground">Add your first team member to get started</p>
+        </div>
+      ) : filteredUsers.length === 0 ? (
+        <div className="rounded-xl border border-dashed p-8 text-center">
+          <Search className="mx-auto mb-2 h-6 w-6 text-muted-foreground/40" />
+          <p className="text-sm text-muted-foreground">No accounts match your search</p>
         </div>
       ) : (
         <div className="surface overflow-hidden">
           <table className="w-full text-sm">
             <thead className="border-b bg-muted/30">
               <tr>
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">User</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Account</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground hidden md:table-cell">Role</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground hidden lg:table-cell">Email</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
@@ -265,8 +366,8 @@ export default function UsersPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {users.map((u, i) => (
-                <tr key={u.id} className={`transition-colors hover:bg-muted/20 ${!u.is_active ? "opacity-50" : ""}`}>
+              {filteredUsers.map((u, i) => (
+                <tr key={u.id} className={`group transition-colors hover:bg-muted/20 ${!u.is_active ? "opacity-60" : ""}`}>
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-3">
                       <UserPhotoCircle userId={u.id} name={u.full_name}
@@ -300,7 +401,8 @@ export default function UsersPage() {
                   <td className="px-4 py-3">
                     {u.is_active ? (
                       <span className="flex items-center gap-1.5 text-xs font-medium text-success">
-                        <ShieldCheck className="h-3.5 w-3.5" /> Active
+                        <span className="h-1.5 w-1.5 rounded-full bg-success shadow-[0_0_4px_rgba(34,197,94,0.8)]" />
+                        Active
                       </span>
                     ) : (
                       <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -314,12 +416,12 @@ export default function UsersPage() {
                         className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
                         <KeyRound className="h-3.5 w-3.5" />
                       </button>
-                      <button onClick={() => openEdit(u)} title="Edit user"
+                      <button onClick={() => openEdit(u)} title="Edit account"
                         className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
                       {String(u.id) !== String(me?.id) && (
-                        <button onClick={() => setDeleteUser(u)} title="Delete user"
+                        <button onClick={() => setDeleteUser(u)} title="Delete account"
                           className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -330,6 +432,13 @@ export default function UsersPage() {
               ))}
             </tbody>
           </table>
+          {filteredUsers.length > 0 && (
+            <div className="border-t px-5 py-2.5">
+              <p className="text-xs text-muted-foreground">
+                Showing {filteredUsers.length} of {users.length} accounts
+              </p>
+            </div>
+          )}
         </div>
       )}
 
