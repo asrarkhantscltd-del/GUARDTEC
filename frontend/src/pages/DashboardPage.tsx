@@ -1,10 +1,10 @@
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 import { useEffect, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useOutletContext } from "react-router-dom"
 import {
   Users, ShieldCheck, AlertTriangle, Truck, XCircle, MapPin, UserCheck,
-  ArrowUpRight, Sparkles, ChevronRight, Eye, EyeOff,
+  ArrowUpRight, Sparkles, ChevronRight,
 } from "lucide-react"
 import { ShaderGradientCanvas, ShaderGradient } from "@shadergradient/react"
 import { motion } from "framer-motion"
@@ -85,13 +85,7 @@ export default function DashboardPage() {
   const navigate = useNavigate()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [sites, setSites] = useState<Site[]>([])
-  const [ringHidden, setRingHidden] = useState(() => localStorage.getItem("guardtec_ring_hidden") === "true")
-
-  function toggleRing() {
-    const next = !ringHidden
-    setRingHidden(next)
-    localStorage.setItem("guardtec_ring_hidden", String(next))
-  }
+  const { ringHidden } = useOutletContext<{ ringHidden: boolean; toggleRing: () => void }>()
 
   useEffect(() => {
     fetch("/api/dashboard/stats", { credentials: "include" })
@@ -121,62 +115,48 @@ export default function DashboardPage() {
           <ShaderGradientCanvas style={{ width: "100%", height: "100%" }}>
             {isDark ? (
               /* Preset #03 — Interstellar */
-              <ShaderGradient
-                animate="on" axesHelper="off"
-                bgColor1="#000000" bgColor2="#000000"
-                brightness={0.8}
-                cAzimuthAngle={270} cDistance={0.5} cPolarAngle={180} cameraZoom={15.1}
-                color1="#73bfc4" color2="#ff810a" color3="#8da0ce"
-                destination="onCanvas" embedMode="off" envPreset="city"
-                format="gif" fov={45} frameRate={10}
-                gizmoHelper="hide" grain="on" lightType="env"
-                pixelDensity={1}
-                positionX={-0.1} positionY={0} positionZ={0}
-                range="disabled" rangeEnd={40} rangeStart={0}
-                reflection={0.4} rotationX={0} rotationY={130} rotationZ={70}
-                shader="defaults" type="sphere"
-                uAmplitude={3.2} uDensity={0.8} uFrequency={5.5}
-                uSpeed={0.3} uStrength={0.3} uTime={0} wireframe={false}
-              />
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              <ShaderGradient {...({
+                animate: "on", bgColor1: "#000000", bgColor2: "#000000",
+                brightness: 0.8,
+                cAzimuthAngle: 270, cDistance: 0.5, cPolarAngle: 180, cameraZoom: 15.1,
+                color1: "#73bfc4", color2: "#ff810a", color3: "#8da0ce",
+                destination: "onCanvas", embedMode: "off", envPreset: "city",
+                format: "gif", fov: 45, frameRate: 10,
+                gizmoHelper: "hide", grain: "on", lightType: "env",
+                pixelDensity: 1,
+                positionX: -0.1, positionY: 0, positionZ: 0,
+                range: "disabled", rangeEnd: 40, rangeStart: 0,
+                reflection: 0.4, rotationX: 0, rotationY: 130, rotationZ: 70,
+                shader: "defaults", type: "sphere",
+                uAmplitude: 3.2, uDensity: 0.8, uFrequency: 5.5,
+                uSpeed: 0.3, uStrength: 0.3, uTime: 0, wireframe: false,
+              } as any)} />
             ) : (
               /* Preset #09 — Cotton Candy */
-              <ShaderGradient
-                animate="on" axesHelper="off"
-                bgColor1="#000000" bgColor2="#000000"
-                brightness={1.2}
-                cAzimuthAngle={180} cDistance={2.9} cPolarAngle={120} cameraZoom={1}
-                color1="#ebedff" color2="#f3f2f8" color3="#dbf8ff"
-                destination="onCanvas" embedMode="off" envPreset="city"
-                format="gif" fov={45} frameRate={10}
-                gizmoHelper="hide" grain="off" lightType="3d"
-                pixelDensity={1}
-                positionX={0} positionY={1.8} positionZ={0}
-                range="disabled" rangeEnd={40} rangeStart={0}
-                reflection={0.1} rotationX={0} rotationY={0} rotationZ={-90}
-                shader="defaults" type="waterPlane"
-                uAmplitude={0} uDensity={1} uFrequency={5.5}
-                uSpeed={0.3} uStrength={3} uTime={0.2} wireframe={false}
-              />
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              <ShaderGradient {...({
+                animate: "on", bgColor1: "#000000", bgColor2: "#000000",
+                brightness: 1.2,
+                cAzimuthAngle: 180, cDistance: 2.9, cPolarAngle: 120, cameraZoom: 1,
+                color1: "#ebedff", color2: "#f3f2f8", color3: "#dbf8ff",
+                destination: "onCanvas", embedMode: "off", envPreset: "city",
+                format: "gif", fov: 45, frameRate: 10,
+                gizmoHelper: "hide", grain: "off", lightType: "3d",
+                pixelDensity: 1,
+                positionX: 0, positionY: 1.8, positionZ: 0,
+                range: "disabled", rangeEnd: 40, rangeStart: 0,
+                reflection: 0.1, rotationX: 0, rotationY: 0, rotationZ: -90,
+                shader: "defaults", type: "waterPlane",
+                uAmplitude: 0, uDensity: 1, uFrequency: 5.5,
+                uSpeed: 0.3, uStrength: 3, uTime: 0.2, wireframe: false,
+              } as any)} />
             )}
           </ShaderGradientCanvas>
         </div>
 
         {/* Dark overlay — improves text contrast over gradient */}
         <div className={`absolute inset-0 z-[1] rounded-2xl ${isDark ? "bg-black/40" : "bg-white/20"}`} />
-
-        {/* Toggle ring button — top right */}
-        <button
-          onClick={toggleRing}
-          title={ringHidden ? "Show compliance ring" : "Hide compliance ring"}
-          className={`absolute right-4 top-4 z-[3] flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-medium backdrop-blur-sm transition-all ${
-            isDark
-              ? "border-white/10 bg-white/5 text-white/40 hover:bg-white/10 hover:text-white/70"
-              : "border-black/10 bg-black/5 text-black/40 hover:bg-black/10 hover:text-black/60"
-          }`}
-        >
-          {ringHidden ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
-          {ringHidden ? "Show ring" : "Hide ring"}
-        </button>
 
         <div className="relative z-[2] flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
 
@@ -239,21 +219,6 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Ring hidden — show minimal pill link */}
-          {compliancePct !== null && ringHidden && (
-            <button
-              onClick={() => navigate("/compliance")}
-              className={`flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium backdrop-blur-sm transition-all hover:scale-[1.02] ${
-                isDark
-                  ? "border-white/10 bg-white/[0.06] text-white/70 hover:bg-white/10"
-                  : "border-black/10 bg-white/50 text-black/60 hover:bg-white/70"
-              }`}
-            >
-              <ShieldCheck className="h-4 w-4 text-success" />
-              {compliancePct}% compliant — {stats?.compliant ?? 0}/{stats?.totalStaff ?? 0} officers
-              <ChevronRight className="h-3.5 w-3.5 opacity-50" />
-            </button>
-          )}
         </div>
       </div>
 

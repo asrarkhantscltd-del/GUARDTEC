@@ -8,6 +8,7 @@ import {
   Menu, X, MapPin,
   KeyRound, Bell, ClipboardCheck, Shield,
   Camera, Loader2, Sun, Moon, AlertTriangle, XCircle,
+  ChevronDown, UserCog, Eye, EyeOff,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 
@@ -42,6 +43,15 @@ export default function DashboardLayout() {
   const [alertCount, setAlertCount] = useState(0)
   const [showAlerts, setShowAlerts] = useState(false)
   const alertsRef = useRef<HTMLDivElement>(null)
+  const [showProfile, setShowProfile] = useState(false)
+  const profileRef = useRef<HTMLDivElement>(null)
+  const [ringHidden, setRingHidden] = useState(() => localStorage.getItem("guardtec_ring_hidden") === "true")
+
+  function toggleRing() {
+    const next = !ringHidden
+    setRingHidden(next)
+    localStorage.setItem("guardtec_ring_hidden", String(next))
+  }
 
   useEffect(() => {
     fetch("/api/me/photo", { credentials: "include" })
@@ -67,6 +77,17 @@ export default function DashboardLayout() {
     if (showAlerts) document.addEventListener("mousedown", handleClick)
     return () => document.removeEventListener("mousedown", handleClick)
   }, [showAlerts])
+
+  // Close profile dropdown when clicking outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
+        setShowProfile(false)
+      }
+    }
+    if (showProfile) document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [showProfile])
 
   async function handleMyPhotoUpload(file: File | null) {
     if (!file) return
@@ -152,7 +173,11 @@ export default function DashboardLayout() {
         {/* Footer — user info + actions */}
         <div className="border-t border-sidebar-border p-3">
           <div className="mb-2 flex items-center gap-2.5 rounded-lg px-3 py-2.5 bg-sidebar-accent">
-            <label className="relative h-9 w-9 shrink-0 cursor-pointer group" title="Change profile photo">
+            <button
+              className="relative h-9 w-9 shrink-0 cursor-pointer group rounded-full overflow-hidden"
+              title="Change profile photo"
+              onClick={() => photoInputRef.current?.click()}
+            >
               {myPhotoUrl
                 ? <img src={myPhotoUrl} alt="Profile" className="h-9 w-9 rounded-full object-cover" />
                 : <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-xs font-bold text-white shadow-[0_2px_8px_rgba(228,6,19,0.35)]">
@@ -161,10 +186,7 @@ export default function DashboardLayout() {
               <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                 {uploadingPhoto ? <Loader2 className="h-3.5 w-3.5 text-white animate-spin" /> : <Camera className="h-3.5 w-3.5 text-white" />}
               </div>
-              <input ref={photoInputRef} type="file" accept="image/*" className="hidden"
-                disabled={uploadingPhoto}
-                onChange={e => handleMyPhotoUpload(e.target.files?.[0] ?? null)} />
-            </label>
+            </button>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium leading-tight">{user?.full_name}</p>
               <p className="truncate text-xs leading-tight opacity-50">{user?.role_name ?? ""}</p>
@@ -188,7 +210,7 @@ export default function DashboardLayout() {
 
       {/* ── Main content area ── */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex h-16 items-center gap-4 border-b bg-background/80 px-4 backdrop-blur-md md:px-6">
+        <header className="relative z-10 flex h-16 items-center gap-4 border-b bg-background/80 px-4 backdrop-blur-md md:px-6">
           <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setSidebarOpen(!sidebarOpen)}>
             {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </Button>
@@ -272,19 +294,176 @@ export default function DashboardLayout() {
               )}
             </div>
 
-            {/* Profile photo */}
-            <button onClick={() => photoInputRef.current?.click()}
-              className="relative h-8 w-8 shrink-0 cursor-pointer group rounded-full overflow-hidden"
-              title="Change profile photo">
-              {myPhotoUrl
-                ? <img src={myPhotoUrl} alt="Profile" className="h-8 w-8 rounded-full object-cover" />
-                : <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-xs font-bold text-primary-foreground shadow-sm">
-                    {user?.full_name?.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase()}
-                  </div>}
-              <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                {uploadingPhoto ? <Loader2 className="h-3 w-3 text-white animate-spin" /> : <Camera className="h-3 w-3 text-white" />}
-              </div>
-            </button>
+            {/* Profile dropdown trigger */}
+            <div className="relative" ref={profileRef}>
+              <button
+                onClick={() => setShowProfile(prev => !prev)}
+                className="flex items-center gap-2 rounded-xl border border-transparent px-2 py-1.5 transition-all hover:border-border hover:bg-muted"
+              >
+                {/* Avatar */}
+                <div className="relative h-7 w-7 shrink-0 rounded-full overflow-hidden">
+                  {myPhotoUrl
+                    ? <img src={myPhotoUrl} alt="Profile" className="h-7 w-7 object-cover" />
+                    : <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-[10px] font-bold text-white shadow-sm">
+                        {user?.full_name?.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase()}
+                      </div>}
+                  {uploadingPhoto && (
+                    <div className="absolute inset-0 rounded-full bg-black/60 flex items-center justify-center">
+                      <Loader2 className="h-3 w-3 text-white animate-spin" />
+                    </div>
+                  )}
+                </div>
+                {/* Name — hidden on very small screens */}
+                <div className="hidden sm:flex flex-col items-start leading-none">
+                  <span className="text-xs font-semibold text-foreground truncate max-w-[120px]">
+                    {user?.full_name?.split(" ")[0]}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground truncate max-w-[120px]">
+                    {user?.role_name ?? user?.role}
+                  </span>
+                </div>
+                <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ${showProfile ? "rotate-180" : ""}`} />
+              </button>
+
+              {/* Profile dropdown panel */}
+              <AnimatePresence>
+                {showProfile && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -8, scale: 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -8, scale: 0.97 }}
+                    transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
+                    className="absolute right-0 top-12 z-50 w-72 rounded-2xl border border-border bg-card shadow-2xl overflow-hidden"
+                  >
+                    {/* Header — user info */}
+                    <div className="flex items-center gap-3 border-b border-border bg-muted/40 px-4 py-4">
+                      <button
+                        className="relative h-12 w-12 shrink-0 cursor-pointer group rounded-full overflow-hidden"
+                        title="Change photo"
+                        onClick={() => photoInputRef.current?.click()}
+                      >
+                        {myPhotoUrl
+                          ? <img src={myPhotoUrl} alt="Profile" className="h-12 w-12 object-cover" />
+                          : <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-sm font-bold text-white shadow-md">
+                              {user?.full_name?.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase()}
+                            </div>}
+                        <div className="absolute inset-0 rounded-full bg-black/55 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                          {uploadingPhoto ? <Loader2 className="h-4 w-4 text-white animate-spin" /> : <Camera className="h-4 w-4 text-white" />}
+                        </div>
+                      </button>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-sm truncate">{user?.full_name}</p>
+                        <p className="text-xs text-muted-foreground truncate">{user?.role_name ?? user?.role}</p>
+                        <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success border border-success/20">
+                          <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                          Active
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Account management section */}
+                    <div className="p-2 space-y-0.5">
+                      {/* Director-only: Team Access + Manage Roles */}
+                      {user?.role === "director" && (
+                        <>
+                          <p className="px-3 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                            Account Management
+                          </p>
+                          <button
+                            onClick={() => { navigate("/users"); setShowProfile(false) }}
+                            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-foreground transition-colors hover:bg-muted"
+                          >
+                            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
+                              <Users className="h-3.5 w-3.5 text-primary" />
+                            </div>
+                            <div className="text-left">
+                              <p className="font-medium text-sm">Team Access</p>
+                              <p className="text-[11px] text-muted-foreground">Manage user accounts & logins</p>
+                            </div>
+                          </button>
+                          <button
+                            onClick={() => { navigate("/roles"); setShowProfile(false) }}
+                            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-foreground transition-colors hover:bg-muted"
+                          >
+                            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
+                              <UserCog className="h-3.5 w-3.5 text-primary" />
+                            </div>
+                            <div className="text-left">
+                              <p className="font-medium text-sm">Manage Roles</p>
+                              <p className="text-[11px] text-muted-foreground">Set permissions per department</p>
+                            </div>
+                          </button>
+                          <div className="my-1 mx-3 border-t border-border" />
+                        </>
+                      )}
+
+                      {/* Settings & appearance */}
+                      <p className="px-3 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Preferences
+                      </p>
+                      {/* Theme toggle */}
+                      <button
+                        onClick={toggleTheme}
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-foreground transition-colors hover:bg-muted"
+                      >
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-muted">
+                          {isDark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+                        </div>
+                        <div className="text-left flex-1">
+                          <p className="font-medium text-sm">{isDark ? "Light Mode" : "Dark Mode"}</p>
+                          <p className="text-[11px] text-muted-foreground">Switch appearance theme</p>
+                        </div>
+                        <div className={`h-5 w-9 rounded-full transition-colors ${isDark ? "bg-primary" : "bg-muted-foreground/30"} relative`}>
+                          <div className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${isDark ? "translate-x-4" : "translate-x-0.5"}`} />
+                        </div>
+                      </button>
+                      {/* Change photo */}
+                      <button
+                        onClick={() => { photoInputRef.current?.click(); setShowProfile(false) }}
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-foreground transition-colors hover:bg-muted"
+                      >
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-muted">
+                          <Camera className="h-3.5 w-3.5" />
+                        </div>
+                        <div className="text-left">
+                          <p className="font-medium text-sm">Change Photo</p>
+                          <p className="text-[11px] text-muted-foreground">Upload a new profile picture</p>
+                        </div>
+                      </button>
+                      {/* Compliance ring toggle */}
+                      <button
+                        onClick={toggleRing}
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-foreground transition-colors hover:bg-muted"
+                      >
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-muted">
+                          {ringHidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                        </div>
+                        <div className="text-left flex-1">
+                          <p className="font-medium text-sm">{ringHidden ? "Show Compliance Ring" : "Hide Compliance Ring"}</p>
+                          <p className="text-[11px] text-muted-foreground">Dashboard compliance circle</p>
+                        </div>
+                        <div className={`h-5 w-9 rounded-full transition-colors ${!ringHidden ? "bg-primary" : "bg-muted-foreground/30"} relative`}>
+                          <div className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${!ringHidden ? "translate-x-4" : "translate-x-0.5"}`} />
+                        </div>
+                      </button>
+                    </div>
+
+                    {/* Sign out */}
+                    <div className="border-t border-border p-2">
+                      <button
+                        onClick={() => { setShowProfile(false); handleLogout() }}
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-destructive transition-colors hover:bg-destructive/10"
+                      >
+                        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-destructive/10">
+                          <LogOut className="h-3.5 w-3.5 text-destructive" />
+                        </div>
+                        <p className="font-medium text-sm">Sign Out</p>
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </header>
 
@@ -297,11 +476,21 @@ export default function DashboardLayout() {
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             >
-              <Outlet />
+              <Outlet context={{ ringHidden, toggleRing }} />
             </motion.div>
           </AnimatePresence>
         </main>
       </div>
+
+      {/* Single always-mounted file input — shared by sidebar + dropdown */}
+      <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        disabled={uploadingPhoto}
+        onChange={e => handleMyPhotoUpload(e.target.files?.[0] ?? null)}
+      />
     </div>
   )
 }
