@@ -113,6 +113,17 @@ html.light {
   }
 }
 
+/* ── Hero animated gradient ───────────────────────────────────────────────── */
+@keyframes hero-gradient {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.hero-animated {
+  background-size: 300% 300%;
+  animation: hero-gradient 14s ease infinite;
+}
+
 /* ── Scrollbars — slim, red on hover ──────────────────────────────────────── */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
