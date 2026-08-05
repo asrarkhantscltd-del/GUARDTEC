@@ -694,7 +694,7 @@ export default function StaffPage() {
                     <DocChip label="RTW"  date={s.visa?.expiry} />
                   </div>
                 </div>
-              </div>
+              </motion.div>
             ))}
           </motion.div>
 
