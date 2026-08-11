@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from "react"
 import { toast } from "sonner"
 import {
   ShieldCheck, AlertTriangle, Clock, Camera, ImageOff,
-  Loader2, Save, User as UserIcon, Upload,
+  Loader2, Save, User as UserIcon, Upload, BadgeAlert, Flag, EyeOff, Eye,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button"
 
 interface EmergencyContact { name?: string; phone?: string; relationship?: string }
 interface Ref { name?: string; company?: string; email?: string; phone?: string; status?: string }
+interface DiscRecord { id: string; incident_date: string; type: string; description: string; action_taken?: string }
+interface IncidentReport { id: string; report_date: string; incident_type: string; status: string; description: string; resolution_notes?: string }
 
 interface Profile {
   id: string
@@ -37,6 +39,23 @@ export default function MyProfilePage() {
   const [photo, setPhoto] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
 
+  // Disciplinary history (read-only for staff)
+  const [discRecords, setDiscRecords] = useState<DiscRecord[]>([])
+
+  // Incident report form
+  const [incidentDraft, setIncidentDraft] = useState({
+    incident_type: "harassment",
+    report_date: new Date().toISOString().slice(0, 10),
+    site_location: "",
+    against_person: "",
+    description: "",
+    is_anonymous: false,
+  })
+  const [incidentSaving, setIncidentSaving]   = useState(false)
+  const [incidentSuccess, setIncidentSuccess] = useState(false)
+  const [incidentError, setIncidentError]     = useState("")
+  const [myReports, setMyReports]             = useState<IncidentReport[]>([])
+
   async function load() {
     setLoading(true)
     try {
@@ -48,7 +67,39 @@ export default function MyProfilePage() {
     }
   }
 
-  useEffect(() => { load() }, [])
+  async function loadMyHR() {
+    const [discRes, repRes] = await Promise.all([
+      fetch("/api/my-disciplinary", { credentials: "include" }),
+      fetch("/api/my-incident-reports", { credentials: "include" }),
+    ])
+    const discData = await discRes.json()
+    const repData  = await repRes.json()
+    if (discData.ok) setDiscRecords(discData.records)
+    if (repData.ok)  setMyReports(repData.reports)
+  }
+
+  async function submitIncident(e: React.FormEvent) {
+    e.preventDefault()
+    if (!incidentDraft.description.trim()) { setIncidentError("Description is required."); return }
+    setIncidentSaving(true); setIncidentError("")
+    try {
+      const res = await fetch("/api/incident-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(incidentDraft),
+      })
+      const d = await res.json()
+      if (!d.ok) { setIncidentError(d.error ?? "Failed to submit."); return }
+      setIncidentSuccess(true)
+      setIncidentDraft({ incident_type: "harassment", report_date: new Date().toISOString().slice(0, 10), site_location: "", against_person: "", description: "", is_anonymous: false })
+      await loadMyHR()
+    } finally {
+      setIncidentSaving(false)
+    }
+  }
+
+  useEffect(() => { load(); loadMyHR() }, [])
 
   function set<K extends keyof Profile>(field: K, value: Profile[K]) {
     setProfile(p => ({ ...p, [field]: value }))
@@ -315,6 +366,161 @@ export default function MyProfilePage() {
           </Button>
         </div>
       </form>
+
+      {/* ── Disciplinary History (read-only) ── */}
+      {discRecords.length > 0 && (
+        <Section title="My Disciplinary History">
+          <div className="space-y-3">
+            {discRecords.map(rec => {
+              const typeLabels: Record<string, string> = {
+                warning: "Warning", final_warning: "Final Warning",
+                suspension: "Suspension", termination: "Termination",
+                fraud: "Fraud / False Info", misconduct: "Gross Misconduct", other: "Other",
+              }
+              const typeCls: Record<string, string> = {
+                warning: "bg-warning/15 text-warning",
+                final_warning: "bg-orange-500/15 text-orange-600",
+                suspension: "bg-destructive/15 text-destructive",
+                termination: "bg-destructive/20 text-destructive",
+                fraud: "bg-destructive/20 text-destructive",
+                misconduct: "bg-destructive/20 text-destructive",
+                other: "bg-muted text-muted-foreground",
+              }
+              const [y, m, d] = rec.incident_date.split("-")
+              return (
+                <div key={rec.id} className="rounded-lg border bg-muted/20 p-3 space-y-1">
+                  <div className="flex items-center gap-2">
+                    <BadgeAlert className="h-3.5 w-3.5 text-destructive shrink-0" />
+                    <span className={`text-xs font-medium rounded-full px-2 py-0.5 ${typeCls[rec.type] ?? typeCls.other}`}>
+                      {typeLabels[rec.type] ?? rec.type}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{d}/{m}/{y}</span>
+                  </div>
+                  <p className="text-sm">{rec.description}</p>
+                  {rec.action_taken && <p className="text-xs text-muted-foreground">Action taken: {rec.action_taken}</p>}
+                </div>
+              )
+            })}
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            These records are maintained by your manager. Contact the office if you believe a record is incorrect.
+          </p>
+        </Section>
+      )}
+
+      {/* ── Report an Incident ── */}
+      <Section title="Report an Incident">
+        <p className="mb-4 text-xs text-muted-foreground">
+          Use this form to report anything that happened on site — misbehaviour by a supervisor,
+          discrimination based on race, religion, caste, or any other misconduct. Your report is sent
+          directly to the Director and Ops Manager. You can choose to keep your name anonymous.
+        </p>
+
+        {incidentSuccess && (
+          <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 text-sm text-success mb-4">
+            <ShieldCheck className="h-4 w-4 shrink-0" />
+            Your report has been submitted. The management team will review it.
+          </div>
+        )}
+
+        <form onSubmit={submitIncident} className="space-y-3">
+          {incidentError && <p className="text-xs text-destructive bg-destructive/10 rounded px-2 py-1">{incidentError}</p>}
+
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="Type of incident *">
+              <select value={incidentDraft.incident_type}
+                onChange={e => setIncidentDraft(p => ({ ...p, incident_type: e.target.value }))}
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                <option value="harassment">Harassment</option>
+                <option value="discrimination">Discrimination (race, religion, caste)</option>
+                <option value="misconduct">Supervisor misconduct</option>
+                <option value="safety">Safety concern</option>
+                <option value="fraud">Fraud / dishonesty</option>
+                <option value="other">Other</option>
+              </select>
+            </Field>
+            <Field label="Date of incident *">
+              <input type="date" value={incidentDraft.report_date}
+                onChange={e => setIncidentDraft(p => ({ ...p, report_date: e.target.value }))}
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring" />
+            </Field>
+          </div>
+
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="Site / location">
+              <input type="text" value={incidentDraft.site_location}
+                onChange={e => setIncidentDraft(p => ({ ...p, site_location: e.target.value }))}
+                placeholder="e.g. Wembley Arena"
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring" />
+            </Field>
+            <Field label="Person being reported (name / role)">
+              <input type="text" value={incidentDraft.against_person}
+                onChange={e => setIncidentDraft(p => ({ ...p, against_person: e.target.value }))}
+                placeholder="e.g. John Smith, Supervisor"
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring" />
+            </Field>
+          </div>
+
+          <Field label="What happened? *">
+            <textarea value={incidentDraft.description} rows={4}
+              onChange={e => setIncidentDraft(p => ({ ...p, description: e.target.value }))}
+              placeholder="Please describe the incident in as much detail as possible."
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring resize-none" />
+          </Field>
+
+          <label className="flex items-start gap-3 cursor-pointer rounded-lg border border-border bg-muted/20 px-3 py-2.5">
+            <input type="checkbox" checked={incidentDraft.is_anonymous}
+              onChange={e => setIncidentDraft(p => ({ ...p, is_anonymous: e.target.checked }))}
+              className="mt-0.5 rounded" />
+            <div>
+              <div className="flex items-center gap-1.5 text-sm font-medium">
+                {incidentDraft.is_anonymous ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                Submit anonymously
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {incidentDraft.is_anonymous
+                  ? "Your name will NOT be shared. Management will only see the incident details."
+                  : "Your name will be visible to management. Tick to submit without revealing your identity."}
+              </p>
+            </div>
+          </label>
+
+          <div className="flex justify-end">
+            <Button type="submit" disabled={incidentSaving} className="gap-2">
+              {incidentSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Flag className="h-4 w-4" />}
+              {incidentSaving ? "Submitting…" : "Submit Report"}
+            </Button>
+          </div>
+        </form>
+
+        {/* My past reports */}
+        {myReports.length > 0 && (
+          <div className="mt-4 border-t pt-4 space-y-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Your previous reports</p>
+            {myReports.map(r => {
+              const statusCls: Record<string, string> = {
+                open: "bg-muted text-muted-foreground",
+                under_review: "bg-warning/15 text-warning",
+                resolved: "bg-success/15 text-success",
+                closed: "bg-muted text-muted-foreground",
+              }
+              return (
+                <div key={r.id} className="rounded-lg border bg-muted/20 p-3 space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-medium capitalize">{r.incident_type.replace(/_/g, " ")}</span>
+                    <span className={`text-xs rounded-full px-2 py-0.5 font-medium ${statusCls[r.status] ?? statusCls.open}`}>
+                      {r.status.replace(/_/g, " ")}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{r.report_date}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground truncate">{r.description}</p>
+                  {r.resolution_notes && <p className="text-xs text-success">Resolution: {r.resolution_notes}</p>}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Section>
     </div>
   )
 }
