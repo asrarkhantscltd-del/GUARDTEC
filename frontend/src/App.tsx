@@ -16,6 +16,7 @@ import SitesPage from "@/pages/SitesPage"
 import UsersPage from "@/pages/UsersPage"
 import ManageRolesPage from "@/pages/ManageRolesPage"
 import PendingReviewPage from "@/pages/PendingReviewPage"
+import IncidentReportsPage from "@/pages/IncidentReportsPage"
 import MyProfilePage from "@/pages/MyProfilePage"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import type { ReactNode } from "react"
@@ -71,6 +72,7 @@ function AuthenticatedApp() {
         <Route path="users" element={<UsersPage />} />
         <Route path="roles" element={<ManageRolesPage />} />
         <Route path="pending-review" element={<PendingReviewPage />} />
+        <Route path="incident-reports" element={<IncidentReportsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

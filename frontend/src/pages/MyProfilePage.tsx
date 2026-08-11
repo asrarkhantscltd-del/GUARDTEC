@@ -3,6 +3,8 @@ import { toast } from "sonner"
 import {
   ShieldCheck, AlertTriangle, Clock, Camera, ImageOff,
   Loader2, Save, User as UserIcon, Upload, BadgeAlert, Flag, EyeOff, Eye,
+  Paperclip, X, FileVideo, FileText, Image as ImageIcon,
+  MessageSquare, Package, Send,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -11,7 +13,8 @@ import { Button } from "@/components/ui/button"
 interface EmergencyContact { name?: string; phone?: string; relationship?: string }
 interface Ref { name?: string; company?: string; email?: string; phone?: string; status?: string }
 interface DiscRecord { id: string; incident_date: string; type: string; description: string; action_taken?: string }
-interface IncidentReport { id: string; report_date: string; incident_type: string; status: string; description: string; resolution_notes?: string }
+interface IncidentReport { id: string; report_date: string; incident_type: string; status: string; description: string; resolution_notes?: string; attachment_count?: number }
+interface IncidentAttachment { id: string; filename: string; original_name: string; mime_type: string; size_bytes: number }
 
 interface Profile {
   id: string
@@ -39,6 +42,8 @@ export default function MyProfilePage() {
   const [photo, setPhoto] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
 
+  const [activeTab, setActiveTab] = useState<"overview"|"details"|"report"|"messages">("overview")
+
   // Disciplinary history (read-only for staff)
   const [discRecords, setDiscRecords] = useState<DiscRecord[]>([])
 
@@ -55,6 +60,18 @@ export default function MyProfilePage() {
   const [incidentSuccess, setIncidentSuccess] = useState(false)
   const [incidentError, setIncidentError]     = useState("")
   const [myReports, setMyReports]             = useState<IncidentReport[]>([])
+  const [attachFiles, setAttachFiles]         = useState<File[]>([])
+  const attachInputRef                        = useRef<HTMLInputElement>(null)
+
+  // Messages
+  const [messages, setMessages]       = useState<{id:string;message:string;sender_name:string;sender_role:string;created_at:string;is_read:boolean}[]>([])
+  const [msgDraft, setMsgDraft]       = useState("")
+  const [msgSending, setMsgSending]   = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
+  const msgEndRef                     = useRef<HTMLDivElement>(null)
+
+  // Provisions
+  const [provisions, setProvisions] = useState<{id:string;item:string;provided:boolean;date_given:string|null;date_returned:string|null;notes:string|null}[]>([])
 
   async function load() {
     setLoading(true)
@@ -68,14 +85,40 @@ export default function MyProfilePage() {
   }
 
   async function loadMyHR() {
-    const [discRes, repRes] = await Promise.all([
-      fetch("/api/my-disciplinary", { credentials: "include" }),
-      fetch("/api/my-incident-reports", { credentials: "include" }),
+    const [discRes, repRes, msgRes, provRes] = await Promise.all([
+      fetch("/api/my-disciplinary",      { credentials: "include" }),
+      fetch("/api/my-incident-reports",  { credentials: "include" }),
+      fetch("/api/my-messages",          { credentials: "include" }),
+      fetch("/api/my-provisions",        { credentials: "include" }),
     ])
     const discData = await discRes.json()
     const repData  = await repRes.json()
+    const msgData  = await msgRes.json()
+    const provData = await provRes.json()
     if (discData.ok) setDiscRecords(discData.records)
     if (repData.ok)  setMyReports(repData.reports)
+    if (msgData.ok)  { setMessages(msgData.messages); setUnreadCount(msgData.unread) }
+    if (provData.ok) setProvisions(provData.provisions)
+    setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: "smooth" }), 150)
+  }
+
+  async function sendMyMessage() {
+    if (!msgDraft.trim()) return
+    setMsgSending(true)
+    try {
+      const res = await fetch("/api/my-messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ message: msgDraft }),
+      })
+      const d = await res.json()
+      if (!d.ok) { toast.error(d.error ?? "Failed to send."); return }
+      setMsgDraft("")
+      await loadMyHR()
+    } finally {
+      setMsgSending(false)
+    }
   }
 
   async function submitIncident(e: React.FormEvent) {
@@ -91,12 +134,48 @@ export default function MyProfilePage() {
       })
       const d = await res.json()
       if (!d.ok) { setIncidentError(d.error ?? "Failed to submit."); return }
+
+      // Upload attachments one by one
+      if (attachFiles.length > 0) {
+        for (const file of attachFiles) {
+          const buf = await file.arrayBuffer()
+          await fetch(`/api/incident-reports/${d.report.id}/attachments`, {
+            method: "POST",
+            headers: {
+              "Content-Type": file.type || "application/octet-stream",
+              "x-original-name": encodeURIComponent(file.name),
+            },
+            credentials: "include",
+            body: buf,
+          })
+        }
+      }
+
       setIncidentSuccess(true)
+      setAttachFiles([])
       setIncidentDraft({ incident_type: "harassment", report_date: new Date().toISOString().slice(0, 10), site_location: "", against_person: "", description: "", is_anonymous: false })
       await loadMyHR()
     } finally {
       setIncidentSaving(false)
     }
+  }
+
+  function addAttachFiles(files: FileList | null) {
+    if (!files) return
+    const allowed = ["image/jpeg","image/png","image/gif","image/webp","video/mp4","video/quicktime","video/webm","application/pdf","application/msword","application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
+    const newFiles = Array.from(files).filter(f => allowed.includes(f.type))
+    if (newFiles.length < files.length) toast.error("Some files were skipped — only images, videos, and PDFs are allowed.")
+    setAttachFiles(prev => [...prev, ...newFiles])
+  }
+
+  function removeAttach(idx: number) {
+    setAttachFiles(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  function attachIcon(mime: string) {
+    if (mime.startsWith("video/")) return <FileVideo className="h-3.5 w-3.5 text-primary shrink-0" />
+    if (mime.startsWith("image/")) return <ImageIcon className="h-3.5 w-3.5 text-success shrink-0" />
+    return <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
   }
 
   useEffect(() => { load(); loadMyHR() }, [])
@@ -163,40 +242,182 @@ export default function MyProfilePage() {
 
   const isPending = !!profile.pending_submission
 
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">My Profile</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Keep your compliance details up to date. Changes are reviewed by your manager before they go live.
-        </p>
-      </div>
+  function compStatus(expiry?: string): "valid"|"expiring"|"expired"|"missing" {
+    if (!expiry) return "missing"
+    const days = Math.round((new Date(expiry).getTime() - Date.now()) / 86400000)
+    if (days < 0) return "expired"
+    if (days < 90) return "expiring"
+    return "valid"
+  }
+  const siaStatus  = profile.sia?.number  ? compStatus(profile.sia?.expiry)  : "missing"
+  const cscsStatus = profile.cscs?.number ? compStatus(profile.cscs?.expiry) : "missing"
+  const visaStatus = profile.visa?.type?.toLowerCase().includes("british") ? "valid" : compStatus(profile.visa?.expiry)
 
-      {profile.rejection_reason && (
-        <div className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/8 px-4 py-3 text-sm text-destructive">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>
-            <p className="font-medium">Your last submission needs changes</p>
-            <p className="mt-0.5 text-destructive/80">{profile.rejection_reason}</p>
+  const statusCfg = {
+    valid:    { label: "Valid",         cls: "bg-success/15 text-success border-success/30" },
+    expiring: { label: "Expiring soon", cls: "bg-warning/15 text-warning border-warning/30" },
+    expired:  { label: "Expired",       cls: "bg-destructive/15 text-destructive border-destructive/30" },
+    missing:  { label: "Not on file",   cls: "bg-muted text-muted-foreground border-border" },
+  }
+
+  const TABS = [
+    { id: "overview" as const,  label: "Overview",    Icon: ShieldCheck },
+    { id: "details"  as const,  label: "My Details",  Icon: UserIcon },
+    { id: "report"   as const,  label: "Report",      Icon: Flag },
+    { id: "messages" as const,  label: "Messages",    Icon: MessageSquare },
+  ]
+
+  return (
+    <div className="space-y-0">
+
+      {/* ── Hero ── */}
+      <div className="rounded-xl bg-gradient-to-br from-sidebar to-sidebar/90 text-sidebar-foreground p-5 mb-5 flex items-center gap-4 shadow-sm">
+        <div className="h-16 w-16 shrink-0 rounded-full overflow-hidden border-2 border-white/20 bg-white/10 flex items-center justify-center">
+          {profile.id
+            ? <img src={`/api/staff/${profile.id}/photo`} alt={profile.name}
+                className="h-full w-full object-cover"
+                onError={e => { e.currentTarget.style.display="none" }} />
+            : <UserIcon className="h-7 w-7 opacity-60" />}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="font-bold text-lg leading-tight truncate">{profile.name}</p>
+          <p className="text-sm opacity-60 truncate">{profile.email}</p>
+          <div className="flex gap-2 flex-wrap mt-2">
+            {[
+              { label: "SIA",  status: siaStatus,  expiry: profile.sia?.expiry },
+              { label: "CSCS", status: cscsStatus, expiry: profile.cscs?.expiry },
+              { label: "RTW",  status: visaStatus, expiry: profile.visa?.expiry },
+            ].map(({ label, status, expiry }) => (
+              <span key={label} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusCfg[status].cls}`}>
+                {label} · {statusCfg[status].label}
+              </span>
+            ))}
           </div>
         </div>
-      )}
+        {(isPending || profile.rejection_reason) && (
+          <div className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-medium ${profile.rejection_reason ? "bg-destructive/20 text-destructive" : "bg-warning/20 text-warning"}`}>
+            {profile.rejection_reason ? "Action needed" : "Pending review"}
+          </div>
+        )}
+      </div>
 
-      {isPending && !success && (
-        <div className="flex items-center gap-3 rounded-xl border border-warning/30 bg-warning/8 px-4 py-3 text-sm text-warning">
-          <Clock className="h-4 w-4 shrink-0" />
-          <p>Your submitted changes are pending review by your manager. You can still update and resubmit below.</p>
+      {/* ── Alert banners ── */}
+      {profile.rejection_reason && (
+        <div className="flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/8 px-4 py-3 text-sm text-destructive mb-4">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div><p className="font-medium">Your last submission needs changes</p>
+          <p className="mt-0.5 text-destructive/80">{profile.rejection_reason}</p></div>
         </div>
       )}
-
       {success && (
-        <div className="flex items-center gap-3 rounded-xl border border-success/30 bg-success/8 px-4 py-3 text-sm text-success">
+        <div className="flex items-center gap-3 rounded-xl border border-success/30 bg-success/8 px-4 py-3 text-sm text-success mb-4">
           <ShieldCheck className="h-4 w-4 shrink-0" />
           <p>Submitted — your manager will review these changes shortly.</p>
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-5">
+      {/* ── Tab bar ── */}
+      <div className="flex gap-1 border-b mb-6 overflow-x-auto">
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)}
+            className={`relative flex items-center gap-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors ${
+              activeTab === t.id
+                ? "text-primary border-b-2 border-primary -mb-px"
+                : "text-muted-foreground hover:text-foreground"
+            }`}>
+            <t.Icon className="h-3.5 w-3.5" />
+            {t.label}
+            {t.id === "messages" && unreadCount > 0 && (
+              <span className="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[10px] font-bold text-white">{unreadCount}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* ══ OVERVIEW TAB ══ */}
+      {activeTab === "overview" && (
+        <div className="space-y-4">
+          {/* Compliance cards */}
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: "SIA Licence", status: siaStatus, detail: profile.sia?.number ? `${profile.sia.type ?? ""} · Exp ${profile.sia.expiry?.slice(0,10).split("-").reverse().join("/")??""}`.trim() : "Not provided" },
+              { label: "CSCS Card",   status: cscsStatus, detail: profile.cscs?.number ? `Exp ${profile.cscs.expiry?.slice(0,10).split("-").reverse().join("/")??""}` : "Not provided" },
+              { label: "Right to Work", status: visaStatus, detail: profile.visa?.type ?? "Not provided" },
+            ].map(c => (
+              <div key={c.label} className={`rounded-xl border p-3 space-y-1 ${statusCfg[c.status].cls}`}>
+                <p className="text-[11px] font-semibold uppercase tracking-wide opacity-70">{c.label}</p>
+                <p className="text-sm font-bold">{statusCfg[c.status].label}</p>
+                <p className="text-[11px] opacity-70 truncate">{c.detail}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Pending review notice */}
+          {isPending && !success && (
+            <div className="flex items-center gap-3 rounded-xl border border-warning/30 bg-warning/8 px-4 py-3 text-sm text-warning">
+              <Clock className="h-4 w-4 shrink-0" />
+              <p>Your submitted changes are pending review by your manager.</p>
+            </div>
+          )}
+
+          {/* Disciplinary history */}
+          {discRecords.length > 0 && (
+            <div className="rounded-xl border bg-card p-4 space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                <BadgeAlert className="h-3.5 w-3.5 text-destructive" /> Disciplinary History
+              </p>
+              {discRecords.map(rec => {
+                const typeLabels: Record<string,string> = { warning:"Warning", final_warning:"Final Warning", suspension:"Suspension", termination:"Termination", fraud:"Fraud", misconduct:"Gross Misconduct", other:"Other" }
+                const typeCls: Record<string,string> = { warning:"bg-warning/15 text-warning", final_warning:"bg-orange-500/15 text-orange-600", suspension:"bg-destructive/15 text-destructive", termination:"bg-destructive/20 text-destructive", fraud:"bg-destructive/20 text-destructive", misconduct:"bg-destructive/20 text-destructive", other:"bg-muted text-muted-foreground" }
+                const [y,m,d] = rec.incident_date.slice(0,10).split("-")
+                return (
+                  <div key={rec.id} className="rounded-lg border bg-muted/20 p-3 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-medium rounded-full px-2 py-0.5 ${typeCls[rec.type]??typeCls.other}`}>{typeLabels[rec.type]??rec.type}</span>
+                      <span className="text-xs text-muted-foreground">{d}/{m}/{y}</span>
+                    </div>
+                    <p className="text-sm">{rec.description}</p>
+                    {rec.action_taken && <p className="text-xs text-muted-foreground">Action: {rec.action_taken}</p>}
+                  </div>
+                )
+              })}
+              <p className="text-xs text-muted-foreground">These records are managed by your office. Contact them if you believe a record is incorrect.</p>
+            </div>
+          )}
+
+          {/* Provisions */}
+          {provisions.length > 0 && (
+            <div className="rounded-xl border bg-card p-4 space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                <Package className="h-3.5 w-3.5" /> Uniform & Equipment
+              </p>
+              {provisions.map(p => (
+                <div key={p.id} className="flex items-center gap-3 rounded-lg border bg-muted/10 px-3 py-2.5">
+                  <Package className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium">{p.item}</span>
+                      <span className={`text-xs rounded-full px-2 py-0.5 font-medium ${p.provided?"bg-success/15 text-success":"bg-destructive/15 text-destructive"}`}>
+                        {p.provided?"Provided":"Not Provided"}
+                      </span>
+                    </div>
+                    {p.date_given && <p className="text-xs text-muted-foreground">Given: {p.date_given.slice(0,10).split("-").reverse().join("/")}</p>}
+                    {p.notes && <p className="text-xs text-muted-foreground truncate">{p.notes}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {discRecords.length === 0 && provisions.length === 0 && (
+            <p className="text-sm text-muted-foreground text-center py-8">Your compliance overview will appear here once your details are on file.</p>
+          )}
+        </div>
+      )}
+
+      {/* ══ MY DETAILS TAB ══ */}
+      {activeTab === "details" && (
+        <form onSubmit={handleSubmit} className="space-y-5">
         {error && <p className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>}
 
         {/* Photo */}
@@ -366,49 +587,10 @@ export default function MyProfilePage() {
           </Button>
         </div>
       </form>
+      )}  {/* end details tab */}
 
-      {/* ── Disciplinary History (read-only) ── */}
-      {discRecords.length > 0 && (
-        <Section title="My Disciplinary History">
-          <div className="space-y-3">
-            {discRecords.map(rec => {
-              const typeLabels: Record<string, string> = {
-                warning: "Warning", final_warning: "Final Warning",
-                suspension: "Suspension", termination: "Termination",
-                fraud: "Fraud / False Info", misconduct: "Gross Misconduct", other: "Other",
-              }
-              const typeCls: Record<string, string> = {
-                warning: "bg-warning/15 text-warning",
-                final_warning: "bg-orange-500/15 text-orange-600",
-                suspension: "bg-destructive/15 text-destructive",
-                termination: "bg-destructive/20 text-destructive",
-                fraud: "bg-destructive/20 text-destructive",
-                misconduct: "bg-destructive/20 text-destructive",
-                other: "bg-muted text-muted-foreground",
-              }
-              const [y, m, d] = rec.incident_date.split("-")
-              return (
-                <div key={rec.id} className="rounded-lg border bg-muted/20 p-3 space-y-1">
-                  <div className="flex items-center gap-2">
-                    <BadgeAlert className="h-3.5 w-3.5 text-destructive shrink-0" />
-                    <span className={`text-xs font-medium rounded-full px-2 py-0.5 ${typeCls[rec.type] ?? typeCls.other}`}>
-                      {typeLabels[rec.type] ?? rec.type}
-                    </span>
-                    <span className="text-xs text-muted-foreground">{d}/{m}/{y}</span>
-                  </div>
-                  <p className="text-sm">{rec.description}</p>
-                  {rec.action_taken && <p className="text-xs text-muted-foreground">Action taken: {rec.action_taken}</p>}
-                </div>
-              )
-            })}
-          </div>
-          <p className="mt-3 text-xs text-muted-foreground">
-            These records are maintained by your manager. Contact the office if you believe a record is incorrect.
-          </p>
-        </Section>
-      )}
-
-      {/* ── Report an Incident ── */}
+      {/* ══ REPORT TAB ══ */}
+      {activeTab === "report" && (
       <Section title="Report an Incident">
         <p className="mb-4 text-xs text-muted-foreground">
           Use this form to report anything that happened on site — misbehaviour by a supervisor,
@@ -485,6 +667,40 @@ export default function MyProfilePage() {
             </div>
           </label>
 
+          {/* Attachment picker */}
+          <div className="rounded-lg border border-dashed border-border bg-muted/10 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                <Paperclip className="h-3.5 w-3.5" />
+                Attachments (photos, videos, documents)
+              </p>
+              <button type="button"
+                onClick={() => attachInputRef.current?.click()}
+                className="text-xs text-primary hover:underline flex items-center gap-1">
+                <Upload className="h-3 w-3" /> Add file
+              </button>
+              <input ref={attachInputRef} type="file" multiple hidden
+                accept="image/*,video/mp4,video/quicktime,video/webm,application/pdf,.doc,.docx"
+                onChange={e => addAttachFiles(e.target.files)} />
+            </div>
+            {attachFiles.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No files selected — optional</p>
+            ) : (
+              <ul className="space-y-1">
+                {attachFiles.map((f, i) => (
+                  <li key={i} className="flex items-center gap-2 text-xs">
+                    {attachIcon(f.type)}
+                    <span className="flex-1 truncate">{f.name}</span>
+                    <span className="text-muted-foreground shrink-0">{(f.size / 1024 / 1024).toFixed(1)} MB</span>
+                    <button type="button" onClick={() => removeAttach(i)} className="text-muted-foreground hover:text-destructive">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           <div className="flex justify-end">
             <Button type="submit" disabled={incidentSaving} className="gap-2">
               {incidentSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Flag className="h-4 w-4" />}
@@ -499,21 +715,32 @@ export default function MyProfilePage() {
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Your previous reports</p>
             {myReports.map(r => {
               const statusCls: Record<string, string> = {
-                open: "bg-muted text-muted-foreground",
+                open:         "bg-success/15 text-success",
                 under_review: "bg-warning/15 text-warning",
-                resolved: "bg-success/15 text-success",
-                closed: "bg-muted text-muted-foreground",
+                resolved:     "bg-destructive/15 text-destructive",
+                closed:       "bg-destructive/15 text-destructive",
+              }
+              const statusLabel: Record<string, string> = {
+                open:         "Report Received",
+                under_review: "Decision Pending",
+                resolved:     "Closed",
+                closed:       "Closed",
               }
               return (
                 <div key={r.id} className="rounded-lg border bg-muted/20 p-3 space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-medium capitalize">{r.incident_type.replace(/_/g, " ")}</span>
                     <span className={`text-xs rounded-full px-2 py-0.5 font-medium ${statusCls[r.status] ?? statusCls.open}`}>
-                      {r.status.replace(/_/g, " ")}
+                      {statusLabel[r.status] ?? r.status.replace(/_/g, " ")}
                     </span>
-                    <span className="text-xs text-muted-foreground">{r.report_date}</span>
+                    <span className="text-xs text-muted-foreground">{r.report_date.slice(0, 10).split("-").reverse().join("/")}</span>
                   </div>
                   <p className="text-xs text-muted-foreground truncate">{r.description}</p>
+                  {r.attachment_count ? (
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Paperclip className="h-3 w-3" />{r.attachment_count} attachment{r.attachment_count > 1 ? "s" : ""}
+                    </p>
+                  ) : null}
                   {r.resolution_notes && <p className="text-xs text-success">Resolution: {r.resolution_notes}</p>}
                 </div>
               )
@@ -521,6 +748,53 @@ export default function MyProfilePage() {
           </div>
         )}
       </Section>
+      )}  {/* end report tab */}
+
+      {/* ══ MESSAGES TAB ══ */}
+      {activeTab === "messages" && (
+        <div className="rounded-xl border bg-card overflow-hidden flex flex-col" style={{ minHeight: "480px" }}>
+          <div className="border-b px-4 py-3 bg-muted/20">
+            <p className="text-sm font-semibold flex items-center gap-2">
+              <MessageSquare className="h-4 w-4 text-primary" /> Messages
+            </p>
+            <p className="text-xs text-muted-foreground">Private messages from your manager. You can reply here.</p>
+          </div>
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 bg-muted/5" style={{ maxHeight: "380px" }}>
+            {messages.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-40 text-muted-foreground gap-2">
+                <MessageSquare className="h-8 w-8 opacity-20" />
+                <p className="text-sm">No messages yet from your manager.</p>
+              </div>
+            )}
+            {messages.map(m => {
+              const isMe = m.sender_role === "staff"
+              return (
+                <div key={m.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-sm rounded-2xl px-4 py-2.5 text-sm shadow-sm ${isMe ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-card border text-foreground rounded-tl-sm"}`}>
+                    <p className="text-[11px] font-semibold mb-1 opacity-60">{m.sender_name}</p>
+                    <p className="leading-snug">{m.message}</p>
+                    <p className="text-[10px] mt-1.5 opacity-50 text-right">
+                      {new Date(m.created_at).toLocaleDateString("en-GB", { day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit" })}
+                    </p>
+                  </div>
+                </div>
+              )
+            })}
+            <div ref={msgEndRef} />
+          </div>
+          <div className="border-t flex gap-2 p-4 bg-background">
+            <input value={msgDraft} onChange={e => setMsgDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMyMessage() } }}
+              placeholder="Type a reply…"
+              className="flex-1 h-10 rounded-lg border border-input bg-muted/30 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+            <Button disabled={msgSending || !msgDraft.trim()} onClick={sendMyMessage} className="gap-1.5 h-10 px-5">
+              {msgSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              Send
+            </Button>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
@@ -589,10 +863,12 @@ function DocUploadRow({ label, hint, staffId, docKey }: {
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, icon, badge, children }: { title: string; icon?: React.ReactNode; badge?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="surface p-5">
-      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</h3>
+      <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        {icon}{title}{badge}
+      </h3>
       {children}
     </div>
   )

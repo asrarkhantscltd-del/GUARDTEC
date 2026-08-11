@@ -27,6 +27,7 @@ const navItems: NavItem[] = [
   { label: "Sites",          to: "/sites",           icon: <MapPin className="h-4 w-4" />,         permission: "sites" },
   { label: "Compliance",     to: "/compliance",      icon: <ShieldCheck className="h-4 w-4" />,    permission: "compliance" },
   { label: "Pending Review", to: "/pending-review",  icon: <ClipboardCheck className="h-4 w-4" />, permission: "pending_review" },
+  { label: "Incident Reports", to: "/incident-reports", icon: <AlertTriangle className="h-4 w-4" />, permission: "staff" },
   { label: "Team Access",    to: "/users",           icon: <KeyRound className="h-4 w-4" />,       directorOnly: true },
   { label: "Manage Roles",   to: "/roles",           icon: <Shield className="h-4 w-4" />,         directorOnly: true },
 ]
@@ -41,6 +42,7 @@ export default function DashboardLayout() {
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const photoInputRef = useRef<HTMLInputElement>(null)
   const [alertCount, setAlertCount] = useState(0)
+  const [notifCount, setNotifCount] = useState({ messages: 0, incidents: 0, total: 0 })
   const [showAlerts, setShowAlerts] = useState(false)
   const alertsRef = useRef<HTMLDivElement>(null)
   const [showProfile, setShowProfile] = useState(false)
@@ -65,6 +67,18 @@ export default function DashboardLayout() {
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d) setAlertCount(d.total ?? 0) })
       .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    function fetchNotifs() {
+      fetch("/api/notifications/count", { credentials: "include" })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.ok) setNotifCount({ messages: d.messages, incidents: d.incidents, total: d.total }) })
+        .catch(() => {})
+    }
+    fetchNotifs()
+    const id = setInterval(fetchNotifs, 30000)
+    return () => clearInterval(id)
   }, [])
 
   // Close alert dropdown when clicking outside
@@ -229,67 +243,103 @@ export default function DashboardLayout() {
               <button
                 onClick={() => setShowAlerts(prev => !prev)}
                 className="relative rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                title="Compliance alerts"
+                title="Notifications"
               >
                 <Bell className="h-4.5 w-4.5" />
-                {alertCount > 0 && (
+                {(alertCount + notifCount.total) > 0 && (
                   <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-white ring-2 ring-background">
-                    {alertCount > 9 ? "9+" : alertCount}
+                    {(alertCount + notifCount.total) > 9 ? "9+" : (alertCount + notifCount.total)}
                   </span>
                 )}
               </button>
 
-              {/* Alert dropdown panel */}
+              {/* Notifications dropdown panel */}
               {showAlerts && (
-                <div className="absolute right-0 top-12 z-50 w-80 rounded-2xl border border-border bg-card shadow-2xl">
+                <div className="absolute right-0 top-12 z-50 w-80 rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
                   <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                    <p className="text-sm font-semibold">Compliance Alerts</p>
+                    <p className="text-sm font-semibold">Notifications</p>
                     <button onClick={() => setShowAlerts(false)}
                       className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
                       <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
 
-                  <div className="p-3 space-y-2">
+                  <div className="p-3 space-y-2 max-h-[420px] overflow-y-auto">
+
+                    {/* ── Messages section ── */}
+                    {notifCount.messages > 0 && (
+                      <button
+                        onClick={() => { navigate("/staff"); setShowAlerts(false) }}
+                        className="flex w-full items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3 text-left hover:bg-blue-500/10 transition-colors"
+                      >
+                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-500/15">
+                          <Bell className="h-3.5 w-3.5 text-blue-500" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-blue-600 dark:text-blue-400">
+                            {notifCount.messages} unread message{notifCount.messages !== 1 ? "s" : ""} from staff
+                          </p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            Open a staff profile → Messages tab to reply
+                          </p>
+                        </div>
+                      </button>
+                    )}
+
+                    {/* ── Incident reports section ── */}
+                    {notifCount.incidents > 0 && (
+                      <button
+                        onClick={() => { navigate("/incident-reports"); setShowAlerts(false) }}
+                        className="flex w-full items-start gap-3 rounded-xl border border-warning/20 bg-warning/5 p-3 text-left hover:bg-warning/10 transition-colors"
+                      >
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                        <div>
+                          <p className="text-sm font-medium text-warning">
+                            {notifCount.incidents} new incident report{notifCount.incidents !== 1 ? "s" : ""}
+                          </p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            Tap to open Incident Reports and review
+                          </p>
+                        </div>
+                      </button>
+                    )}
+
+                    {/* ── Compliance section ── */}
                     {alertCount > 0 ? (
                       <>
                         <div className="flex items-start gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-3">
                           <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
                           <div>
                             <p className="text-sm font-medium text-destructive">
-                              {alertCount} officer{alertCount !== 1 ? "s" : ""} need attention
+                              {alertCount} officer{alertCount !== 1 ? "s" : ""} need compliance attention
                             </p>
                             <p className="mt-0.5 text-xs text-muted-foreground">
-                              Expired or missing compliance documents. These officers cannot be deployed.
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-start gap-3 rounded-xl border border-warning/20 bg-warning/5 p-3">
-                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-                          <div>
-                            <p className="text-sm font-medium text-warning">Review documents promptly</p>
-                            <p className="mt-0.5 text-xs text-muted-foreground">
-                              Visit the Compliance dashboard for a full breakdown.
+                              Expired or missing documents — cannot be deployed.
                             </p>
                           </div>
                         </div>
                       </>
-                    ) : (
+                    ) : null}
+
+                    {/* All clear */}
+                    {alertCount === 0 && notifCount.total === 0 && (
                       <div className="flex items-center gap-3 rounded-xl border border-success/20 bg-success/5 p-3">
                         <ShieldCheck className="h-4 w-4 shrink-0 text-success" />
-                        <p className="text-sm font-medium text-success">All officers are compliant</p>
+                        <p className="text-sm font-medium text-success">All clear — no new notifications</p>
                       </div>
                     )}
                   </div>
 
-                  <div className="border-t border-border p-3">
-                    <button
-                      onClick={() => { navigate("/compliance"); setShowAlerts(false) }}
-                      className="w-full rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
-                    >
-                      Open Compliance Dashboard
-                    </button>
-                  </div>
+                  {alertCount > 0 && (
+                    <div className="border-t border-border p-3">
+                      <button
+                        onClick={() => { navigate("/compliance"); setShowAlerts(false) }}
+                        className="w-full rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                      >
+                        Open Compliance Dashboard
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -13,6 +13,7 @@ import {
   HeartPulse, Flame, Swords, HardHat, Camera, Briefcase,
   MapPin, Contact, BadgeAlert, Pencil, Trash2, Plus, X as XIcon,
   KeyRound, Copy, RefreshCw, Check, UserX,
+  MessageSquare, Package, Send,
 } from "lucide-react"
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -90,7 +91,7 @@ interface DiscRecord {
 
 function fmtDate(iso?: string) {
   if (!iso) return "Not on file"
-  const [y, m, d] = iso.split("-")
+  const [y, m, d] = iso.slice(0, 10).split("-")
   return `${d}/${m}/${y}`
 }
 
@@ -215,6 +216,8 @@ const TABS = [
   { id: "training",   label: "Training",     Icon: GraduationCap },
   { id: "acs",        label: "ACS Audit",    Icon: ClipboardList },
   { id: "hr",         label: "HR Records",   Icon: BadgeAlert },
+  { id: "provisions", label: "Provisions",   Icon: Package },
+  { id: "messages",   label: "Messages",     Icon: MessageSquare },
 ] as const
 
 type TabId = typeof TABS[number]["id"]
@@ -249,6 +252,20 @@ export default function StaffDetailPage() {
   const [discDraft, setDiscDraft]       = useState({ incident_date: "", type: "warning", description: "", action_taken: "" })
   const [discSaving, setDiscSaving]     = useState(false)
   const [discError, setDiscError]       = useState("")
+
+  // Messages
+  const [messages, setMessages]       = useState<{id:string;message:string;sender_name:string;sender_role:string;created_at:string}[]>([])
+  const [msgLoading, setMsgLoading]   = useState(false)
+  const [msgDraft, setMsgDraft]       = useState("")
+  const [msgSending, setMsgSending]   = useState(false)
+  const msgEndRef                     = useRef<HTMLDivElement>(null)
+
+  // Provisions
+  const [provisions, setProvisions]       = useState<{id:string;item:string;provided:boolean;date_given:string|null;date_returned:string|null;notes:string|null}[]>([])
+  const [provLoading, setProvLoading]     = useState(false)
+  const [provForm, setProvForm]           = useState(false)
+  const [provDraft, setProvDraft]         = useState({ item: "", provided: true, date_given: "", date_returned: "", notes: "" })
+  const [provSaving, setProvSaving]       = useState(false)
 
   // Training management
   const [trainingData, setTrainingData]   = useState<TrainingRecord>({})
@@ -297,7 +314,9 @@ export default function StaffDetailPage() {
   }, [id])
 
   useEffect(() => {
-    if (tab === "hr") loadDiscRecords()
+    if (tab === "hr")         loadDiscRecords()
+    if (tab === "messages")   loadMessages()
+    if (tab === "provisions") loadProvisions()
   }, [tab, id])
 
   const canManagePortalAccess = me?.role === "director" || me?.role === "ops_manager"
@@ -685,6 +704,77 @@ export default function StaffDetailPage() {
   async function deleteDiscRecord(recordId: string) {
     await fetch(`/api/disciplinary/${recordId}`, { method: "DELETE", credentials: "include" })
     await loadDiscRecords()
+  }
+
+  async function loadMessages() {
+    if (!id) return
+    setMsgLoading(true)
+    try {
+      const res = await fetch(`/api/staff/${id}/messages`, { credentials: "include" })
+      const d = await res.json()
+      if (d.ok) {
+        setMessages(d.messages)
+        setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100)
+      }
+    } finally {
+      setMsgLoading(false)
+    }
+  }
+
+  async function sendMessage() {
+    if (!msgDraft.trim()) return
+    setMsgSending(true)
+    try {
+      const res = await fetch(`/api/staff/${id}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ message: msgDraft }),
+      })
+      const d = await res.json()
+      if (!d.ok) { toast.error(d.error ?? "Failed to send."); return }
+      setMsgDraft("")
+      await loadMessages()
+    } finally {
+      setMsgSending(false)
+    }
+  }
+
+  async function loadProvisions() {
+    if (!id) return
+    setProvLoading(true)
+    try {
+      const res = await fetch(`/api/staff/${id}/provisions`, { credentials: "include" })
+      const d = await res.json()
+      if (d.ok) setProvisions(d.provisions)
+    } finally {
+      setProvLoading(false)
+    }
+  }
+
+  async function addProvision() {
+    if (!provDraft.item.trim()) { toast.error("Item name is required."); return }
+    setProvSaving(true)
+    try {
+      const res = await fetch(`/api/staff/${id}/provisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(provDraft),
+      })
+      const d = await res.json()
+      if (!d.ok) { toast.error(d.error ?? "Failed to save."); return }
+      setProvForm(false)
+      setProvDraft({ item: "", provided: true, date_given: "", date_returned: "", notes: "" })
+      await loadProvisions()
+    } finally {
+      setProvSaving(false)
+    }
+  }
+
+  async function deleteProvision(provId: string) {
+    await fetch(`/api/provisions/${provId}`, { method: "DELETE", credentials: "include" })
+    await loadProvisions()
   }
 
   async function addHistoryEntry() {
@@ -1759,6 +1849,144 @@ export default function StaffDetailPage() {
                   })}
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Provisions tab ── */}
+      {tab === "provisions" && (
+        <div className="space-y-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Package className="h-4 w-4" /> Uniform & Equipment
+                </CardTitle>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setProvForm(p => !p)}>
+                  <Plus className="h-3.5 w-3.5" /> Add Item
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {provForm && (
+                <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label>Item *</Label>
+                      <Input placeholder="e.g. Uniform, Hi-Vis, Radio, ID Badge"
+                        value={provDraft.item} onChange={e => setProvDraft(p => ({ ...p, item: e.target.value }))} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Status</Label>
+                      <select value={provDraft.provided ? "yes" : "no"}
+                        onChange={e => setProvDraft(p => ({ ...p, provided: e.target.value === "yes" }))}
+                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                        <option value="yes">Provided / Given</option>
+                        <option value="no">Not Provided</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label>Date given</Label>
+                      <Input type="date" value={provDraft.date_given}
+                        onChange={e => setProvDraft(p => ({ ...p, date_given: e.target.value }))} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Date returned (if applicable)</Label>
+                      <Input type="date" value={provDraft.date_returned}
+                        onChange={e => setProvDraft(p => ({ ...p, date_returned: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Notes</Label>
+                    <Input placeholder="e.g. Size L, serial number, condition"
+                      value={provDraft.notes} onChange={e => setProvDraft(p => ({ ...p, notes: e.target.value }))} />
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setProvForm(false)}>Cancel</Button>
+                    <Button size="sm" disabled={provSaving} onClick={addProvision}>
+                      {provSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null} Save
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {provLoading && <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
+              {!provLoading && provisions.length === 0 && (
+                <p className="text-sm text-muted-foreground py-4 text-center">No items recorded yet.</p>
+              )}
+              {provisions.map(p => (
+                <div key={p.id} className="flex items-start justify-between gap-3 rounded-lg border bg-muted/10 px-3 py-2.5">
+                  <div className="space-y-0.5 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium">{p.item}</span>
+                      <span className={`text-xs rounded-full px-2 py-0.5 font-medium ${p.provided ? "bg-success/15 text-success" : "bg-destructive/15 text-destructive"}`}>
+                        {p.provided ? "Provided" : "Not Provided"}
+                      </span>
+                    </div>
+                    {p.date_given && <p className="text-xs text-muted-foreground">Given: {fmtDate(p.date_given)}</p>}
+                    {p.date_returned && <p className="text-xs text-muted-foreground">Returned: {fmtDate(p.date_returned)}</p>}
+                    {p.notes && <p className="text-xs text-muted-foreground">{p.notes}</p>}
+                  </div>
+                  <button onClick={() => deleteProvision(p.id)}
+                    className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Messages tab ── */}
+      {tab === "messages" && (
+        <div className="space-y-4">
+          <Card className="flex flex-col" style={{ minHeight: "480px" }}>
+            <CardHeader className="pb-2 border-b">
+              <CardTitle className="text-base flex items-center gap-2">
+                <MessageSquare className="h-4 w-4" /> Messages with {staff.name}
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">Messages are private between management and this staff member.</p>
+            </CardHeader>
+            <CardContent className="flex flex-col flex-1 p-0">
+              {/* Message list */}
+              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2" style={{ maxHeight: "360px" }}>
+                {msgLoading && <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
+                {!msgLoading && messages.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-8">No messages yet. Send the first one below.</p>
+                )}
+                {messages.map(m => {
+                  const isStaff = m.sender_role === "staff"
+                  return (
+                    <div key={m.id} className={`flex ${isStaff ? "justify-start" : "justify-end"}`}>
+                      <div className={`max-w-xs rounded-2xl px-3.5 py-2 text-sm shadow-sm ${isStaff ? "bg-muted text-foreground rounded-tl-sm" : "bg-primary text-primary-foreground rounded-tr-sm"}`}>
+                        <p className="text-[11px] font-medium mb-0.5 opacity-70">{m.sender_name}</p>
+                        <p>{m.message}</p>
+                        <p className={`text-[10px] mt-0.5 opacity-60 text-right`}>
+                          {new Date(m.created_at).toLocaleDateString("en-GB", { day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit" })}
+                        </p>
+                      </div>
+                    </div>
+                  )
+                })}
+                <div ref={msgEndRef} />
+              </div>
+              {/* Compose */}
+              <div className="border-t px-4 py-3 flex gap-2">
+                <input
+                  value={msgDraft}
+                  onChange={e => setMsgDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
+                  placeholder={`Message ${staff.name}…`}
+                  className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+                <Button size="sm" disabled={msgSending || !msgDraft.trim()} onClick={sendMessage} className="gap-1.5">
+                  {msgSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                  Send
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>

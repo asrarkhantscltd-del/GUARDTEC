@@ -497,7 +497,7 @@ export default function UsersPage() {
                 <Label>Role</Label>
                 <select value={draft.role} onChange={(e) => setF("role", e.target.value)}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
-                  {roleOptions.filter((r) => r.slug !== "staff").map((r) => (
+                  {roleOptions.map((r) => (
                     <option key={r.slug} value={r.slug}>{r.name}</option>
                   ))}
                 </select>

@@ -2484,8 +2484,12 @@ app.get('/api/my-incident-reports', requireLogin, requireRole('staff'), async fu
     if (!empResult.rows.length) return res.json({ ok: true, reports: [] });
     var empId = empResult.rows[0].id;
     var result = await pgPool.query(
-      `SELECT id, is_anonymous, report_date, site_location, incident_type, against_person, description, status, resolution_notes, created_at
-       FROM incident_reports WHERE reporter_id = $1 ORDER BY created_at DESC`,
+      `SELECT ir.id, ir.is_anonymous, ir.report_date, ir.site_location, ir.incident_type, ir.against_person, ir.description, ir.status, ir.resolution_notes, ir.created_at,
+              COUNT(ia.id)::int AS attachment_count
+       FROM incident_reports ir
+       LEFT JOIN incident_attachments ia ON ia.incident_id = ir.id
+       WHERE ir.reporter_id = $1
+       GROUP BY ir.id ORDER BY ir.created_at DESC`,
       [empId]
     );
     res.json({ ok: true, reports: result.rows });
@@ -2499,11 +2503,14 @@ app.get('/api/incident-reports', requireLogin, requirePermission('staff'), async
   try {
     var result = await pgPool.query(
       `SELECT ir.*,
-         CASE WHEN ir.is_anonymous THEN 'Anonymous' ELSE e.name END AS reporter_name,
-         u.full_name AS reviewed_by_name
+         CASE WHEN ir.is_anonymous THEN NULL ELSE e.name END AS reporter_name,
+         u.full_name AS reviewed_by_name,
+         COUNT(ia.id)::int AS attachment_count
        FROM incident_reports ir
        LEFT JOIN employees e ON e.id = ir.reporter_id
        LEFT JOIN users u ON u.id = ir.reviewed_by
+       LEFT JOIN incident_attachments ia ON ia.incident_id = ir.id
+       GROUP BY ir.id, e.name, u.full_name
        ORDER BY ir.created_at DESC`
     );
     res.json({ ok: true, reports: result.rows });
@@ -2527,6 +2534,270 @@ app.patch('/api/incident-reports/:reportId', requireLogin, requirePermission('st
       [b.status || null, b.resolution_notes || null, req.user.id, req.params.reportId]
     );
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Incident Attachments ──────────────────────────────────────────────────────
+var INCIDENT_ATTACH_DIR = path.join(BASE, 'incident-attachments');
+if (!fs.existsSync(INCIDENT_ATTACH_DIR)) fs.mkdirSync(INCIDENT_ATTACH_DIR, { recursive: true });
+
+var ALLOWED_ATTACH_MIME = {
+  'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp',
+  'video/mp4': '.mp4', 'video/quicktime': '.mov', 'video/webm': '.webm', 'video/avi': '.avi',
+  'application/pdf': '.pdf',
+  'application/msword': '.doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx'
+};
+var MAX_ATTACH_SIZE = 100 * 1024 * 1024; // 100 MB
+
+// Upload attachment for an incident report
+app.post('/api/incident-reports/:reportId/attachments', requireLogin, function(req, res) {
+  var mime = (req.headers['content-type'] || '').split(';')[0].trim();
+  var ext = ALLOWED_ATTACH_MIME[mime];
+  if (!ext) return res.status(400).json({ ok: false, error: 'File type not allowed.' });
+
+  var originalName = decodeURIComponent(req.headers['x-original-name'] || 'attachment' + ext);
+  var filename = require('crypto').randomUUID() + ext;
+  var dest = path.join(INCIDENT_ATTACH_DIR, filename);
+
+  var chunks = [];
+  var total = 0;
+  req.on('data', function(c) {
+    total += c.length;
+    if (total > MAX_ATTACH_SIZE) { req.destroy(); return res.status(413).json({ ok: false, error: 'File too large (max 100 MB).' }); }
+    chunks.push(c);
+  });
+  req.on('end', async function() {
+    try {
+      var buf = Buffer.concat(chunks);
+      fs.writeFileSync(dest, buf);
+      var r = await pgPool.query(
+        'INSERT INTO incident_attachments (incident_id, filename, original_name, mime_type, size_bytes) VALUES ($1,$2,$3,$4,$5) RETURNING id, filename, original_name, mime_type, size_bytes, uploaded_at',
+        [req.params.reportId, filename, originalName, mime, buf.length]
+      );
+      res.json({ ok: true, attachment: r.rows[0] });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+  req.on('error', function() { res.status(500).json({ ok: false, error: 'Upload failed.' }); });
+});
+
+// List attachments for an incident report
+app.get('/api/incident-reports/:reportId/attachments', requireLogin, async function(req, res) {
+  try {
+    var r = await pgPool.query(
+      'SELECT id, filename, original_name, mime_type, size_bytes, uploaded_at FROM incident_attachments WHERE incident_id = $1 ORDER BY uploaded_at ASC',
+      [req.params.reportId]
+    );
+    res.json({ ok: true, attachments: r.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Serve / download an attachment
+app.get('/api/incident-attachments/:filename', requireLogin, function(req, res) {
+  try {
+    var safe = path.basename(req.params.filename);
+    var filePath = path.join(INCIDENT_ATTACH_DIR, safe);
+    if (!fs.existsSync(filePath)) return res.status(404).end();
+    res.sendFile(filePath);
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+// Delete an attachment (reporter or management)
+app.delete('/api/incident-attachments/:attachId', requireLogin, async function(req, res) {
+  try {
+    var r = await pgPool.query('SELECT filename FROM incident_attachments WHERE id = $1', [req.params.attachId]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Not found.' });
+    var filePath = path.join(INCIDENT_ATTACH_DIR, r.rows[0].filename);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    await pgPool.query('DELETE FROM incident_attachments WHERE id = $1', [req.params.attachId]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Staff Messages ────────────────────────────────────────────────────────────
+
+// Management: view full conversation for a staff member
+app.get('/api/staff/:id/messages', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.params.id]);
+    if (!empResult.rows.length) return res.json({ ok: true, messages: [] });
+    var empId = empResult.rows[0].id;
+    var result = await pgPool.query(
+      `SELECT sm.id, sm.message, sm.is_read, sm.created_at,
+              u.full_name AS sender_name, u.role AS sender_role
+       FROM staff_messages sm
+       JOIN users u ON u.id = sm.sender_id
+       WHERE sm.employee_id = $1
+       ORDER BY sm.created_at ASC`,
+      [empId]
+    );
+    // Mark all unread (sent by staff) as read when management opens
+    await pgPool.query(
+      `UPDATE staff_messages SET is_read = TRUE WHERE employee_id = $1 AND sender_id IN (SELECT id FROM users WHERE role = 'staff') AND is_read = FALSE`,
+      [empId]
+    );
+    res.json({ ok: true, messages: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Management: send a message to a staff member
+app.post('/api/staff/:id/messages', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.params.id]);
+    if (!empResult.rows.length) return res.status(404).json({ ok: false, error: 'Staff not found.' });
+    var empId = empResult.rows[0].id;
+    var msg = String((req.body && req.body.message) || '').trim();
+    if (!msg) return res.status(400).json({ ok: false, error: 'Message cannot be empty.' });
+    var r = await pgPool.query(
+      'INSERT INTO staff_messages (employee_id, sender_id, message) VALUES ($1,$2,$3) RETURNING id, message, created_at',
+      [empId, req.user.id, msg]
+    );
+    res.json({ ok: true, message: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Staff: view their own messages
+app.get('/api/my-messages', requireLogin, requireRole('staff'), async function(req, res) {
+  try {
+    if (!req.user.staff_id) return res.json({ ok: true, messages: [], unread: 0 });
+    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
+    if (!empResult.rows.length) return res.json({ ok: true, messages: [], unread: 0 });
+    var empId = empResult.rows[0].id;
+    var result = await pgPool.query(
+      `SELECT sm.id, sm.message, sm.is_read, sm.created_at,
+              u.full_name AS sender_name, u.role AS sender_role
+       FROM staff_messages sm
+       JOIN users u ON u.id = sm.sender_id
+       WHERE sm.employee_id = $1
+       ORDER BY sm.created_at ASC`,
+      [empId]
+    );
+    var unread = result.rows.filter(function(m) { return !m.is_read && m.sender_role !== 'staff'; }).length;
+    // Mark management messages as read
+    await pgPool.query(
+      `UPDATE staff_messages SET is_read = TRUE WHERE employee_id = $1 AND is_read = FALSE AND sender_id NOT IN (SELECT id FROM users WHERE role = 'staff')`,
+      [empId]
+    );
+    res.json({ ok: true, messages: result.rows, unread: unread });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Staff: reply to management
+app.post('/api/my-messages', requireLogin, requireRole('staff'), async function(req, res) {
+  try {
+    if (!req.user.staff_id) return res.status(400).json({ ok: false, error: 'No staff profile linked.' });
+    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
+    if (!empResult.rows.length) return res.status(400).json({ ok: false, error: 'Staff profile not found.' });
+    var empId = empResult.rows[0].id;
+    var msg = String((req.body && req.body.message) || '').trim();
+    if (!msg) return res.status(400).json({ ok: false, error: 'Message cannot be empty.' });
+    var r = await pgPool.query(
+      'INSERT INTO staff_messages (employee_id, sender_id, message, is_read) VALUES ($1,$2,$3, FALSE) RETURNING id, message, created_at',
+      [empId, req.user.id, msg]
+    );
+    res.json({ ok: true, message: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Staff Provisions (Uniform & Equipment) ────────────────────────────────────
+
+// Management: list provisions for a staff member
+app.get('/api/staff/:id/provisions', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.params.id]);
+    if (!empResult.rows.length) return res.json({ ok: true, provisions: [] });
+    var empId = empResult.rows[0].id;
+    var result = await pgPool.query(
+      `SELECT sp.*, u.full_name AS recorded_by_name
+       FROM staff_provisions sp
+       LEFT JOIN users u ON u.id = sp.recorded_by
+       WHERE sp.employee_id = $1 ORDER BY sp.created_at DESC`,
+      [empId]
+    );
+    res.json({ ok: true, provisions: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Management: add a provision record
+app.post('/api/staff/:id/provisions', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.params.id]);
+    if (!empResult.rows.length) return res.status(404).json({ ok: false, error: 'Staff not found.' });
+    var empId = empResult.rows[0].id;
+    var b = req.body;
+    if (!b.item) return res.status(400).json({ ok: false, error: 'Item name is required.' });
+    var r = await pgPool.query(
+      `INSERT INTO staff_provisions (employee_id, item, provided, date_given, date_returned, notes, recorded_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [empId, b.item, b.provided !== false, b.date_given || null, b.date_returned || null, b.notes || null, req.user.id]
+    );
+    res.json({ ok: true, provision: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Management: delete a provision record
+app.delete('/api/provisions/:id', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    await pgPool.query('DELETE FROM staff_provisions WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Staff: view their own provisions
+app.get('/api/my-provisions', requireLogin, requireRole('staff'), async function(req, res) {
+  try {
+    if (!req.user.staff_id) return res.json({ ok: true, provisions: [] });
+    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
+    if (!empResult.rows.length) return res.json({ ok: true, provisions: [] });
+    var empId = empResult.rows[0].id;
+    var result = await pgPool.query(
+      'SELECT id, item, provided, date_given, date_returned, notes, created_at FROM staff_provisions WHERE employee_id = $1 ORDER BY created_at DESC',
+      [empId]
+    );
+    res.json({ ok: true, provisions: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
+// Management: count of unread staff messages + open incident reports
+app.get('/api/notifications/count', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var msgResult = await pgPool.query(
+      `SELECT COUNT(*) AS cnt FROM staff_messages
+       WHERE sender_id IN (SELECT id FROM users WHERE role = 'staff') AND is_read = FALSE`
+    );
+    var incResult = await pgPool.query(
+      `SELECT COUNT(*) AS cnt FROM incident_reports WHERE status = 'open'`
+    );
+    var msgs = parseInt(msgResult.rows[0].cnt) || 0;
+    var incidents = parseInt(incResult.rows[0].cnt) || 0;
+    res.json({ ok: true, messages: msgs, incidents: incidents, total: msgs + incidents });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

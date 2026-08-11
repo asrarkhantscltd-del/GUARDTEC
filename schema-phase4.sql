@@ -49,3 +49,55 @@ CREATE TABLE IF NOT EXISTS incident_reports (
 
 CREATE INDEX IF NOT EXISTS idx_incident_reporter ON incident_reports(reporter_id);
 CREATE INDEX IF NOT EXISTS idx_incident_status   ON incident_reports(status);
+
+-- ============================================================
+-- 3. Incident Attachments
+--    Files / videos attached to an incident report.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS incident_attachments (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  incident_id   UUID NOT NULL REFERENCES incident_reports(id) ON DELETE CASCADE,
+  filename      VARCHAR(255) NOT NULL,
+  original_name VARCHAR(255) NOT NULL,
+  mime_type     VARCHAR(100),
+  size_bytes    INTEGER,
+  uploaded_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_attachment_incident ON incident_attachments(incident_id);
+
+-- ============================================================
+-- 4. Staff Messages
+--    Manager sends a message to a staff member from their profile.
+--    Staff reads it in their portal.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS staff_messages (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  sender_id   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  message     TEXT NOT NULL,
+  is_read     BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_employee ON staff_messages(employee_id);
+CREATE INDEX IF NOT EXISTS idx_messages_unread   ON staff_messages(employee_id, is_read);
+
+-- ============================================================
+-- 5. Staff Provisions (Uniform & Equipment)
+--    Record of items provided to each staff member.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS staff_provisions (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id  UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  item         VARCHAR(100) NOT NULL,
+  -- e.g. Uniform, Hi-Vis Jacket, Radio, ID Badge, PPE Kit, Keys, etc.
+  provided     BOOLEAN NOT NULL DEFAULT TRUE,
+  date_given   DATE,
+  date_returned DATE,
+  notes        TEXT,
+  recorded_by  UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_provisions_employee ON staff_provisions(employee_id);
