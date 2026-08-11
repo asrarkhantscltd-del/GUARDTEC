@@ -76,6 +76,16 @@ interface StaffMember {
   }
 }
 
+interface DiscRecord {
+  id: string
+  incident_date: string
+  type: string
+  description: string
+  action_taken?: string
+  issued_by_name?: string
+  created_at: string
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmtDate(iso?: string) {
@@ -204,6 +214,7 @@ const TABS = [
   { id: "vetting",    label: "Vetting",      Icon: Fingerprint },
   { id: "training",   label: "Training",     Icon: GraduationCap },
   { id: "acs",        label: "ACS Audit",    Icon: ClipboardList },
+  { id: "hr",         label: "HR Records",   Icon: BadgeAlert },
 ] as const
 
 type TabId = typeof TABS[number]["id"]
@@ -230,6 +241,14 @@ export default function StaffDetailPage() {
   const [exConfirm, setExConfirm] = useState(false)
   const [exMoving, setExMoving]   = useState(false)
   const [exError, setExError]     = useState("")
+
+  // Disciplinary records
+  const [discRecords, setDiscRecords]   = useState<DiscRecord[]>([])
+  const [discLoading, setDiscLoading]   = useState(false)
+  const [discForm, setDiscForm]         = useState(false)
+  const [discDraft, setDiscDraft]       = useState({ incident_date: "", type: "warning", description: "", action_taken: "" })
+  const [discSaving, setDiscSaving]     = useState(false)
+  const [discError, setDiscError]       = useState("")
 
   // Training management
   const [trainingData, setTrainingData]   = useState<TrainingRecord>({})
@@ -276,6 +295,10 @@ export default function StaffDetailPage() {
       .then((blob) => { if (blob) setPhotoUrl(URL.createObjectURL(blob)) })
       .catch(() => {})
   }, [id])
+
+  useEffect(() => {
+    if (tab === "hr") loadDiscRecords()
+  }, [tab, id])
 
   const canManagePortalAccess = me?.role === "director" || me?.role === "ops_manager"
   const canEdit   = me?.role === "director" || !!me?.permissions?.edit_staff
@@ -622,6 +645,46 @@ export default function StaffDetailPage() {
     }
     setEditingVetting(null)
     setVettingSaving(false)
+  }
+
+  async function loadDiscRecords() {
+    if (!id) return
+    setDiscLoading(true)
+    try {
+      const res = await fetch(`/api/staff/${id}/disciplinary`, { credentials: "include" })
+      const d = await res.json()
+      if (d.ok) setDiscRecords(d.records)
+    } finally {
+      setDiscLoading(false)
+    }
+  }
+
+  async function addDiscRecord() {
+    if (!discDraft.incident_date || !discDraft.description.trim()) {
+      setDiscError("Date and description are required.")
+      return
+    }
+    setDiscSaving(true); setDiscError("")
+    try {
+      const res = await fetch(`/api/staff/${id}/disciplinary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(discDraft),
+      })
+      const d = await res.json()
+      if (!d.ok) { setDiscError(d.error ?? "Failed to save."); return }
+      setDiscForm(false)
+      setDiscDraft({ incident_date: "", type: "warning", description: "", action_taken: "" })
+      await loadDiscRecords()
+    } finally {
+      setDiscSaving(false)
+    }
+  }
+
+  async function deleteDiscRecord(recordId: string) {
+    await fetch(`/api/disciplinary/${recordId}`, { method: "DELETE", credentials: "include" })
+    await loadDiscRecords()
   }
 
   async function addHistoryEntry() {
@@ -1569,6 +1632,133 @@ export default function StaffDetailPage() {
               <AcsCheckRow label="Employment contract signed"       done={acs.contractSigned}   note="Signed copy on file" />
               <AcsCheckRow label="Assignment instructions signed"   done={acs.assignmentInstr}  note="Site-specific — legally required by SIA" />
               <AcsCheckRow label="Emergency contact recorded"       done={acs.emergencyContact} note="Name, phone, and relationship" />
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ════════ HR RECORDS ════════ */}
+      {tab === "hr" && (
+        <div className="space-y-4">
+
+          {/* ── Disciplinary Records ── */}
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <BadgeAlert className="h-4 w-4 text-destructive" />Disciplinary Records
+                </CardTitle>
+                {canEdit && (
+                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => { setDiscForm(true); setDiscError("") }}>
+                    <Plus className="h-3 w-3" />Add Record
+                  </Button>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent className="px-4 pb-3 space-y-3">
+
+              {/* Add form */}
+              {discForm && (
+                <div className="rounded-lg border bg-destructive/5 border-destructive/20 p-4 space-y-3">
+                  <p className="text-xs font-semibold text-destructive uppercase tracking-wide">New Disciplinary Record</p>
+                  {discError && <p className="text-xs text-destructive bg-destructive/10 rounded px-2 py-1">{discError}</p>}
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-0.5">Incident date *</p>
+                      <input type="date" value={discDraft.incident_date}
+                        onChange={e => setDiscDraft(p => ({ ...p, incident_date: e.target.value }))}
+                        className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-0.5">Type *</p>
+                      <select value={discDraft.type}
+                        onChange={e => setDiscDraft(p => ({ ...p, type: e.target.value }))}
+                        className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring">
+                        <option value="warning">Verbal / Written Warning</option>
+                        <option value="final_warning">Final Written Warning</option>
+                        <option value="suspension">Suspension</option>
+                        <option value="termination">Termination</option>
+                        <option value="fraud">Fraud / False Information</option>
+                        <option value="misconduct">Gross Misconduct</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-0.5">Description of incident *</p>
+                    <textarea value={discDraft.description} rows={3}
+                      onChange={e => setDiscDraft(p => ({ ...p, description: e.target.value }))}
+                      placeholder="What happened?"
+                      className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring resize-none" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-0.5">Action taken</p>
+                    <input type="text" value={discDraft.action_taken}
+                      onChange={e => setDiscDraft(p => ({ ...p, action_taken: e.target.value }))}
+                      placeholder="e.g. Formal warning issued, contract terminated"
+                      className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" className="h-7 text-xs" onClick={addDiscRecord} disabled={discSaving}>
+                      {discSaving ? "Saving…" : "Save Record"}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setDiscForm(false); setDiscError("") }}>Cancel</Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Records list */}
+              {discLoading ? (
+                <div className="flex items-center gap-2 py-4 text-muted-foreground text-sm">
+                  <Loader2 className="h-4 w-4 animate-spin" />Loading records…
+                </div>
+              ) : discRecords.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-2">No disciplinary records on file.</p>
+              ) : (
+                <div className="space-y-3">
+                  {discRecords.map(rec => {
+                    const typeLabels: Record<string, string> = {
+                      warning: "Warning", final_warning: "Final Warning",
+                      suspension: "Suspension", termination: "Termination",
+                      fraud: "Fraud / False Info", misconduct: "Gross Misconduct", other: "Other",
+                    }
+                    const typeCls: Record<string, string> = {
+                      warning: "bg-warning/15 text-warning border-warning/30",
+                      final_warning: "bg-orange-500/15 text-orange-500 border-orange-500/30",
+                      suspension: "bg-destructive/15 text-destructive border-destructive/30",
+                      termination: "bg-destructive/20 text-destructive border-destructive/40",
+                      fraud: "bg-destructive/20 text-destructive border-destructive/40",
+                      misconduct: "bg-destructive/20 text-destructive border-destructive/40",
+                      other: "bg-muted text-muted-foreground border-border",
+                    }
+                    return (
+                      <div key={rec.id} className="rounded-lg border bg-muted/20 p-3 space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${typeCls[rec.type] ?? typeCls.other}`}>
+                              {typeLabels[rec.type] ?? rec.type}
+                            </span>
+                            <span className="text-xs text-muted-foreground">{fmtDate(rec.incident_date)}</span>
+                          </div>
+                          {me?.role === "director" && (
+                            <button onClick={() => deleteDiscRecord(rec.id)}
+                              className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0" title="Delete">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-sm">{rec.description}</p>
+                        {rec.action_taken && (
+                          <p className="text-xs text-muted-foreground">Action: {rec.action_taken}</p>
+                        )}
+                        {rec.issued_by_name && (
+                          <p className="text-xs text-muted-foreground">Issued by: {rec.issued_by_name}</p>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

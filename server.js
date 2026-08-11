@@ -2373,6 +2373,165 @@ app.delete('/api/roles/:slug', requireLogin, requireRole('director'), async func
   }
 });
 
+// ── PHASE 4 API: Disciplinary Records & Incident Reports ─────────────────────
+
+// ── Disciplinary: list for a staff member (management) ──
+app.get('/api/staff/:id/disciplinary', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.params.id]);
+    if (!empResult.rows.length) return res.json({ ok: true, records: [] });
+    var empId = empResult.rows[0].id;
+    var result = await pgPool.query(
+      `SELECT dr.*, u.full_name AS issued_by_name
+       FROM disciplinary_records dr
+       LEFT JOIN users u ON u.id = dr.issued_by
+       WHERE dr.employee_id = $1
+       ORDER BY dr.incident_date DESC`,
+      [empId]
+    );
+    res.json({ ok: true, records: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Disciplinary: add record (Director / Ops Manager only) ──
+app.post('/api/staff/:id/disciplinary', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var b = req.body;
+    if (!b.incident_date || !b.type || !b.description) {
+      return res.status(400).json({ ok: false, error: 'incident_date, type and description are required.' });
+    }
+    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.params.id]);
+    if (!empResult.rows.length) return res.status(404).json({ ok: false, error: 'Staff member not found in database.' });
+    var empId = empResult.rows[0].id;
+    var result = await pgPool.query(
+      `INSERT INTO disciplinary_records (employee_id, incident_date, type, description, action_taken, issued_by)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [empId, b.incident_date, b.type, b.description, b.action_taken || null, req.user.id]
+    );
+    res.json({ ok: true, record: result.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Disciplinary: delete a record (Director only) ──
+app.delete('/api/disciplinary/:recordId', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    await pgPool.query('DELETE FROM disciplinary_records WHERE id = $1', [req.params.recordId]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Disciplinary: staff view their own record ──
+app.get('/api/my-disciplinary', requireLogin, requireRole('staff'), async function(req, res) {
+  try {
+    if (!req.user.staff_id) return res.json({ ok: true, records: [] });
+    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
+    if (!empResult.rows.length) return res.json({ ok: true, records: [] });
+    var empId = empResult.rows[0].id;
+    var result = await pgPool.query(
+      `SELECT id, incident_date, type, description, action_taken, created_at
+       FROM disciplinary_records WHERE employee_id = $1 ORDER BY incident_date DESC`,
+      [empId]
+    );
+    res.json({ ok: true, records: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Incident Reports: submit (any logged-in staff member) ──
+app.post('/api/incident-reports', requireLogin, async function(req, res) {
+  try {
+    var b = req.body;
+    if (!b.incident_type || !b.description) {
+      return res.status(400).json({ ok: false, error: 'incident_type and description are required.' });
+    }
+    var reporterId = null;
+    if (!b.is_anonymous && req.user.staff_id) {
+      var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
+      if (empResult.rows.length) reporterId = empResult.rows[0].id;
+    }
+    var result = await pgPool.query(
+      `INSERT INTO incident_reports
+         (reporter_id, is_anonymous, report_date, site_location, incident_type, against_person, description)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [
+        b.is_anonymous ? null : reporterId,
+        !!b.is_anonymous,
+        b.report_date || new Date().toISOString().slice(0, 10),
+        b.site_location || null,
+        b.incident_type,
+        b.against_person || null,
+        b.description,
+      ]
+    );
+    res.json({ ok: true, report: result.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Incident Reports: staff view their own submitted reports ──
+app.get('/api/my-incident-reports', requireLogin, requireRole('staff'), async function(req, res) {
+  try {
+    if (!req.user.staff_id) return res.json({ ok: true, reports: [] });
+    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
+    if (!empResult.rows.length) return res.json({ ok: true, reports: [] });
+    var empId = empResult.rows[0].id;
+    var result = await pgPool.query(
+      `SELECT id, is_anonymous, report_date, site_location, incident_type, against_person, description, status, resolution_notes, created_at
+       FROM incident_reports WHERE reporter_id = $1 ORDER BY created_at DESC`,
+      [empId]
+    );
+    res.json({ ok: true, reports: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Incident Reports: management — view all ──
+app.get('/api/incident-reports', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var result = await pgPool.query(
+      `SELECT ir.*,
+         CASE WHEN ir.is_anonymous THEN 'Anonymous' ELSE e.name END AS reporter_name,
+         u.full_name AS reviewed_by_name
+       FROM incident_reports ir
+       LEFT JOIN employees e ON e.id = ir.reporter_id
+       LEFT JOIN users u ON u.id = ir.reviewed_by
+       ORDER BY ir.created_at DESC`
+    );
+    res.json({ ok: true, reports: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Incident Reports: management — update status ──
+app.patch('/api/incident-reports/:reportId', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var b = req.body;
+    await pgPool.query(
+      `UPDATE incident_reports
+       SET status = COALESCE($1, status),
+           resolution_notes = COALESCE($2, resolution_notes),
+           reviewed_by = $3,
+           reviewed_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $4`,
+      [b.status || null, b.resolution_notes || null, req.user.id, req.params.reportId]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── START ─────────────────────────────────────────────────────────────────────
 console.log('\nInitialising staff data from spreadsheet...');
 initFromSpreadsheet();
