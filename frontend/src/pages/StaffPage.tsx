@@ -9,7 +9,7 @@ import {
   Search, ChevronRight, Loader2,
   Table2, StretchHorizontal, MapPin, Clock,
   CircleCheck, ShieldCheck, HardHat, FileCheck, Building2, Plus, X,
-  BarChart3, FileWarning, UserX, RotateCcw, Archive, Briefcase,
+  BarChart3, FileWarning, UserX, RotateCcw, Archive, Briefcase, Trash2,
 } from "lucide-react"
 import { StatusBadge } from "@/components/ui/status-badge"
 
@@ -143,7 +143,7 @@ function InitialsAvatar({ name, status, size = "md" }: { name: string; status: s
   )
 }
 
-// Inline site selector — shown when staff is onsite; updates immediately on change
+// Inline site selector — shown when staff is onsite
 function SiteSelect({
   staffId, currentSite, sites, onUpdate,
 }: {
@@ -161,6 +161,61 @@ function SiteSelect({
         <option key={s.id} value={s.id}>{s.name}</option>
       ))}
     </select>
+  )
+}
+
+// Combined deployment status + site selector (editable inline, local state for instant feedback)
+function DeploySelect({
+  staffId, deployStatus, currentSite, sites, onUpdate,
+}: {
+  staffId: string; deployStatus?: string; currentSite?: string; sites: Site[]
+  onUpdate: (id: string, status: string, site?: string) => void
+}) {
+  const [localStatus, setLocalStatus] = useState(() => {
+    const n = normDeploy(deployStatus); return n === "unknown" ? "" : n
+  })
+  useEffect(() => {
+    const n = normDeploy(deployStatus); setLocalStatus(n === "unknown" ? "" : n)
+  }, [deployStatus])
+
+  const statusCls: Record<string, string> = {
+    onsite:    "border-blue-500/40 bg-blue-500/5 text-blue-600",
+    available: "border-success/40 bg-success/5 text-success",
+    offduty:   "border-border bg-muted text-muted-foreground",
+    "":        "border-border bg-background text-muted-foreground",
+  }
+
+  function handleStatusChange(val: string) {
+    setLocalStatus(val)
+    if (val !== "onsite") onUpdate(staffId, val || "unknown")
+    // if onsite: wait for site selection before calling onUpdate
+  }
+
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
+      <select
+        value={localStatus}
+        onChange={(e) => handleStatusChange(e.target.value)}
+        className={`rounded border text-xs px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring ${statusCls[localStatus] ?? statusCls[""]}`}
+      >
+        <option value="">— Status —</option>
+        <option value="onsite">Onsite</option>
+        <option value="available">Available</option>
+        <option value="offduty">Off Duty</option>
+      </select>
+      {localStatus === "onsite" && (
+        <select
+          value={currentSite ?? ""}
+          onChange={(e) => onUpdate(staffId, "onsite", e.target.value)}
+          className="rounded border border-blue-500/30 bg-blue-500/5 text-blue-600 text-xs px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring max-w-[150px]"
+        >
+          <option value="">— Location —</option>
+          {sites.map((s) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+      )}
+    </div>
   )
 }
 
@@ -200,6 +255,8 @@ export default function StaffPage() {
   const [exLoading, setExLoading]     = useState(false)
   const [restoringId, setRestoringId] = useState<string | null>(null)
   const [exError, setExError]         = useState("")
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [permDeleting, setPermDeleting]       = useState(false)
 
   // Add Staff panel
   const [addPanel, setAddPanel]   = useState(false)
@@ -238,6 +295,26 @@ export default function StaffPage() {
       setExError("Failed to load ex-staff.")
     } finally {
       setExLoading(false)
+    }
+  }
+
+  async function permanentDelete(folderId: string) {
+    setPermDeleting(true); setExError("")
+    try {
+      const r = await fetch("/api/exstaff/permanent", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ folderId }),
+      })
+      const d = await r.json()
+      if (!d.ok) { setExError(d.error ?? "Delete failed."); return }
+      setExStaff(prev => prev.filter(e => e.folderId !== folderId))
+      setConfirmDeleteId(null)
+    } catch {
+      setExError("Network error.")
+    } finally {
+      setPermDeleting(false)
     }
   }
 
@@ -619,8 +696,7 @@ export default function StaffPage() {
                     </button>
                   </th>
                   <th className="px-4 py-3">Compliance</th>
-                  <th className="hidden sm:table-cell px-4 py-3">Deployment</th>
-                  <th className="hidden sm:table-cell px-4 py-3">Site</th>
+                  <th className="hidden sm:table-cell px-4 py-3">Deployment / Site</th>
                   <th className="hidden sm:table-cell px-4 py-3">
                     <button onClick={() => toggleSort("sia")} className="flex items-center gap-1 hover:text-foreground transition-colors">
                       SIA Expiry {sortKey === "sia" ? (sortDir === "asc" ? "↑" : "↓") : <span className="opacity-30">↕</span>}
@@ -645,14 +721,9 @@ export default function StaffPage() {
                     className="hover:bg-muted/30 transition-colors cursor-pointer">
                     <td className="px-4 py-3 font-medium">{s.name}</td>
                     <td className="px-4 py-3"><StatusBadge status={s.overall} /></td>
-                    <td className="hidden sm:table-cell px-4 py-3"><DeployBadge raw={s.deployStatus} /></td>
-                    <td className="hidden sm:table-cell px-4 py-3">
-                      {normDeploy(s.deployStatus) === "onsite" ? (
-                        <SiteSelect staffId={s.id} currentSite={s.currentSite} sites={sites}
-                          onUpdate={(id, site) => updateDeploy(id, s.deployStatus ?? "onsite", site)} />
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
+                    <td className="hidden sm:table-cell px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <DeploySelect staffId={s.id} deployStatus={s.deployStatus} currentSite={s.currentSite}
+                        sites={sites} onUpdate={(id, status, site) => updateDeploy(id, status, site)} />
                     </td>
                     <td className="hidden sm:table-cell px-4 py-3"><ExpiryCell date={s.sia?.expiry} /></td>
                     <td className="hidden md:table-cell px-4 py-3"><ExpiryCell date={s.cscs?.expiry} /></td>
@@ -688,20 +759,11 @@ export default function StaffPage() {
                   )}
                   <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                     <StatusBadge status={s.overall} />
-                    <DeployBadge raw={s.deployStatus} />
                   </div>
-                  {normDeploy(s.deployStatus) === "onsite" && (
-                    <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
-                      <SiteSelect staffId={s.id} currentSite={s.currentSite} sites={sites}
-                        onUpdate={(id, site) => updateDeploy(id, s.deployStatus ?? "onsite", site)} />
-                    </div>
-                  )}
-                  {normDeploy(s.deployStatus) !== "onsite" && s.currentSite && (
-                    <p className="mt-1 text-xs text-muted-foreground flex items-center gap-1">
-                      <Building2 className="h-3 w-3" />
-                      {getSiteName(s.currentSite)}
-                    </p>
-                  )}
+                  <div className="mt-1.5" onClick={(e) => e.stopPropagation()}>
+                    <DeploySelect staffId={s.id} deployStatus={s.deployStatus} currentSite={s.currentSite}
+                      sites={sites} onUpdate={(id, status, site) => updateDeploy(id, status, site)} />
+                  </div>
                   <div className="mt-1.5 flex gap-1 flex-wrap">
                     <DocChip label="SIA"  date={s.sia?.expiry} />
                     <DocChip label="CSCS" date={s.cscs?.expiry} />
@@ -725,10 +787,10 @@ export default function StaffPage() {
                 className="flex flex-col items-center gap-2 rounded-lg p-3 cursor-pointer hover:bg-muted/40 transition-colors text-center">
                 <InitialsAvatar name={s.name} status={s.overall} size="lg" />
                 <p className="text-xs font-medium leading-tight line-clamp-2">{s.name}</p>
-                <DeployBadge raw={s.deployStatus} />
-                {s.currentSite && (
-                  <p className="text-xs text-muted-foreground line-clamp-1">{getSiteName(s.currentSite)}</p>
-                )}
+                <div onClick={(e) => e.stopPropagation()}>
+                  <DeploySelect staffId={s.id} deployStatus={s.deployStatus} currentSite={s.currentSite}
+                    sites={sites} onUpdate={(id, status, site) => updateDeploy(id, status, site)} />
+                </div>
               </motion.div>
             ))}
           </motion.div>
@@ -758,13 +820,10 @@ export default function StaffPage() {
                 className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/30 transition-colors">
                 <InitialsAvatar name={s.name} status={s.overall} size="sm" />
                 <span className="flex-1 text-sm font-medium">{s.name}</span>
-                {normDeploy(s.deployStatus) === "onsite" && s.currentSite && (
-                  <span className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Building2 className="h-3 w-3" />
-                    {getSiteName(s.currentSite)}
-                  </span>
-                )}
-                <DeployBadge raw={s.deployStatus} />
+                <div onClick={(e) => e.stopPropagation()}>
+                  <DeploySelect staffId={s.id} deployStatus={s.deployStatus} currentSite={s.currentSite}
+                    sites={sites} onUpdate={(id, status, site) => updateDeploy(id, status, site)} />
+                </div>
                 <StatusBadge status={s.overall} />
                 <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
               </div>
@@ -910,21 +969,46 @@ export default function StaffPage() {
               ) : (
                 <div className="space-y-2">
                   {exStaff.map((e) => (
-                    <div key={e.folderId} className="flex items-center gap-3 rounded-lg border bg-card px-4 py-3">
-                      <InitialsAvatar name={e.name} status={e.overall} size="sm" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">{e.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {[e.nationality, e.gender].filter(Boolean).join(" · ") || "No details on file"}
-                        </p>
+                    <div key={e.folderId} className="rounded-lg border bg-card px-4 py-3 space-y-2">
+                      <div className="flex items-center gap-3">
+                        <InitialsAvatar name={e.name} status={e.overall} size="sm" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium">{e.name}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {[e.nationality, e.gender].filter(Boolean).join(" · ") || "No details on file"}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button onClick={() => restoreExStaff(e.folderId)} disabled={restoringId === e.folderId}
+                            className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50">
+                            {restoringId === e.folderId
+                              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              : <RotateCcw className="h-3.5 w-3.5" />}
+                            Restore
+                          </button>
+                          <button onClick={() => setConfirmDeleteId(e.folderId)}
+                            className="flex items-center gap-1.5 rounded-md bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20">
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Delete
+                          </button>
+                        </div>
                       </div>
-                      <button onClick={() => restoreExStaff(e.folderId)} disabled={restoringId === e.folderId}
-                        className="flex shrink-0 items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50">
-                        {restoringId === e.folderId
-                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          : <RotateCcw className="h-3.5 w-3.5" />}
-                        Restore
-                      </button>
+
+                      {/* Inline confirmation */}
+                      {confirmDeleteId === e.folderId && (
+                        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 flex items-center justify-between gap-3">
+                          <p className="text-xs text-destructive font-medium">Permanently delete {e.name.split(" ")[0]}'s record? This cannot be undone.</p>
+                          <div className="flex gap-2 shrink-0">
+                            <button onClick={() => setConfirmDeleteId(null)}
+                              className="rounded px-2.5 py-1 text-xs border hover:bg-muted transition-colors">Cancel</button>
+                            <button onClick={() => permanentDelete(e.folderId)} disabled={permDeleting}
+                              className="rounded px-2.5 py-1 text-xs bg-destructive text-white hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1">
+                              {permDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                              Yes, Delete
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

@@ -1536,6 +1536,28 @@ app.get('/api/exstaff', requireLogin, requirePermission('staff'), function(req, 
   }
 });
 
+// Permanently delete an ex-staff folder (director only)
+app.delete('/api/exstaff/permanent', requireLogin, requireRole('director'), function(req, res) {
+  try {
+    var folderId = req.body.folderId;
+    if (!folderId) return res.status(400).json({ ok: false, error: 'No folderId provided' });
+    var safeFolderId = path.basename(folderId);
+    var exDir = path.join(BASE, '02 - Vetting & Screening', 'Ex-Staff');
+    var targetFolder = path.join(exDir, safeFolderId);
+    if (!fs.existsSync(targetFolder)) return res.status(404).json({ ok: false, error: 'Ex-staff folder not found' });
+    var resolvedTarget = path.resolve(targetFolder);
+    var resolvedExDir  = path.resolve(exDir);
+    if (!resolvedTarget.startsWith(resolvedExDir + path.sep)) {
+      return res.status(400).json({ ok: false, error: 'Invalid folder path' });
+    }
+    fs.rmSync(targetFolder, { recursive: true, force: true });
+    console.log('[DELETE] Permanently deleted ex-staff:', safeFolderId);
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.post('/api/exstaff/restore', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var folderId = req.body.folderId;
