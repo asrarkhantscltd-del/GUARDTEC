@@ -305,21 +305,22 @@ export default function DashboardLayout() {
                     )}
 
                     {/* ── Compliance section ── */}
-                    {alertCount > 0 ? (
-                      <>
-                        <div className="flex items-start gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-3">
-                          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-                          <div>
-                            <p className="text-sm font-medium text-destructive">
-                              {alertCount} officer{alertCount !== 1 ? "s" : ""} need compliance attention
-                            </p>
-                            <p className="mt-0.5 text-xs text-muted-foreground">
-                              Expired or missing documents — cannot be deployed.
-                            </p>
-                          </div>
+                    {alertCount > 0 && (
+                      <button
+                        onClick={() => { navigate("/compliance"); setShowAlerts(false) }}
+                        className="flex w-full items-start gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-left hover:bg-destructive/10 transition-colors"
+                      >
+                        <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                        <div>
+                          <p className="text-sm font-medium text-destructive">
+                            {alertCount} officer{alertCount !== 1 ? "s" : ""} need compliance attention
+                          </p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            Tap to open Compliance Dashboard
+                          </p>
                         </div>
-                      </>
-                    ) : null}
+                      </button>
+                    )}
 
                     {/* All clear */}
                     {alertCount === 0 && notifCount.total === 0 && (
@@ -330,16 +331,6 @@ export default function DashboardLayout() {
                     )}
                   </div>
 
-                  {alertCount > 0 && (
-                    <div className="border-t border-border p-3">
-                      <button
-                        onClick={() => { navigate("/compliance"); setShowAlerts(false) }}
-                        className="w-full rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
-                      >
-                        Open Compliance Dashboard
-                      </button>
-                    </div>
-                  )}
                 </div>
               )}
             </div>
