@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
+import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
+import type { EmergencyContact, StaffMember, DiscRecord, TrainingItem, ExtraTrainingItem, TrainingRecord, DbsRecord, Bs7858Record } from "@/types/staff"
+import { daysUntil, fmtDate, discTypeLabels, discTypeCls } from "@/lib/utils"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -15,90 +18,6 @@ import {
   KeyRound, Copy, RefreshCw, Check, UserX,
   MessageSquare, Package, Send,
 } from "lucide-react"
-
-// ── Types ────────────────────────────────────────────────────────────────────
-
-interface TrainingItem { completed?: boolean; date?: string; expiry?: string; provider?: string; number?: string }
-interface ExtraTrainingItem { id: string; label: string; completed?: boolean; date?: string; expiry?: string; number?: string; provider?: string }
-interface TrainingRecord {
-  siaCertificate?:     TrainingItem
-  firstAid?:           TrainingItem
-  manualHandling?:     TrainingItem
-  fireAwareness?:      TrainingItem
-  conflictManagement?: TrainingItem
-  bwcTraining?:        TrainingItem
-  cscsTest?:           TrainingItem
-  extra?:              ExtraTrainingItem[]
-}
-interface DbsRecord    { type?: string; checkDate?: string; certificateNo?: string }
-interface Bs7858Record { completed?: boolean; completionDate?: string; reviewer?: string }
-interface EmergencyContact { name?: string; phone?: string; relationship?: string }
-
-interface StaffMember {
-  id: string
-  name: string
-  overall: string
-  jobRole?: string
-  email?: string
-  phone?: string
-  nationality?: string
-  gender?: string
-  dateOfBirth?: string
-  dob?: string
-  ni?: string
-  placeOfBirth?: string
-  address?: string
-  drivingLicence?: string
-  deployStatus?: string
-  currentSite?: string
-  sia?:  { number?: string; expiry?: string; type?: string }
-  cscs?: { number?: string; expiry?: string }
-  visa?: { type?: string; expiry?: string }
-  references?: {
-    ref1?: { name?: string; company?: string; email?: string; phone?: string; status?: string }
-    ref2?: { name?: string; company?: string; email?: string; phone?: string; status?: string }
-  }
-  employmentHistory?: string[]
-  contract?: string
-  dbs?: DbsRecord
-  bs7858?: Bs7858Record
-  emergencyContact?: EmergencyContact
-  training?: TrainingRecord
-  documents?: {
-    siaPhysical?:      { uploaded?: boolean; date?: string }
-    passport?:         { uploaded?: boolean; date?: string }
-    brpCard?:          { uploaded?: boolean; date?: string }
-    proofOfAddress1?:  { uploaded?: boolean; date?: string }
-    proofOfAddress2?:  { uploaded?: boolean; date?: string }
-    p45?:              { uploaded?: boolean; date?: string }
-    bankLetter?:       { uploaded?: boolean; date?: string }
-    application?:      { uploaded?: boolean; date?: string }
-    assignmentInstructions?: { uploaded?: boolean; date?: string }
-  }
-}
-
-interface DiscRecord {
-  id: string
-  incident_date: string
-  type: string
-  description: string
-  action_taken?: string
-  issued_by_name?: string
-  created_at: string
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function fmtDate(iso?: string) {
-  if (!iso) return "Not on file"
-  const [y, m, d] = iso.slice(0, 10).split("-")
-  return `${d}/${m}/${y}`
-}
-
-function daysUntil(iso?: string): number | null {
-  if (!iso) return null
-  return Math.round((new Date(iso).getTime() - Date.now()) / 86400000)
-}
 
 // ── Shared UI pieces ──────────────────────────────────────────────────────────
 
@@ -1844,26 +1763,12 @@ export default function StaffDetailPage() {
               ) : (
                 <div className="space-y-3">
                   {discRecords.map(rec => {
-                    const typeLabels: Record<string, string> = {
-                      warning: "Warning", final_warning: "Final Warning",
-                      suspension: "Suspension", termination: "Termination",
-                      fraud: "Fraud / False Info", misconduct: "Gross Misconduct", other: "Other",
-                    }
-                    const typeCls: Record<string, string> = {
-                      warning: "bg-warning/15 text-warning border-warning/30",
-                      final_warning: "bg-orange-500/15 text-orange-500 border-orange-500/30",
-                      suspension: "bg-destructive/15 text-destructive border-destructive/30",
-                      termination: "bg-destructive/20 text-destructive border-destructive/40",
-                      fraud: "bg-destructive/20 text-destructive border-destructive/40",
-                      misconduct: "bg-destructive/20 text-destructive border-destructive/40",
-                      other: "bg-muted text-muted-foreground border-border",
-                    }
                     return (
                       <div key={rec.id} className="rounded-lg border bg-muted/20 p-3 space-y-1.5">
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${typeCls[rec.type] ?? typeCls.other}`}>
-                              {typeLabels[rec.type] ?? rec.type}
+                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${discTypeCls[rec.type] ?? discTypeCls.other}`}>
+                              {discTypeLabels[rec.type] ?? rec.type}
                             </span>
                             <span className="text-xs text-muted-foreground">{fmtDate(rec.incident_date)}</span>
                           </div>

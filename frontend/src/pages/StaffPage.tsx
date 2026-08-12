@@ -2,6 +2,8 @@ import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
+import { daysUntil, fmtDate } from "@/lib/utils"
+import type { StaffMember } from "@/types/staff"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -27,20 +29,6 @@ interface Site {
   address?: string
 }
 
-interface StaffMember {
-  id: string
-  name: string
-  overall: string
-  jobRole?: string
-  email?: string
-  phone?: string
-  sia?: { number?: string; expiry?: string }
-  cscs?: { number?: string; expiry?: string }
-  visa?: { type?: string; expiry?: string }
-  deployStatus?: string
-  currentSite?: string
-}
-
 interface ExStaffMember {
   folderId: string
   name: string
@@ -51,13 +39,6 @@ interface ExStaffMember {
 
 type ViewMode = "details" | "tiles"
 type SortKey = "name" | "sia" | "cscs" | "rtw"
-
-function staffDaysUntil(dateStr?: string): number {
-  if (!dateStr) return Infinity
-  const d = new Date(dateStr)
-  if (isNaN(d.getTime())) return Infinity
-  return Math.floor((d.getTime() - Date.now()) / 86400000)
-}
 
 function normDeploy(raw?: string): "onsite" | "available" | "offduty" | "unknown" {
   const v = (raw ?? "").toLowerCase().replace(/[\s_-]/g, "")
@@ -82,17 +63,6 @@ function DeployBadge({ raw }: { raw?: string }) {
       <Icon className="h-3 w-3" />{label}
     </span>
   )
-}
-
-function fmtDate(iso?: string) {
-  if (!iso) return "—"
-  const [y, m, d] = iso.split("-")
-  return `${d}/${m}/${y}`
-}
-
-function daysUntil(iso?: string): number | null {
-  if (!iso) return null
-  return Math.round((new Date(iso).getTime() - Date.now()) / 86400000)
 }
 
 function docStatus(iso?: string): "missing" | "expired" | "expiring" | "ok" {
@@ -140,27 +110,6 @@ function InitialsAvatar({ name, status, size = "md" }: { name: string; status: s
     <div className={`rounded-full flex items-center justify-center font-semibold shrink-0 ${sz} ${bg[status] ?? bg.unknown}`}>
       {initials}
     </div>
-  )
-}
-
-// Inline site selector — shown when staff is onsite
-function SiteSelect({
-  staffId, currentSite, sites, onUpdate,
-}: {
-  staffId: string; currentSite?: string; sites: Site[]; onUpdate: (id: string, site: string) => void
-}) {
-  return (
-    <select
-      value={currentSite ?? ""}
-      onClick={(e) => e.stopPropagation()}
-      onChange={(e) => onUpdate(staffId, e.target.value)}
-      className="rounded border border-border bg-background text-xs px-2 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-ring max-w-[160px]"
-    >
-      <option value="">— Select site —</option>
-      {sites.map((s) => (
-        <option key={s.id} value={s.id}>{s.name}</option>
-      ))}
-    </select>
   )
 }
 
@@ -457,9 +406,9 @@ export default function StaffPage() {
   }).sort((a, b) => {
     let cmp = 0
     if (sortKey === "name") cmp = a.name.localeCompare(b.name)
-    else if (sortKey === "sia")  cmp = staffDaysUntil(a.sia?.expiry)  - staffDaysUntil(b.sia?.expiry)
-    else if (sortKey === "cscs") cmp = staffDaysUntil(a.cscs?.expiry) - staffDaysUntil(b.cscs?.expiry)
-    else if (sortKey === "rtw")  cmp = staffDaysUntil(a.visa?.expiry) - staffDaysUntil(b.visa?.expiry)
+    else if (sortKey === "sia")  cmp = (daysUntil(a.sia?.expiry) ?? Infinity)  - (daysUntil(b.sia?.expiry) ?? Infinity)
+    else if (sortKey === "cscs") cmp = (daysUntil(a.cscs?.expiry) ?? Infinity) - (daysUntil(b.cscs?.expiry) ?? Infinity)
+    else if (sortKey === "rtw")  cmp = (daysUntil(a.visa?.expiry) ?? Infinity) - (daysUntil(b.visa?.expiry) ?? Infinity)
     return sortDir === "asc" ? cmp : -cmp
   })
 
@@ -770,44 +719,6 @@ export default function StaffPage() {
                     <DocChip label="RTW"  date={s.visa?.expiry} />
                   </div>
                 </div>
-              </motion.div>
-            ))}
-          </motion.div>
-
-        /* ── ICONS (MEDIUM) VIEW ── */
-        ) : view === "icons" ? (
-          <motion.div
-            className="grid gap-3 grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8"
-            variants={stagger.container}
-            initial="initial"
-            animate="animate"
-          >
-            {filtered.map((s) => (
-              <motion.div key={s.id} variants={stagger.item} onClick={() => goToStaff(s.id)}
-                className="flex flex-col items-center gap-2 rounded-lg p-3 cursor-pointer hover:bg-muted/40 transition-colors text-center">
-                <InitialsAvatar name={s.name} status={s.overall} size="lg" />
-                <p className="text-xs font-medium leading-tight line-clamp-2">{s.name}</p>
-                <div onClick={(e) => e.stopPropagation()}>
-                  <DeploySelect staffId={s.id} deployStatus={s.deployStatus} currentSite={s.currentSite}
-                    sites={sites} onUpdate={(id, status, site) => updateDeploy(id, status, site)} />
-                </div>
-              </motion.div>
-            ))}
-          </motion.div>
-
-        /* ── SMALL ICONS VIEW ── */
-        ) : view === "small" ? (
-          <motion.div
-            className="grid gap-2 grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10"
-            variants={stagger.container}
-            initial="initial"
-            animate="animate"
-          >
-            {filtered.map((s) => (
-              <motion.div key={s.id} variants={stagger.item} onClick={() => goToStaff(s.id)}
-                className="flex flex-col items-center gap-1.5 rounded-lg p-2 cursor-pointer hover:bg-muted/40 transition-colors text-center">
-                <InitialsAvatar name={s.name} status={s.overall} size="sm" />
-                <p className="text-xs leading-tight line-clamp-1 w-full">{s.name.split(" ")[0]}</p>
               </motion.div>
             ))}
           </motion.div>

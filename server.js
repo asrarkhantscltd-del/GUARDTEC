@@ -151,7 +151,6 @@ const BASE        = process.env.DATA_PATH || path.join(HOME, "First Call Site Se
 const ACTIVE_DIR  = path.join(BASE, "02 - Vetting & Screening", "Active Staff");
 const OVERVIEW    = path.join(BASE, "02 - Vetting & Screening", "GUARDTEC — COMPLIANCE OVERVIEW.html");
 const SPREADSHEET = process.env.DATA_PATH ? path.join(process.env.DATA_PATH, "01 - Staff Compliance Tracker", "GuardTec Security — Staff Compliance Tracker.xlsx") : path.join(HOME, "OneDrive - First Call Site Services", "TOTAL EMPLOYEE spreadsheet.xlsl.xlsx");
-const LOGO_PATH = null;
 const COMPLIANCE_TRACKER   = path.join(BASE, "01 - Staff Compliance Tracker", "GuardTec Security — Staff Compliance Tracker.xlsx");
 const REFERENCE_TRACKER    = path.join(BASE, "05 - Reference Tracker", "GuardTec Security — Reference Check Tracker.xlsx");
 const SHAREPOINT_DASHBOARD = path.join(BASE, "! GuardTec Compliance Dashboard.html");
@@ -328,23 +327,22 @@ app.get('/api/me', async function(req, res) {
   }
 });
 
-// Serve logo as its own endpoint
-app.get('/logo', (req, res) => {
-  res.setHeader('Content-Type', 'image/png');
-  if (!LOGO_PATH || !fs.existsSync(LOGO_PATH)) return res.status(404).end();
-  res.send(fs.readFileSync(LOGO_PATH));
+// Serve logo as its own endpoint (no logo configured — always 404)
+app.get('/logo', function(req, res) {
+  res.status(404).end();
 });
 
 // ── PROFILE PHOTO ─────────────────────────────────────────────────────────────
-function findProfilePhoto(folderPath) {
-  // Check for dedicated profile photo first
-  var exts = ['.jpg','.jpeg','.png','.webp'];
+function findFileByExts(dir, prefix) {
+  var exts = ['.jpg', '.jpeg', '.png', '.webp'];
   for (var e of exts) {
-    var p = path.join(folderPath, 'profile' + e);
+    var p = path.join(dir, prefix + e);
     if (fs.existsSync(p)) return p;
   }
   return null;
 }
+
+function findProfilePhoto(folderPath) { return findFileByExts(folderPath, 'profile'); }
 
 app.get('/api/staff/:id/photo', requireLogin, function(req, res) {
   try {
@@ -471,14 +469,7 @@ app.post('/api/staff/:id/documents/:docKey', requireLogin, function(req, res) {
 var USER_PHOTOS_DIR = path.join(BASE, 'user-photos');
 if (!fs.existsSync(USER_PHOTOS_DIR)) fs.mkdirSync(USER_PHOTOS_DIR, { recursive: true });
 
-function findUserPhoto(userId) {
-  var exts = ['.jpg', '.jpeg', '.png', '.webp'];
-  for (var e of exts) {
-    var p = path.join(USER_PHOTOS_DIR, String(userId) + e);
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
-}
+function findUserPhoto(userId) { return findFileByExts(USER_PHOTOS_DIR, String(userId)); }
 
 app.get('/api/users/:id/photo', requireLogin, function(req, res) {
   try {
@@ -939,6 +930,12 @@ function buildReportHTML(emp) {
 }
 
 // ── OVERVIEW HTML ─────────────────────────────────────────────────────────────
+function refreshOverview() {
+  var html = buildOverviewHTML(loadAllStaff());
+  fs.writeFileSync(OVERVIEW, html, 'utf8');
+  fs.writeFileSync(SHAREPOINT_DASHBOARD, html, 'utf8');
+}
+
 function buildOverviewHTML(staff) {
   var logoB64 = '';
   var green = staff.filter(function(e){return e.overall==='green';}).length;
@@ -1162,14 +1159,7 @@ app.post('/api/my-profile/photo', requireLogin, requireRole('staff'), function(r
   }
 });
 
-function findPendingPhoto(folderPath) {
-  var exts = ['.jpg', '.jpeg', '.png', '.webp'];
-  for (var e of exts) {
-    var p = path.join(folderPath, 'pending-profile' + e);
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
-}
+function findPendingPhoto(folderPath) { return findFileByExts(folderPath, 'pending-profile'); }
 
 app.get('/api/staff/:id/pending-photo', requireLogin, requirePermission('pending_review'), function(req, res) {
   try {
@@ -1434,7 +1424,7 @@ app.delete('/api/sites/:id/welfare/:itemId', requireLogin, requirePermission('si
   }
 });
 
-app.put('/api/staff/:id', requireLogin, function(req, res) {
+app.put('/api/staff/:id', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var emp = req.body;
     var all = loadAllStaff();
@@ -1442,9 +1432,7 @@ app.put('/api/staff/:id', requireLogin, function(req, res) {
     saveStaff(emp, old ? old._folderPath : null);
     updateComplianceTracker(emp);
     updateReferenceTracker(emp);
-    var overviewHtml = buildOverviewHTML(loadAllStaff());
-    fs.writeFileSync(OVERVIEW, overviewHtml, 'utf8');
-    fs.writeFileSync(SHAREPOINT_DASHBOARD, overviewHtml, 'utf8');
+    refreshOverview();
     res.json({ ok: true });
   } catch(e) {
     console.error(e);
@@ -1452,16 +1440,14 @@ app.put('/api/staff/:id', requireLogin, function(req, res) {
   }
 });
 
-app.post('/api/staff', requireLogin, function(req, res) {
+app.post('/api/staff', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var emp = req.body;
     if (!emp.id) emp.id = emp.name.toLowerCase().replace(/[^a-z0-9]/g,'-');
     saveStaff(emp, null);
     updateComplianceTracker(emp);
     updateReferenceTracker(emp);
-    var overviewHtml = buildOverviewHTML(loadAllStaff());
-    fs.writeFileSync(OVERVIEW, overviewHtml, 'utf8');
-    fs.writeFileSync(SHAREPOINT_DASHBOARD, overviewHtml, 'utf8');
+    refreshOverview();
     res.json({ ok: true });
   } catch(e) {
     console.error(e);
@@ -1496,9 +1482,7 @@ app.delete('/api/staff/:id', requireLogin, requirePermission('staff'), function(
     var destFolder = path.join(exStaffDir, path.basename(folderPath));
     fs.renameSync(folderPath, destFolder);
 
-    var overviewHtml = buildOverviewHTML(loadAllStaff());
-    fs.writeFileSync(OVERVIEW, overviewHtml, 'utf8');
-    fs.writeFileSync(SHAREPOINT_DASHBOARD, overviewHtml, 'utf8');
+    refreshOverview();
 
     console.log('[DELETE] Moved to Ex-Staff:', path.basename(folderPath));
     res.json({ ok: true });
@@ -1583,9 +1567,7 @@ app.post('/api/exstaff/restore', requireLogin, requirePermission('staff'), funct
     emp._folderPath = destFolder;
     fs.writeFileSync(path.join(destFolder, 'staff_data.json'), JSON.stringify(emp, null, 2), 'utf8');
 
-    var overviewHtml = buildOverviewHTML(loadAllStaff());
-    fs.writeFileSync(OVERVIEW, overviewHtml, 'utf8');
-    fs.writeFileSync(SHAREPOINT_DASHBOARD, overviewHtml, 'utf8');
+    refreshOverview();
 
     console.log('[RESTORE] ' + emp.name + ' moved back to Active Staff');
     res.json({ ok: true, name: emp.name });
@@ -1597,9 +1579,7 @@ app.post('/api/exstaff/restore', requireLogin, requirePermission('staff'), funct
 
 app.post('/api/overview', requireLogin, function(req, res) {
   try {
-    var overviewHtml = buildOverviewHTML(loadAllStaff());
-    fs.writeFileSync(OVERVIEW, overviewHtml, 'utf8');
-    fs.writeFileSync(SHAREPOINT_DASHBOARD, overviewHtml, 'utf8');
+    refreshOverview();
     res.json({ ok: true });
   } catch(e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -1647,11 +1627,7 @@ function scheduleGitPush(reason) {
   _gitTimer = setTimeout(function() {
     var appDir = __dirname;
     var now    = new Date();
-    var stamp  = now.getFullYear() + '-'
-      + String(now.getMonth()+1).padStart(2,'0') + '-'
-      + String(now.getDate()).padStart(2,'0') + ' '
-      + String(now.getHours()).padStart(2,'0') + ':'
-      + String(now.getMinutes()).padStart(2,'0');
+    var stamp = now.toISOString().slice(0, 16).replace('T', ' ');
     var msg = 'Auto-save: ' + stamp + (reason ? ' — ' + reason : '');
     var cmd = 'cd /d "' + appDir + '" && git add -A && git commit -m "' + msg + '" && git push origin main';
     exec(cmd, function(err, stdout, stderr) {
@@ -1928,11 +1904,7 @@ app.get('/api/dashboard/stats', requireLogin, async function(req, res) {
     var vehicleCount = loadVehicles().filter(function(v){ return v.status === 'active'; }).length;
 
     var activeSites = loadSites().filter(function(s){ return s.status !== 'inactive'; }).length;
-    var fleetDrivers = 0;
-    try {
-      var fd = JSON.parse(fs.readFileSync(FLEET_DRIVERS_FILE, 'utf8'));
-      fleetDrivers = Array.isArray(fd) ? fd.length : 0;
-    } catch(e) {}
+    var fleetDrivers = loadFleetDrivers().length;
 
     res.json({
       totalStaff: totalStaff,
@@ -1963,10 +1935,7 @@ function ensureVehicleDocsDir(vehicleId) {
 }
 
 function loadVehicleDocs(vehicleId) {
-  var indexFile = path.join(VEHICLE_DOCS_DIR, vehicleId, 'index.json');
-  if (!fs.existsSync(indexFile)) return [];
-  try { return JSON.parse(fs.readFileSync(indexFile, 'utf8')); }
-  catch (e) { return []; }
+  return loadJsonFile(path.join(VEHICLE_DOCS_DIR, vehicleId, 'index.json'));
 }
 
 function saveVehicleDocs(vehicleId, docs) {
@@ -1974,24 +1943,20 @@ function saveVehicleDocs(vehicleId, docs) {
   fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify(docs, null, 2), 'utf8');
 }
 
-function loadVehicles() {
-  if (!fs.existsSync(VEHICLES_FILE)) return [];
-  try { return JSON.parse(fs.readFileSync(VEHICLES_FILE, 'utf8')); }
-  catch (e) { return []; }
+function loadJsonFile(filePath, defaultVal) {
+  if (defaultVal === undefined) defaultVal = [];
+  if (!fs.existsSync(filePath)) return defaultVal;
+  try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); }
+  catch (e) { return defaultVal; }
 }
+
+function loadVehicles() { return loadJsonFile(VEHICLES_FILE); }
 
 function saveVehicles(vehicles) {
   fs.writeFileSync(VEHICLES_FILE, JSON.stringify(vehicles, null, 2), 'utf8');
 }
 
-function findVehiclePhoto(id) {
-  var exts = ['.jpg', '.jpeg', '.png', '.webp'];
-  for (var e of exts) {
-    var p = path.join(VEHICLE_PHOTOS_DIR, id + e);
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
-}
+function findVehiclePhoto(id) { return findFileByExts(VEHICLE_PHOTOS_DIR, id); }
 
 app.get('/api/vehicles', requireLogin, requirePermission('fleet'), function(req, res) {
   res.json({ vehicles: loadVehicles() });
@@ -2165,11 +2130,7 @@ app.delete('/api/vehicles/:id/docs/:filename', requireLogin, requirePermission('
 // ── FLEET DRIVERS ─────────────────────────────────────────────────────────────
 var FLEET_DRIVERS_FILE = path.join(BASE, 'fleet-drivers.json');
 
-function loadFleetDrivers() {
-  if (!fs.existsSync(FLEET_DRIVERS_FILE)) return [];
-  try { return JSON.parse(fs.readFileSync(FLEET_DRIVERS_FILE, 'utf8')); }
-  catch (e) { return []; }
-}
+function loadFleetDrivers() { return loadJsonFile(FLEET_DRIVERS_FILE); }
 
 function saveFleetDrivers(drivers) {
   fs.writeFileSync(FLEET_DRIVERS_FILE, JSON.stringify(drivers, null, 2), 'utf8');
@@ -2217,9 +2178,6 @@ app.delete('/api/fleet-drivers/:id', requireLogin, requirePermission('fleet'), f
 
 app.get('/api/users', requireLogin, requireRole('director'), async function(req, res) {
   try {
-    // Ensure email + is_active columns exist for older databases
-    await pgPool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT DEFAULT ''").catch(function(){});
-    await pgPool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE").catch(function(){});
     var result = await pgPool.query('SELECT id, username, full_name, role, email, is_active, created_at FROM users ORDER BY full_name');
     res.json({ users: result.rows });
   } catch (e) {
@@ -2395,14 +2353,19 @@ app.delete('/api/roles/:slug', requireLogin, requireRole('director'), async func
   }
 });
 
+// ── DB HELPERS ────────────────────────────────────────────────────────────────
+async function resolveEmpId(legacyId) {
+  var r = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [legacyId]);
+  return r.rows.length ? r.rows[0].id : null;
+}
+
 // ── PHASE 4 API: Disciplinary Records & Incident Reports ─────────────────────
 
 // ── Disciplinary: list for a staff member (management) ──
 app.get('/api/staff/:id/disciplinary', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
-    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.params.id]);
-    if (!empResult.rows.length) return res.json({ ok: true, records: [] });
-    var empId = empResult.rows[0].id;
+    var empId = await resolveEmpId(req.params.id);
+    if (!empId) return res.json({ ok: true, records: [] });
     var result = await pgPool.query(
       `SELECT dr.*, u.full_name AS issued_by_name
        FROM disciplinary_records dr
@@ -2424,9 +2387,8 @@ app.post('/api/staff/:id/disciplinary', requireLogin, requirePermission('staff')
     if (!b.incident_date || !b.type || !b.description) {
       return res.status(400).json({ ok: false, error: 'incident_date, type and description are required.' });
     }
-    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.params.id]);
-    if (!empResult.rows.length) return res.status(404).json({ ok: false, error: 'Staff member not found in database.' });
-    var empId = empResult.rows[0].id;
+    var empId = await resolveEmpId(req.params.id);
+    if (!empId) return res.status(404).json({ ok: false, error: 'Staff member not found in database.' });
     var result = await pgPool.query(
       `INSERT INTO disciplinary_records (employee_id, incident_date, type, description, action_taken, issued_by)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
@@ -2452,9 +2414,8 @@ app.delete('/api/disciplinary/:recordId', requireLogin, requireRole('director'),
 app.get('/api/my-disciplinary', requireLogin, requireRole('staff'), async function(req, res) {
   try {
     if (!req.user.staff_id) return res.json({ ok: true, records: [] });
-    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
-    if (!empResult.rows.length) return res.json({ ok: true, records: [] });
-    var empId = empResult.rows[0].id;
+    var empId = await resolveEmpId(req.user.staff_id);
+    if (!empId) return res.json({ ok: true, records: [] });
     var result = await pgPool.query(
       `SELECT id, incident_date, type, description, action_taken, created_at
        FROM disciplinary_records WHERE employee_id = $1 ORDER BY incident_date DESC`,
@@ -2502,9 +2463,8 @@ app.post('/api/incident-reports', requireLogin, async function(req, res) {
 app.get('/api/my-incident-reports', requireLogin, requireRole('staff'), async function(req, res) {
   try {
     if (!req.user.staff_id) return res.json({ ok: true, reports: [] });
-    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
-    if (!empResult.rows.length) return res.json({ ok: true, reports: [] });
-    var empId = empResult.rows[0].id;
+    var empId = await resolveEmpId(req.user.staff_id);
+    if (!empId) return res.json({ ok: true, reports: [] });
     var result = await pgPool.query(
       `SELECT ir.id, ir.is_anonymous, ir.report_date, ir.site_location, ir.incident_type, ir.against_person, ir.description, ir.status, ir.resolution_notes, ir.created_at,
               COUNT(ia.id)::int AS attachment_count
@@ -2581,7 +2541,7 @@ app.post('/api/incident-reports/:reportId/attachments', requireLogin, function(r
   if (!ext) return res.status(400).json({ ok: false, error: 'File type not allowed.' });
 
   var originalName = decodeURIComponent(req.headers['x-original-name'] || 'attachment' + ext);
-  var filename = require('crypto').randomUUID() + ext;
+  var filename = crypto.randomUUID() + ext;
   var dest = path.join(INCIDENT_ATTACH_DIR, filename);
 
   var chunks = [];
@@ -2651,9 +2611,8 @@ app.delete('/api/incident-attachments/:attachId', requireLogin, async function(r
 // Management: view full conversation for a staff member
 app.get('/api/staff/:id/messages', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
-    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.params.id]);
-    if (!empResult.rows.length) return res.json({ ok: true, messages: [] });
-    var empId = empResult.rows[0].id;
+    var empId = await resolveEmpId(req.params.id);
+    if (!empId) return res.json({ ok: true, messages: [] });
     var result = await pgPool.query(
       `SELECT sm.id, sm.message, sm.is_read, sm.created_at,
               u.full_name AS sender_name, u.role AS sender_role
@@ -2677,9 +2636,8 @@ app.get('/api/staff/:id/messages', requireLogin, requirePermission('staff'), asy
 // Management: send a message to a staff member
 app.post('/api/staff/:id/messages', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
-    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.params.id]);
-    if (!empResult.rows.length) return res.status(404).json({ ok: false, error: 'Staff not found.' });
-    var empId = empResult.rows[0].id;
+    var empId = await resolveEmpId(req.params.id);
+    if (!empId) return res.status(404).json({ ok: false, error: 'Staff not found.' });
     var msg = String((req.body && req.body.message) || '').trim();
     if (!msg) return res.status(400).json({ ok: false, error: 'Message cannot be empty.' });
     var r = await pgPool.query(
@@ -2696,9 +2654,8 @@ app.post('/api/staff/:id/messages', requireLogin, requirePermission('staff'), as
 app.get('/api/my-messages', requireLogin, requireRole('staff'), async function(req, res) {
   try {
     if (!req.user.staff_id) return res.json({ ok: true, messages: [], unread: 0 });
-    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
-    if (!empResult.rows.length) return res.json({ ok: true, messages: [], unread: 0 });
-    var empId = empResult.rows[0].id;
+    var empId = await resolveEmpId(req.user.staff_id);
+    if (!empId) return res.json({ ok: true, messages: [], unread: 0 });
     var result = await pgPool.query(
       `SELECT sm.id, sm.message, sm.is_read, sm.created_at,
               u.full_name AS sender_name, u.role AS sender_role
@@ -2724,9 +2681,8 @@ app.get('/api/my-messages', requireLogin, requireRole('staff'), async function(r
 app.post('/api/my-messages', requireLogin, requireRole('staff'), async function(req, res) {
   try {
     if (!req.user.staff_id) return res.status(400).json({ ok: false, error: 'No staff profile linked.' });
-    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
-    if (!empResult.rows.length) return res.status(400).json({ ok: false, error: 'Staff profile not found.' });
-    var empId = empResult.rows[0].id;
+    var empId = await resolveEmpId(req.user.staff_id);
+    if (!empId) return res.status(400).json({ ok: false, error: 'Staff profile not found.' });
     var msg = String((req.body && req.body.message) || '').trim();
     if (!msg) return res.status(400).json({ ok: false, error: 'Message cannot be empty.' });
     var r = await pgPool.query(
@@ -2744,9 +2700,8 @@ app.post('/api/my-messages', requireLogin, requireRole('staff'), async function(
 // Management: list provisions for a staff member
 app.get('/api/staff/:id/provisions', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
-    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.params.id]);
-    if (!empResult.rows.length) return res.json({ ok: true, provisions: [] });
-    var empId = empResult.rows[0].id;
+    var empId = await resolveEmpId(req.params.id);
+    if (!empId) return res.json({ ok: true, provisions: [] });
     var result = await pgPool.query(
       `SELECT sp.*, u.full_name AS recorded_by_name
        FROM staff_provisions sp
@@ -2763,9 +2718,8 @@ app.get('/api/staff/:id/provisions', requireLogin, requirePermission('staff'), a
 // Management: add a provision record
 app.post('/api/staff/:id/provisions', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
-    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.params.id]);
-    if (!empResult.rows.length) return res.status(404).json({ ok: false, error: 'Staff not found.' });
-    var empId = empResult.rows[0].id;
+    var empId = await resolveEmpId(req.params.id);
+    if (!empId) return res.status(404).json({ ok: false, error: 'Staff not found.' });
     var b = req.body;
     if (!b.item) return res.status(400).json({ ok: false, error: 'Item name is required.' });
     var r = await pgPool.query(
@@ -2793,9 +2747,8 @@ app.delete('/api/provisions/:id', requireLogin, requirePermission('staff'), asyn
 app.get('/api/my-provisions', requireLogin, requireRole('staff'), async function(req, res) {
   try {
     if (!req.user.staff_id) return res.json({ ok: true, provisions: [] });
-    var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
-    if (!empResult.rows.length) return res.json({ ok: true, provisions: [] });
-    var empId = empResult.rows[0].id;
+    var empId = await resolveEmpId(req.user.staff_id);
+    if (!empId) return res.json({ ok: true, provisions: [] });
     var result = await pgPool.query(
       'SELECT id, item, provided, date_given, date_returned, notes, created_at FROM staff_provisions WHERE employee_id = $1 ORDER BY created_at DESC',
       [empId]

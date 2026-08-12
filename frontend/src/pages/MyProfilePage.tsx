@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from "react"
 import { toast } from "sonner"
+import { discTypeLabels, discTypeCls } from "@/lib/utils"
 import {
   ShieldCheck, AlertTriangle, Clock, Camera, ImageOff,
   Loader2, Save, User as UserIcon, Upload, BadgeAlert, Flag, EyeOff, Eye,
@@ -385,13 +386,11 @@ export default function MyProfilePage() {
                 <BadgeAlert className="h-3.5 w-3.5 text-destructive" /> Disciplinary History
               </p>
               {discRecords.map(rec => {
-                const typeLabels: Record<string,string> = { warning:"Warning", final_warning:"Final Warning", suspension:"Suspension", termination:"Termination", fraud:"Fraud", misconduct:"Gross Misconduct", other:"Other" }
-                const typeCls: Record<string,string> = { warning:"bg-warning/15 text-warning", final_warning:"bg-orange-500/15 text-orange-600", suspension:"bg-destructive/15 text-destructive", termination:"bg-destructive/20 text-destructive", fraud:"bg-destructive/20 text-destructive", misconduct:"bg-destructive/20 text-destructive", other:"bg-muted text-muted-foreground" }
                 const [y,m,d] = rec.incident_date.slice(0,10).split("-")
                 return (
                   <div key={rec.id} className="rounded-lg border bg-muted/20 p-3 space-y-1">
                     <div className="flex items-center gap-2">
-                      <span className={`text-xs font-medium rounded-full px-2 py-0.5 ${typeCls[rec.type]??typeCls.other}`}>{typeLabels[rec.type]??rec.type}</span>
+                      <span className={`text-xs font-medium rounded-full px-2 py-0.5 ${discTypeCls[rec.type]??discTypeCls.other}`}>{discTypeLabels[rec.type]??rec.type}</span>
                       <span className="text-xs text-muted-foreground">{d}/{m}/{y}</span>
                     </div>
                     <p className="text-sm">{rec.description}</p>
