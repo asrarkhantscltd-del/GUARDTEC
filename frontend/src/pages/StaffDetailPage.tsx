@@ -264,8 +264,12 @@ export default function StaffDetailPage() {
   const [provisions, setProvisions]       = useState<{id:string;item:string;provided:boolean;date_given:string|null;date_returned:string|null;notes:string|null}[]>([])
   const [provLoading, setProvLoading]     = useState(false)
   const [provForm, setProvForm]           = useState(false)
-  const [provDraft, setProvDraft]         = useState({ item: "", provided: true, date_given: "", date_returned: "", notes: "" })
+  const [provDraft, setProvDraft]         = useState({ itemType: "Security Jacket", quantity: 1, provided: true, date_given: "", date_returned: "", notes: "" })
   const [provSaving, setProvSaving]       = useState(false)
+
+  // Contract
+  const [contractExists, setContractExists]       = useState(false)
+  const [contractUploading, setContractUploading] = useState(false)
 
   // Training management
   const [trainingData, setTrainingData]   = useState<TrainingRecord>({})
@@ -317,6 +321,7 @@ export default function StaffDetailPage() {
     if (tab === "hr")         loadDiscRecords()
     if (tab === "messages")   loadMessages()
     if (tab === "provisions") loadProvisions()
+    if (tab === "hr")         loadContractInfo()
   }, [tab, id])
 
   const canManagePortalAccess = me?.role === "director" || me?.role === "ops_manager"
@@ -753,23 +758,55 @@ export default function StaffDetailPage() {
   }
 
   async function addProvision() {
-    if (!provDraft.item.trim()) { toast.error("Item name is required."); return }
     setProvSaving(true)
     try {
+      const itemStr = `${provDraft.itemType} × ${provDraft.quantity}`
       const res = await fetch(`/api/staff/${id}/provisions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify(provDraft),
+        body: JSON.stringify({ item: itemStr, provided: provDraft.provided, date_given: provDraft.date_given, date_returned: provDraft.date_returned, notes: provDraft.notes }),
       })
       const d = await res.json()
       if (!d.ok) { toast.error(d.error ?? "Failed to save."); return }
       setProvForm(false)
-      setProvDraft({ item: "", provided: true, date_given: "", date_returned: "", notes: "" })
+      setProvDraft({ itemType: "Security Jacket", quantity: 1, provided: true, date_given: "", date_returned: "", notes: "" })
       await loadProvisions()
     } finally {
       setProvSaving(false)
     }
+  }
+
+  async function loadContractInfo() {
+    if (!id) return
+    const res = await fetch(`/api/staff/${id}/contract/info`, { credentials: "include" })
+    const d = await res.json()
+    if (d.ok) setContractExists(d.exists)
+  }
+
+  async function uploadContract(file: File) {
+    setContractUploading(true)
+    try {
+      const buf = await file.arrayBuffer()
+      const res = await fetch(`/api/staff/${id}/contract`, {
+        method: "POST",
+        headers: { "Content-Type": file.type || "application/pdf" },
+        credentials: "include",
+        body: buf,
+      })
+      const d = await res.json()
+      if (!d.ok) { toast.error(d.error ?? "Upload failed."); return }
+      toast.success("Contract uploaded.")
+      setContractExists(true)
+    } finally {
+      setContractUploading(false)
+    }
+  }
+
+  async function deleteContract() {
+    await fetch(`/api/staff/${id}/contract`, { method: "DELETE", credentials: "include" })
+    setContractExists(false)
+    toast.success("Contract removed.")
   }
 
   async function deleteProvision(provId: string) {
@@ -1851,6 +1888,61 @@ export default function StaffDetailPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* ── Contract Upload ── */}
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-primary" /> Contract / Assignment Instructions
+                </CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="px-4 pb-4 space-y-3">
+              {contractExists ? (
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-lg border bg-success/5 border-success/20 px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
+                    <span className="text-sm font-medium">Contract on file</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <a href={`/api/staff/${id}/contract`} target="_blank" rel="noopener noreferrer">
+                      <Button size="sm" variant="outline" className="gap-1.5 h-7 text-xs">
+                        <Eye className="h-3 w-3" /> View
+                      </Button>
+                    </a>
+                    {canEdit && (
+                      <>
+                        <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-medium hover:bg-muted transition-colors h-7">
+                          <Upload className="h-3 w-3" /> Replace
+                          <input type="file" className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                            onChange={e => { const f = e.target.files?.[0]; if (f) uploadContract(f) }} />
+                        </label>
+                        <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive hover:text-destructive" onClick={deleteContract}>
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed bg-muted/10 px-4 py-6 text-center space-y-2">
+                  <FileText className="h-8 w-8 text-muted-foreground/30 mx-auto" />
+                  <p className="text-sm text-muted-foreground">No contract on file for this staff member.</p>
+                  {canEdit && (
+                    <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors">
+                      {contractUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                      Upload Contract
+                      <input type="file" className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                        onChange={e => { const f = e.target.files?.[0]; if (f) uploadContract(f) }} />
+                    </label>
+                  )}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">Accepted: PDF, Word documents, or images.</p>
+            </CardContent>
+          </Card>
+
         </div>
       )}
 
@@ -1873,10 +1965,29 @@ export default function StaffDetailPage() {
                 <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
                   <div className="grid sm:grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <Label>Item *</Label>
-                      <Input placeholder="e.g. Uniform, Hi-Vis, Radio, ID Badge"
-                        value={provDraft.item} onChange={e => setProvDraft(p => ({ ...p, item: e.target.value }))} />
+                      <Label>Item</Label>
+                      <select value={provDraft.itemType}
+                        onChange={e => setProvDraft(p => ({ ...p, itemType: e.target.value }))}
+                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
+                        <option>Security Jacket</option>
+                        <option>Fleece</option>
+                        <option>Rain Pant</option>
+                        <option>T-Shirt</option>
+                        <option>Trouser</option>
+                        <option>Hi-Vis Vest</option>
+                        <option>ID Badge</option>
+                        <option>Radio</option>
+                        <option>Torch</option>
+                        <option>Boots</option>
+                      </select>
                     </div>
+                    <div className="space-y-1">
+                      <Label>Quantity</Label>
+                      <Input type="number" min={1} max={20} value={provDraft.quantity}
+                        onChange={e => setProvDraft(p => ({ ...p, quantity: Math.max(1, parseInt(e.target.value) || 1) }))} />
+                    </div>
+                  </div>
+                  <div className="grid sm:grid-cols-3 gap-3">
                     <div className="space-y-1">
                       <Label>Status</Label>
                       <select value={provDraft.provided ? "yes" : "no"}
@@ -1886,15 +1997,13 @@ export default function StaffDetailPage() {
                         <option value="no">Not Provided</option>
                       </select>
                     </div>
-                  </div>
-                  <div className="grid sm:grid-cols-2 gap-3">
                     <div className="space-y-1">
                       <Label>Date given</Label>
                       <Input type="date" value={provDraft.date_given}
                         onChange={e => setProvDraft(p => ({ ...p, date_given: e.target.value }))} />
                     </div>
                     <div className="space-y-1">
-                      <Label>Date returned (if applicable)</Label>
+                      <Label>Date returned</Label>
                       <Input type="date" value={provDraft.date_returned}
                         onChange={e => setProvDraft(p => ({ ...p, date_returned: e.target.value }))} />
                     </div>

@@ -4,7 +4,7 @@ import {
   ShieldCheck, AlertTriangle, Clock, Camera, ImageOff,
   Loader2, Save, User as UserIcon, Upload, BadgeAlert, Flag, EyeOff, Eye,
   Paperclip, X, FileVideo, FileText, Image as ImageIcon,
-  MessageSquare, Package, Send,
+  MessageSquare, Package, Send, Pencil,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -73,6 +73,12 @@ export default function MyProfilePage() {
   // Provisions
   const [provisions, setProvisions] = useState<{id:string;item:string;provided:boolean;date_given:string|null;date_returned:string|null;notes:string|null}[]>([])
 
+  // Contract
+  const [contractExists, setContractExists] = useState(false)
+
+  // Form minimize — collapses to summary after submit
+  const [formExpanded, setFormExpanded] = useState(true)
+
   async function load() {
     setLoading(true)
     try {
@@ -85,20 +91,23 @@ export default function MyProfilePage() {
   }
 
   async function loadMyHR() {
-    const [discRes, repRes, msgRes, provRes] = await Promise.all([
+    const [discRes, repRes, msgRes, provRes, contractRes] = await Promise.all([
       fetch("/api/my-disciplinary",      { credentials: "include" }),
       fetch("/api/my-incident-reports",  { credentials: "include" }),
       fetch("/api/my-messages",          { credentials: "include" }),
       fetch("/api/my-provisions",        { credentials: "include" }),
+      fetch("/api/my-contract/info",     { credentials: "include" }),
     ])
-    const discData = await discRes.json()
-    const repData  = await repRes.json()
-    const msgData  = await msgRes.json()
-    const provData = await provRes.json()
-    if (discData.ok) setDiscRecords(discData.records)
-    if (repData.ok)  setMyReports(repData.reports)
-    if (msgData.ok)  { setMessages(msgData.messages); setUnreadCount(msgData.unread) }
-    if (provData.ok) setProvisions(provData.provisions)
+    const discData     = await discRes.json()
+    const repData      = await repRes.json()
+    const msgData      = await msgRes.json()
+    const provData     = await provRes.json()
+    const contractData = await contractRes.json()
+    if (discData.ok)     setDiscRecords(discData.records)
+    if (repData.ok)      setMyReports(repData.reports)
+    if (msgData.ok)      { setMessages(msgData.messages); setUnreadCount(msgData.unread) }
+    if (provData.ok)     setProvisions(provData.provisions)
+    if (contractData.ok) setContractExists(contractData.exists)
     setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: "smooth" }), 150)
   }
 
@@ -225,6 +234,7 @@ export default function MyProfilePage() {
       if (photoPreview) URL.revokeObjectURL(photoPreview)
       setPhotoPreview(null)
       setSuccess(true)
+      setFormExpanded(false)
     } catch {
       setError("Network error — please try again.")
     } finally {
@@ -268,10 +278,18 @@ export default function MyProfilePage() {
   ]
 
   return (
-    <div className="space-y-0">
+    <div className="space-y-0 relative">
 
       {/* ── Hero ── */}
-      <div className="rounded-xl bg-gradient-to-br from-sidebar to-sidebar/90 text-sidebar-foreground p-5 mb-5 flex items-center gap-4 shadow-sm">
+      <div className="rounded-xl bg-gradient-to-br from-sidebar to-sidebar/90 text-sidebar-foreground p-5 mb-5 flex items-center gap-4 shadow-sm relative overflow-hidden">
+        {/* GuardTec shield watermark */}
+        <div className="pointer-events-none absolute -right-6 -top-6 opacity-[0.08]" aria-hidden>
+          <svg viewBox="0 0 200 230" xmlns="http://www.w3.org/2000/svg" className="w-36 h-36">
+            <path d="M100 5 L190 40 L190 110 C190 165 155 210 100 225 C45 210 10 165 10 110 L10 40 Z" fill="white" />
+            <text x="100" y="130" textAnchor="middle" fontSize="36" fontWeight="bold" fill="#b91c1c" fontFamily="sans-serif">GT</text>
+            <text x="100" y="158" textAnchor="middle" fontSize="12" fill="#b91c1c" fontFamily="sans-serif" letterSpacing="2">SECURITY</text>
+          </svg>
+        </div>
         <div className="h-16 w-16 shrink-0 rounded-full overflow-hidden border-2 border-white/20 bg-white/10 flex items-center justify-center">
           {profile.id
             ? <img src={`/api/staff/${profile.id}/photo`} alt={profile.name}
@@ -409,14 +427,50 @@ export default function MyProfilePage() {
             </div>
           )}
 
-          {discRecords.length === 0 && provisions.length === 0 && (
+          {/* Contract */}
+          {contractExists && (
+            <div className="rounded-xl border bg-card p-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-primary shrink-0" />
+                <div>
+                  <p className="text-sm font-medium">Your Contract</p>
+                  <p className="text-xs text-muted-foreground">Uploaded by your manager</p>
+                </div>
+              </div>
+              <a href="/api/my-contract" target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors">
+                <Eye className="h-3.5 w-3.5" /> View
+              </a>
+            </div>
+          )}
+
+          {discRecords.length === 0 && provisions.length === 0 && !contractExists && (
             <p className="text-sm text-muted-foreground text-center py-8">Your compliance overview will appear here once your details are on file.</p>
           )}
         </div>
       )}
 
       {/* ══ MY DETAILS TAB ══ */}
-      {activeTab === "details" && (
+      {activeTab === "details" && !formExpanded && (
+        <div className="rounded-xl border bg-card p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold">Your details have been submitted for review.</p>
+            <button onClick={() => setFormExpanded(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors">
+              <Pencil className="h-3 w-3" /> Edit Details
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+            {profile.phone    && <div><span className="text-muted-foreground text-xs">Phone</span><p className="truncate">{profile.phone}</p></div>}
+            {profile.address  && <div><span className="text-muted-foreground text-xs">Address</span><p className="truncate">{profile.address}</p></div>}
+            {profile.sia?.number  && <div><span className="text-muted-foreground text-xs">SIA No.</span><p className="truncate">{profile.sia.number}</p></div>}
+            {profile.cscs?.number && <div><span className="text-muted-foreground text-xs">CSCS No.</span><p className="truncate">{profile.cscs.number}</p></div>}
+            {profile.emergencyContact?.name && <div><span className="text-muted-foreground text-xs">Emergency Contact</span><p className="truncate">{profile.emergencyContact.name}</p></div>}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "details" && formExpanded && (
         <form onSubmit={handleSubmit} className="space-y-5">
         {error && <p className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>}
 

@@ -2784,6 +2784,146 @@ app.get('/api/my-provisions', requireLogin, requireRole('staff'), async function
   }
 });
 
+// ── STAFF CONTRACT DOCUMENTS ─────────────────────────────────────────────────
+// Stored at BASE/contracts/{legacy_id}_contract.{ext}
+
+var CONTRACT_DIR = path.join(BASE, 'contracts');
+if (!fs.existsSync(CONTRACT_DIR)) fs.mkdirSync(CONTRACT_DIR, { recursive: true });
+
+function findContractFile(legacyId) {
+  var exts = ['.pdf', '.docx', '.doc', '.jpg', '.jpeg', '.png'];
+  for (var e of exts) {
+    var p = path.join(CONTRACT_DIR, String(legacyId) + '_contract' + e);
+    if (fs.existsSync(p)) return { filePath: p, ext: e };
+  }
+  return null;
+}
+
+function contractMime(ext) {
+  if (ext === '.pdf')             return 'application/pdf';
+  if (ext === '.docx')            return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (ext === '.doc')             return 'application/msword';
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.png')             return 'image/png';
+  return 'application/octet-stream';
+}
+
+// Check if contract exists (management)
+app.get('/api/staff/:id/contract/info', requireLogin, requirePermission('staff'), function(req, res) {
+  var found = findContractFile(req.params.id);
+  res.json({ ok: true, exists: !!found, ext: found ? found.ext : null });
+});
+
+// Upload contract (management)
+app.post('/api/staff/:id/contract', requireLogin, requirePermission('staff'), function(req, res) {
+  var legacyId = req.params.id;
+  var mime = (req.headers['content-type'] || '').toLowerCase();
+  var ext = '.pdf';
+  if      (mime.includes('pdf'))    ext = '.pdf';
+  else if (mime.includes('docx'))   ext = '.docx';
+  else if (mime.includes('msword')) ext = '.doc';
+  else if (mime.includes('jpeg'))   ext = '.jpg';
+  else if (mime.includes('png'))    ext = '.png';
+
+  var chunks = [];
+  req.on('data', function(c) { chunks.push(c); });
+  req.on('end', function() {
+    try {
+      var buf = Buffer.concat(chunks);
+      ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png'].forEach(function(e) {
+        var old = path.join(CONTRACT_DIR, legacyId + '_contract' + e);
+        if (fs.existsSync(old)) fs.unlinkSync(old);
+      });
+      fs.writeFileSync(path.join(CONTRACT_DIR, legacyId + '_contract' + ext), buf);
+      res.json({ ok: true });
+    } catch(e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+});
+
+// Download / view contract (management)
+app.get('/api/staff/:id/contract', requireLogin, requirePermission('staff'), function(req, res) {
+  var found = findContractFile(req.params.id);
+  if (!found) return res.status(404).json({ ok: false, error: 'No contract on file.' });
+  res.setHeader('Content-Type', contractMime(found.ext));
+  res.setHeader('Content-Disposition', 'inline; filename="contract' + found.ext + '"');
+  res.send(fs.readFileSync(found.filePath));
+});
+
+// Delete contract (management)
+app.delete('/api/staff/:id/contract', requireLogin, requirePermission('staff'), function(req, res) {
+  var found = findContractFile(req.params.id);
+  if (found) fs.unlinkSync(found.filePath);
+  res.json({ ok: true });
+});
+
+// Staff: check own contract
+app.get('/api/my-contract/info', requireLogin, requireRole('staff'), function(req, res) {
+  if (!req.user.staff_id) return res.json({ ok: true, exists: false });
+  var found = findContractFile(req.user.staff_id);
+  res.json({ ok: true, exists: !!found });
+});
+
+// Staff: view own contract
+app.get('/api/my-contract', requireLogin, requireRole('staff'), function(req, res) {
+  if (!req.user.staff_id) return res.status(404).json({ ok: false, error: 'No contract on file.' });
+  var found = findContractFile(req.user.staff_id);
+  if (!found) return res.status(404).json({ ok: false, error: 'No contract on file.' });
+  res.setHeader('Content-Type', contractMime(found.ext));
+  res.setHeader('Content-Disposition', 'inline; filename="your-contract' + found.ext + '"');
+  res.send(fs.readFileSync(found.filePath));
+});
+
+// ── INTERNAL n8n ENDPOINTS ────────────────────────────────────────────────────
+// These endpoints use a pre-shared token instead of session auth — for n8n agents only.
+
+var N8N_TOKEN = process.env.N8N_TOKEN || '';
+
+function requireN8nToken(req, res, next) {
+  var token = req.headers['x-n8n-token'] || req.query.token;
+  if (!N8N_TOKEN || token !== N8N_TOKEN) return res.status(401).json({ ok: false, error: 'Unauthorised' });
+  next();
+}
+
+// GET /api/internal/fleet — returns all vehicles with pre-computed days_until_* fields
+app.get('/api/internal/fleet', requireN8nToken, function(req, res) {
+  try {
+    var vehicles = loadVehicles();
+    var now = Date.now();
+    function daysUntil(dateStr) {
+      if (!dateStr) return null;
+      var d = new Date(dateStr);
+      if (isNaN(d.getTime())) return null;
+      return Math.floor((d.getTime() - now) / 86400000);
+    }
+    var enriched = vehicles
+      .filter(function(v) { return v.status !== 'sold'; })
+      .map(function(v) {
+        return {
+          id: v.id,
+          registration: v.registration,
+          make: v.make,
+          model: v.model,
+          year: v.year,
+          type: v.type,
+          status: v.status,
+          mot_expiry:       v.mot_expiry       || null,
+          insurance_expiry: v.insurance_expiry || null,
+          road_tax_expiry:  v.road_tax_expiry  || null,
+          service_due:      v.service_due      || null,
+          days_mot:       daysUntil(v.mot_expiry),
+          days_insurance: daysUntil(v.insurance_expiry),
+          days_road_tax:  daysUntil(v.road_tax_expiry),
+          days_service:   daysUntil(v.service_due),
+        };
+      });
+    res.json({ ok: true, vehicles: enriched, generatedAt: new Date().toISOString() });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
 // Management: count of unread staff messages + open incident reports
 app.get('/api/notifications/count', requireLogin, requirePermission('staff'), async function(req, res) {

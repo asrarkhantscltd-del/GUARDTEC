@@ -4,7 +4,7 @@ import { toast } from "sonner"
 import {
   Truck, Users, AlertTriangle, CheckCircle2, Search, Plus,
   Car, UserCheck, Trash2, X, Save, Loader2, Camera, ImageOff,
-  FileText, Download, Upload,
+  FileText, Download, Upload, Pencil,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -116,6 +116,8 @@ interface VehicleDoc {
 const VEHICLE_TYPE_LABELS: Record<string, string> = {
   patrol_car: "Patrol Car", response_van: "Response Van",
   supervisor_car: "Supervisor Car", support_van: "Support Van", minibus: "Minibus",
+  personal_use: "Personal Use",
+  official_use: "Official Use",
 }
 
 const DOC_TYPE_LABELS: Record<string, string> = {
@@ -164,8 +166,9 @@ export default function FleetPage() {
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
 
-  // Add/Delete state — vehicles
+  // Add/Edit/Delete state — vehicles
   const [showVehiclePanel, setShowVehiclePanel] = useState(false)
+  const [editingVehicleId, setEditingVehicleId] = useState<string | null>(null)
   const [editVehicle, setEditVehicle] = useState<Omit<Vehicle, "id">>(BLANK_VEHICLE)
   const [vehiclePhoto, setVehiclePhoto] = useState<File | null>(null)
   const [vehiclePhotoPreview, setVehiclePhotoPreview] = useState<string | null>(null)
@@ -296,51 +299,96 @@ export default function FleetPage() {
   // ── Add vehicle ───────────────────────────────────────────────────────────────
 
   function openAddVehicle() {
+    setEditingVehicleId(null)
     setEditVehicle(BLANK_VEHICLE)
     setVehiclePhoto(null)
     setVehiclePhotoPreview(null)
     setShowVehiclePanel(true)
   }
 
+  function openEditVehicle(v: Vehicle) {
+    setEditingVehicleId(v.id)
+    setEditVehicle({
+      registration: v.registration, make: v.make, model: v.model,
+      year: v.year, colour: v.colour, type: v.type, status: v.status,
+      assignedDriverId: v.assignedDriverId ?? "",
+      mot_expiry: v.mot_expiry ?? "", insurance_expiry: v.insurance_expiry ?? "",
+      road_tax_expiry: v.road_tax_expiry ?? "", service_due: v.service_due ?? "",
+      mileage: v.mileage,
+    })
+    setVehiclePhoto(null)
+    if (vehiclePhotoPreview) URL.revokeObjectURL(vehiclePhotoPreview)
+    setVehiclePhotoPreview(v.has_photo ? `/api/vehicles/${v.id}/photo` : null)
+    setShowVehiclePanel(true)
+  }
+
   function closeVehiclePanel() {
     setShowVehiclePanel(false)
-    if (vehiclePhotoPreview) URL.revokeObjectURL(vehiclePhotoPreview)
+    setEditingVehicleId(null)
+    if (vehiclePhoto && vehiclePhotoPreview) URL.revokeObjectURL(vehiclePhotoPreview)
     setVehiclePhoto(null)
     setVehiclePhotoPreview(null)
   }
 
   function pickVehiclePhoto(file: File | null) {
-    if (vehiclePhotoPreview) URL.revokeObjectURL(vehiclePhotoPreview)
+    if (vehiclePhoto && vehiclePhotoPreview) URL.revokeObjectURL(vehiclePhotoPreview)
     setVehiclePhoto(file)
     setVehiclePhotoPreview(file ? URL.createObjectURL(file) : null)
   }
 
-  async function handleAddVehicle(e: React.FormEvent) {
+  async function handleSaveVehicle(e: React.FormEvent) {
     e.preventDefault()
     setSavingVehicle(true)
     try {
-      const res = await fetch("/api/vehicles", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editVehicle),
-      })
-      if (!res.ok) { toast.error("Failed to add vehicle"); return }
-      const { vehicle } = await res.json()
+      if (editingVehicleId) {
+        // ── Edit mode ──
+        const res = await fetch(`/api/vehicles/${editingVehicleId}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(editVehicle),
+        })
+        if (!res.ok) { toast.error("Failed to update vehicle"); return }
+        const { vehicle } = await res.json()
 
-      if (vehiclePhoto) {
-        await fetch(`/api/vehicles/${vehicle.id}/photo`, {
+        if (vehiclePhoto) {
+          await fetch(`/api/vehicles/${editingVehicleId}/photo`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": vehiclePhoto.type || "application/octet-stream" },
+            body: vehiclePhoto,
+          })
+          vehicle.has_photo = true
+        }
+
+        setVehicles(prev => prev.map(v => v.id === editingVehicleId ? vehicle : v))
+        closeVehiclePanel()
+        toast.success("Vehicle updated")
+      } else {
+        // ── Add mode ──
+        const res = await fetch("/api/vehicles", {
           method: "POST",
           credentials: "include",
-          headers: { "Content-Type": vehiclePhoto.type || "application/octet-stream" },
-          body: vehiclePhoto,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(editVehicle),
         })
-        vehicle.has_photo = true
-      }
+        if (!res.ok) { toast.error("Failed to add vehicle"); return }
+        const { vehicle } = await res.json()
 
-      setVehicles(prev => [...prev, vehicle])
-      closeVehiclePanel()
-      toast.success("Vehicle added successfully")
+        if (vehiclePhoto) {
+          await fetch(`/api/vehicles/${vehicle.id}/photo`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": vehiclePhoto.type || "application/octet-stream" },
+            body: vehiclePhoto,
+          })
+          vehicle.has_photo = true
+        }
+
+        setVehicles(prev => [...prev, vehicle])
+        closeVehiclePanel()
+        toast.success("Vehicle added successfully")
+      }
     } finally {
       setSavingVehicle(false)
     }
@@ -533,6 +581,8 @@ export default function FleetPage() {
               <option value="supervisor_car">Supervisor Car</option>
               <option value="support_van">Support Van</option>
               <option value="minibus">Minibus</option>
+              <option value="personal_use">Personal Use</option>
+              <option value="official_use">Official Use</option>
             </select>
           </>
         )}
@@ -546,7 +596,10 @@ export default function FleetPage() {
               description="Add your first company vehicle to start tracking compliance." />
           : <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {filteredVehicles.map(v => (
-                <VehicleCard key={v.id} v={v} drivers={drivers} onDelete={() => setDeleteVehicleId(v.id)} onDocs={() => openDocsPanel(v.id)} />
+                <VehicleCard key={v.id} v={v} drivers={drivers}
+                  onEdit={() => openEditVehicle(v)}
+                  onDelete={() => setDeleteVehicleId(v.id)}
+                  onDocs={() => openDocsPanel(v.id)} />
               ))}
             </div>
       )}
@@ -757,13 +810,13 @@ export default function FleetPage() {
           <div className="flex-1 bg-black/40" onClick={closeVehiclePanel} />
           <div className="flex h-full w-full max-w-lg flex-col overflow-y-auto bg-background shadow-2xl">
             <div className="flex items-center justify-between border-b px-6 py-4">
-              <h2 className="text-lg font-semibold">Add Vehicle</h2>
+              <h2 className="text-lg font-semibold">{editingVehicleId ? "Edit Vehicle" : "Add Vehicle"}</h2>
               <button onClick={closeVehiclePanel} className="rounded-md p-1.5 hover:bg-muted transition-colors">
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleAddVehicle} className="flex flex-1 flex-col gap-0 overflow-y-auto">
+            <form onSubmit={handleSaveVehicle} className="flex flex-1 flex-col gap-0 overflow-y-auto">
               <div className="space-y-5 px-6 py-5">
 
                 {/* Photo upload */}
@@ -878,7 +931,7 @@ export default function FleetPage() {
               <div className="sticky bottom-0 flex gap-3 border-t bg-background px-6 py-4">
                 <Button type="submit" disabled={savingVehicle} className="flex-1 gap-2">
                   {savingVehicle ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  {savingVehicle ? "Saving…" : "Save Vehicle"}
+                  {savingVehicle ? "Saving…" : editingVehicleId ? "Update Vehicle" : "Save Vehicle"}
                 </Button>
                 <Button type="button" variant="outline" onClick={closeVehiclePanel}>Cancel</Button>
               </div>
@@ -1013,7 +1066,7 @@ export default function FleetPage() {
 
 // ── Vehicle Card ──────────────────────────────────────────────────────────────
 
-function VehicleCard({ v, drivers, onDelete, onDocs }: { v: Vehicle; drivers: FleetDriver[]; onDelete: () => void; onDocs: () => void }) {
+function VehicleCard({ v, drivers, onEdit, onDelete, onDocs }: { v: Vehicle; drivers: FleetDriver[]; onEdit: () => void; onDelete: () => void; onDocs: () => void }) {
   const driver = v.assignedDriverId ? drivers.find(d => d.id === v.assignedDriverId) : null
   const worst = worstDays([v.mot_expiry, v.insurance_expiry, v.road_tax_expiry])
   const borderClass =
@@ -1033,6 +1086,10 @@ function VehicleCard({ v, drivers, onDelete, onDocs }: { v: Vehicle; drivers: Fl
           </div>
         )}
         <div className="absolute right-2 top-2 flex gap-1">
+          <button onClick={onEdit} title="Edit vehicle details"
+            className="rounded-md bg-black/40 p-1.5 text-white/80 backdrop-blur-sm transition-colors hover:bg-primary hover:text-white">
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
           <button onClick={onDocs} title="Manage documents"
             className="rounded-md bg-black/40 p-1.5 text-white/80 backdrop-blur-sm transition-colors hover:bg-blue-600 hover:text-white">
             <FileText className="h-3.5 w-3.5" />
