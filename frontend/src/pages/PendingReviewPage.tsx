@@ -129,7 +129,8 @@ export default function PendingReviewPage() {
                   </div>
                   <div className="flex gap-2">
                     <Button size="sm" variant="outline" className="gap-1.5 text-destructive hover:bg-destructive/10"
-                      disabled={busyId === s.id} onClick={() => setRejectingId(rejectingId === s.id ? null : s.id)}>
+                      disabled={busyId === s.id}
+                      onClick={() => { setRejectingId(rejectingId === s.id ? null : s.id); setReason("") }}>
                       <X className="h-3.5 w-3.5" />Reject
                     </Button>
                     <Button size="sm" className="gap-1.5" disabled={busyId === s.id} onClick={() => approve(s.id)}>

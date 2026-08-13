@@ -2,13 +2,14 @@ import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
+import { useAuth } from "@/contexts/AuthContext"
 import { daysUntil, fmtDate, downloadExport } from "@/lib/utils"
 import type { StaffMember } from "@/types/staff"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import {
-  Search, ChevronRight, Loader2,
+  Search, ChevronRight, Loader2, Pencil,
   Table2, StretchHorizontal, MapPin, Clock,
   CircleCheck, ShieldCheck, HardHat, FileCheck, Building2, Plus, X,
   BarChart3, FileWarning, UserX, RotateCcw, Archive, Briefcase, Trash2, Download,
@@ -114,6 +115,46 @@ function InitialsAvatar({ name, status, size = "md" }: { name: string; status: s
   )
 }
 
+// Quick edit/delete actions for an Overview row — stopPropagation so they don't trigger the row's own onClick
+function RowActions({
+  canEdit, canDelete, confirming, deleting, onEdit, onDeleteClick, onConfirmDelete, onCancelDelete,
+}: {
+  canEdit: boolean; canDelete: boolean; confirming: boolean; deleting: boolean
+  onEdit: () => void; onDeleteClick: () => void; onConfirmDelete: () => void; onCancelDelete: () => void
+}) {
+  if (!canEdit && !canDelete) return null
+  if (confirming) {
+    return (
+      <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+        <button onClick={onConfirmDelete} disabled={deleting}
+          className="flex items-center gap-1 rounded-md bg-destructive px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-destructive/90 disabled:opacity-50">
+          {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : "Confirm"}
+        </button>
+        <button onClick={onCancelDelete}
+          className="rounded-md border px-2 py-1 text-[10px] transition-colors hover:bg-muted">
+          Cancel
+        </button>
+      </div>
+    )
+  }
+  return (
+    <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+      {canEdit && (
+        <button onClick={onEdit} title="Quick edit"
+          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      )}
+      {canDelete && (
+        <button onClick={onDeleteClick} title="Move to Ex-Staff"
+          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive">
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
+  )
+}
+
 // Combined deployment status + site selector (editable inline, local state for instant feedback)
 function DeploySelect({
   staffId, deployStatus, currentSite, sites, onUpdate,
@@ -208,6 +249,33 @@ export default function StaffPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [permDeleting, setPermDeleting]       = useState(false)
 
+  // Quick edit/delete from the Overview rows
+  const { user: me } = useAuth()
+  const canEdit   = me?.role === "director" || !!me?.permissions?.edit_staff
+  const canDelete = me?.role === "director" || !!me?.permissions?.delete_staff
+  const [quickDeleteId, setQuickDeleteId] = useState<string | null>(null)
+  const [quickDeleting, setQuickDeleting] = useState(false)
+
+  function quickEdit(staffId: string) {
+    navigate(`/staff/${staffId}?edit=1`)
+  }
+
+  async function quickDelete(staffId: string) {
+    setQuickDeleting(true)
+    try {
+      const res = await fetch(`/api/staff/${staffId}`, { method: "DELETE", credentials: "include" })
+      const d = await res.json()
+      if (!d.ok) { toast.error(d.error ?? "Failed to move to Ex-Staff"); return }
+      setStaff((prev) => prev.filter((s) => s.id !== staffId))
+      setQuickDeleteId(null)
+      toast.success("Moved to Ex-Staff")
+    } catch {
+      toast.error("Network error — could not move to Ex-Staff")
+    } finally {
+      setQuickDeleting(false)
+    }
+  }
+
   // Add Staff panel
   const [addPanel, setAddPanel]   = useState(false)
   const [addForm, setAddForm]     = useState({ name: "", jobRole: "", email: "", phone: "", nationality: "" })
@@ -223,6 +291,13 @@ export default function StaffPage() {
   const activeSection: SectionId = sectionParam ?? "compliance"
 
   function switchSection(id: SectionId) {
+    // Each section tab only shows its own filter controls, but `filtered` ANDs
+    // every filter together regardless of which tab is active — without this,
+    // a filter set in one tab silently keeps narrowing the list after you
+    // switch away, with no visible control left on screen to explain why.
+    if (id !== "compliance") setCompFilter("all")
+    if (id !== "deployment") { setDeployFilter("all"); setSiteFilter("all") }
+    if (id !== "documents") setDocFilter("all")
     setSearchParams({ section: id })
   }
 
@@ -731,7 +806,19 @@ export default function StaffPage() {
                     <td className="hidden sm:table-cell px-4 py-3"><ExpiryCell date={s.sia?.expiry} /></td>
                     <td className="hidden md:table-cell px-4 py-3"><ExpiryCell date={s.cscs?.expiry} /></td>
                     <td className="hidden lg:table-cell px-4 py-3"><ExpiryCell date={s.visa?.expiry} /></td>
-                    <td className="px-4 py-3 text-muted-foreground"><ChevronRight className="h-4 w-4" /></td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      <div className="flex items-center gap-1">
+                        <RowActions
+                          canEdit={canEdit} canDelete={canDelete}
+                          confirming={quickDeleteId === s.id} deleting={quickDeleting}
+                          onEdit={() => quickEdit(s.id)}
+                          onDeleteClick={() => setQuickDeleteId(s.id)}
+                          onConfirmDelete={() => quickDelete(s.id)}
+                          onCancelDelete={() => setQuickDeleteId(null)}
+                        />
+                        <ChevronRight className="h-4 w-4" />
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>

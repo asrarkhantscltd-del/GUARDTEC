@@ -1,5 +1,5 @@
 ﻿const express      = require('express');
-const { exec }     = require('child_process');
+const { execFile }  = require('child_process');
 const fs           = require('fs');
 const path         = require('path');
 const XLSX         = require('xlsx');
@@ -416,7 +416,7 @@ function findFileByExts(dir, prefix) {
 
 function findProfilePhoto(folderPath) { return findFileByExts(folderPath, 'profile'); }
 
-app.get('/api/staff/:id/photo', requireLogin, function(req, res) {
+app.get('/api/staff/:id/photo', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -433,7 +433,7 @@ app.get('/api/staff/:id/photo', requireLogin, function(req, res) {
   }
 });
 
-app.post('/api/staff/:id/photo', requireLogin, function(req, res) {
+app.post('/api/staff/:id/photo', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -1614,23 +1614,24 @@ function saveSiteDocs(siteId, docs) {
   fs.writeFileSync(path.join(SITE_DOCS_DIR, siteId, 'index.json'), JSON.stringify(docs, null, 2), 'utf8');
 }
 
-app.get('/api/sites/:id/documents', requireLogin, function(req, res) {
-  res.json({ ok: true, items: loadSiteDocs(req.params.id) });
+app.get('/api/sites/:id/documents', requireLogin, requirePermission('sites'), function(req, res) {
+  res.json({ ok: true, items: loadSiteDocs(path.basename(req.params.id)) });
 });
 
 app.post('/api/sites/:id/documents', requireLogin, requirePermission('sites'), function(req, res) {
   try {
-    var site = loadSites().find(function(s) { return s.id === req.params.id; });
+    var siteId = path.basename(req.params.id);
+    var site = loadSites().find(function(s) { return s.id === siteId; });
     if (!site) return res.status(404).json({ ok: false, error: 'Site not found' });
 
-    ensureSiteDocsDir(req.params.id);
+    ensureSiteDocsDir(siteId);
     var originalName = 'document';
     try { originalName = decodeURIComponent(req.headers['x-filename'] || 'document'); } catch (e) {}
     var category = req.headers['x-doc-category'] || 'documentation';
     var timestamp = Date.now().toString();
     var ext = path.extname(originalName) || '';
     var filename = timestamp + ext;
-    var filePath = path.join(SITE_DOCS_DIR, req.params.id, filename);
+    var filePath = path.join(SITE_DOCS_DIR, siteId, filename);
 
     var chunks = [];
     req.on('data', function(c) { chunks.push(c); });
@@ -1639,10 +1640,10 @@ app.post('/api/sites/:id/documents', requireLogin, requirePermission('sites'), f
         var buf = Buffer.concat(chunks);
         fs.writeFileSync(filePath, buf);
 
-        var docs = loadSiteDocs(req.params.id);
+        var docs = loadSiteDocs(siteId);
         var doc = { filename: filename, originalName: originalName, category: category, size: buf.length, uploadedAt: new Date().toISOString() };
         docs.push(doc);
-        saveSiteDocs(req.params.id, docs);
+        saveSiteDocs(siteId, docs);
 
         res.json({ ok: true, doc: doc });
       } catch (e) {
@@ -1657,13 +1658,14 @@ app.post('/api/sites/:id/documents', requireLogin, requirePermission('sites'), f
   }
 });
 
-app.get('/api/sites/:id/documents/:filename', requireLogin, function(req, res) {
+app.get('/api/sites/:id/documents/:filename', requireLogin, requirePermission('sites'), function(req, res) {
   try {
+    var siteId = path.basename(req.params.id);
     var filename = path.basename(req.params.filename);
-    var filePath = path.join(SITE_DOCS_DIR, req.params.id, filename);
+    var filePath = path.join(SITE_DOCS_DIR, siteId, filename);
     if (!fs.existsSync(filePath)) return res.status(404).end();
 
-    var docs = loadSiteDocs(req.params.id);
+    var docs = loadSiteDocs(siteId);
     var doc = docs.find(function(d) { return d.filename === filename; });
     var originalName = doc ? doc.originalName : filename;
 
@@ -1677,13 +1679,14 @@ app.get('/api/sites/:id/documents/:filename', requireLogin, function(req, res) {
 
 app.delete('/api/sites/:id/documents/:filename', requireLogin, requirePermission('sites'), function(req, res) {
   try {
+    var siteId = path.basename(req.params.id);
     var filename = path.basename(req.params.filename);
-    var filePath = path.join(SITE_DOCS_DIR, req.params.id, filename);
+    var filePath = path.join(SITE_DOCS_DIR, siteId, filename);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
-    var docs = loadSiteDocs(req.params.id);
+    var docs = loadSiteDocs(siteId);
     docs = docs.filter(function(d) { return d.filename !== filename; });
-    saveSiteDocs(req.params.id, docs);
+    saveSiteDocs(siteId, docs);
 
     res.json({ ok: true });
   } catch (e) {
@@ -1960,14 +1963,23 @@ app.post('/api/overview', requireLogin, function(req, res) {
 });
 
 // ── SERVE APP WITH EMBEDDED STAFF DATA (no browser fetch needed) ──────────────
-app.get('/', function(req, res) {
-  if (!getAuthedUser(req)) {
+app.get('/', async function(req, res) {
+  var authed = getAuthedUser(req);
+  if (!authed) {
     res.setHeader('Content-Type', 'text/html');
     res.setHeader('Cache-Control', 'no-store');
     return res.sendFile(path.join(__dirname, 'public', 'login.html'));
   }
   try {
-    var staff = loadAllStaff();
+    // Only embed the full staff roster (now including bank/NI details) for
+    // users who actually hold the 'staff' permission — same gate as /api/staff.
+    var hasStaffPerm = authed.role === 'director';
+    if (!hasStaffPerm) {
+      var roles = await loadRoles();
+      var roleDef = roles.find(function(r){ return r.slug === authed.role; });
+      hasStaffPerm = !!(roleDef && roleDef.permissions && roleDef.permissions.staff);
+    }
+    var staff = hasStaffPerm ? loadAllStaff() : [];
     var staffJSON = JSON.stringify(staff);
     var tpl = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
     var page = tpl.replace('/*STAFF_DATA_PLACEHOLDER*/[]', staffJSON);
@@ -1983,7 +1995,7 @@ app.get('/new-starter', function(req, res) {
   res.sendFile(path.join(__dirname, 'public', 'new-starter.html'));
 });
 
-app.get('/reload', requireLogin, function(req, res) {
+app.get('/reload', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var staff = loadAllStaff();
     res.json(staff);
@@ -2001,11 +2013,20 @@ function scheduleGitPush(reason) {
     var appDir = __dirname;
     var now    = new Date();
     var stamp = now.toISOString().slice(0, 16).replace('T', ' ');
-    var msg = 'Auto-save: ' + stamp + (reason ? ' — ' + reason : '');
-    var cmd = 'cd /d "' + appDir + '" && git add -A && git commit -m "' + msg + '" && git push origin main';
-    exec(cmd, function(err, stdout, stderr) {
-      if (err) { console.log('[GIT] Push failed:', stderr || err.message); }
-      else      { console.log('[GIT] Pushed to GitHub —', msg); }
+    // reason can originate from untrusted input (e.g. a name from the New Staff
+    // Inbox) — pass it to git as a single argv element via execFile, never
+    // through a shell, so it can't break out into arbitrary command execution.
+    var msg = 'Auto-save: ' + stamp + (reason ? ' — ' + String(reason).slice(0, 200) : '');
+    var opts = { cwd: appDir };
+    execFile('git', ['add', '-A'], opts, function(errAdd) {
+      if (errAdd) { console.log('[GIT] add failed:', errAdd.message); return; }
+      execFile('git', ['commit', '-m', msg], opts, function(errCommit, _out, errCommitStderr) {
+        if (errCommit) { console.log('[GIT] commit failed (likely nothing to commit):', errCommitStderr || errCommit.message); return; }
+        execFile('git', ['push', 'origin', 'main'], opts, function(errPush, _out2, errPushStderr) {
+          if (errPush) { console.log('[GIT] Push failed:', errPushStderr || errPush.message); }
+          else          { console.log('[GIT] Pushed to GitHub —', msg); }
+        });
+      });
     });
   }, 5000);
 }
@@ -2815,6 +2836,28 @@ async function resolveEmpId(legacyId) {
   return r.rows.length ? r.rows[0].id : null;
 }
 
+async function hasStaffPermission(req) {
+  if (!req.user || !req.user.role) return false;
+  if (req.user.role === 'director') return true;
+  var roles = await loadRoles();
+  var roleDef = roles.find(function(r){ return r.slug === req.user.role; });
+  return !!(roleDef && roleDef.permissions && roleDef.permissions.staff);
+}
+
+// Shared ownership gate for incident-report / message attachment routes, which
+// are keyed by reportId/messageId/attachId — not a staff :id — so the existing
+// requireOwnStaffOrPermission() pattern can't compare params directly. Callers
+// resolve the row's owning employees.id first, then this checks either
+// management (`staff` permission) or "this employees.id is me". Sends the 403
+// itself so call sites can just `if (!await ...) return;`.
+async function canAccessOwnerEmpId(req, res, ownerEmpId) {
+  if (await hasStaffPermission(req)) return true;
+  var myEmpId = req.user.staff_id ? await resolveEmpId(req.user.staff_id) : null;
+  if (myEmpId && ownerEmpId && myEmpId === ownerEmpId) return true;
+  res.status(403).json({ ok: false, error: 'Forbidden' });
+  return false;
+}
+
 // ── PHASE 4 API: Disciplinary Records & Incident Reports ─────────────────────
 
 // ── Disciplinary: list for a staff member (management) ──
@@ -2998,7 +3041,11 @@ var ALLOWED_ATTACH_MIME = {
 var MAX_ATTACH_SIZE = 100 * 1024 * 1024; // 100 MB
 
 // Upload attachment for an incident report
-app.post('/api/incident-reports/:reportId/attachments', requireLogin, function(req, res) {
+app.post('/api/incident-reports/:reportId/attachments', requireLogin, async function(req, res) {
+  var reportRow = await pgPool.query('SELECT reporter_id FROM incident_reports WHERE id = $1', [req.params.reportId]);
+  if (!reportRow.rows.length) return res.status(404).json({ ok: false, error: 'Report not found.' });
+  if (!await canAccessOwnerEmpId(req, res, reportRow.rows[0].reporter_id)) return;
+
   var mime = (req.headers['content-type'] || '').split(';')[0].trim();
   var ext = ALLOWED_ATTACH_MIME[mime];
   if (!ext) return res.status(400).json({ ok: false, error: 'File type not allowed.' });
@@ -3033,6 +3080,9 @@ app.post('/api/incident-reports/:reportId/attachments', requireLogin, function(r
 // List attachments for an incident report
 app.get('/api/incident-reports/:reportId/attachments', requireLogin, async function(req, res) {
   try {
+    var reportRow = await pgPool.query('SELECT reporter_id FROM incident_reports WHERE id = $1', [req.params.reportId]);
+    if (!reportRow.rows.length) return res.status(404).json({ ok: false, error: 'Report not found.' });
+    if (!await canAccessOwnerEmpId(req, res, reportRow.rows[0].reporter_id)) return;
     var r = await pgPool.query(
       'SELECT id, filename, original_name, mime_type, size_bytes, uploaded_at FROM incident_attachments WHERE incident_id = $1 ORDER BY uploaded_at ASC',
       [req.params.reportId]
@@ -3044,9 +3094,15 @@ app.get('/api/incident-reports/:reportId/attachments', requireLogin, async funct
 });
 
 // Serve / download an attachment
-app.get('/api/incident-attachments/:filename', requireLogin, function(req, res) {
+app.get('/api/incident-attachments/:filename', requireLogin, async function(req, res) {
   try {
     var safe = path.basename(req.params.filename);
+    var owner = await pgPool.query(
+      'SELECT ir.reporter_id FROM incident_attachments ia JOIN incident_reports ir ON ir.id = ia.incident_id WHERE ia.filename = $1',
+      [safe]
+    );
+    if (!owner.rows.length) return res.status(404).end();
+    if (!await canAccessOwnerEmpId(req, res, owner.rows[0].reporter_id)) return;
     var filePath = path.join(INCIDENT_ATTACH_DIR, safe);
     if (!fs.existsSync(filePath)) return res.status(404).end();
     res.sendFile(filePath);
@@ -3058,8 +3114,12 @@ app.get('/api/incident-attachments/:filename', requireLogin, function(req, res) 
 // Delete an attachment (reporter or management)
 app.delete('/api/incident-attachments/:attachId', requireLogin, async function(req, res) {
   try {
-    var r = await pgPool.query('SELECT filename FROM incident_attachments WHERE id = $1', [req.params.attachId]);
+    var r = await pgPool.query(
+      'SELECT ia.filename, ir.reporter_id FROM incident_attachments ia JOIN incident_reports ir ON ir.id = ia.incident_id WHERE ia.id = $1',
+      [req.params.attachId]
+    );
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Not found.' });
+    if (!await canAccessOwnerEmpId(req, res, r.rows[0].reporter_id)) return;
     var filePath = path.join(INCIDENT_ATTACH_DIR, r.rows[0].filename);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     await pgPool.query('DELETE FROM incident_attachments WHERE id = $1', [req.params.attachId]);
@@ -3166,7 +3226,11 @@ if (!fs.existsSync(MESSAGE_ATTACH_DIR)) fs.mkdirSync(MESSAGE_ATTACH_DIR, { recur
 
 // Attach a file to a message either party just sent (reuses the same
 // image/video/doc whitelist and 100MB cap already defined for incident reports).
-app.post('/api/messages/:messageId/attachment', requireLogin, function(req, res) {
+app.post('/api/messages/:messageId/attachment', requireLogin, async function(req, res) {
+  var msgRow = await pgPool.query('SELECT employee_id FROM staff_messages WHERE id = $1', [req.params.messageId]);
+  if (!msgRow.rows.length) return res.status(404).json({ ok: false, error: 'Message not found.' });
+  if (!await canAccessOwnerEmpId(req, res, msgRow.rows[0].employee_id)) return;
+
   var mime = (req.headers['content-type'] || '').split(';')[0].trim();
   var ext = ALLOWED_ATTACH_MIME[mime];
   if (!ext) return res.status(400).json({ ok: false, error: 'File type not allowed.' });
@@ -3198,9 +3262,15 @@ app.post('/api/messages/:messageId/attachment', requireLogin, function(req, res)
   req.on('error', function() { res.status(500).json({ ok: false, error: 'Upload failed.' }); });
 });
 
-app.get('/api/message-attachments/:filename', requireLogin, function(req, res) {
+app.get('/api/message-attachments/:filename', requireLogin, async function(req, res) {
   try {
     var safe = path.basename(req.params.filename);
+    var owner = await pgPool.query(
+      'SELECT sm.employee_id FROM message_attachments ma JOIN staff_messages sm ON sm.id = ma.message_id WHERE ma.filename = $1',
+      [safe]
+    );
+    if (!owner.rows.length) return res.status(404).end();
+    if (!await canAccessOwnerEmpId(req, res, owner.rows[0].employee_id)) return;
     var filePath = path.join(MESSAGE_ATTACH_DIR, safe);
     if (!fs.existsSync(filePath)) return res.status(404).end();
     res.sendFile(filePath);
