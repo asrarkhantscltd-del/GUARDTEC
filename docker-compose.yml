@@ -1,5 +1,12 @@
-version: '3.8'
 services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - guardtec-app
+    restart: unless-stopped
+
   guardtec-app:
     build: .
     ports:
@@ -9,4 +16,52 @@ services:
     environment:
       - DATA_PATH=/data
       - PORT=3000
+      - DATABASE_URL=postgresql://guardtec:Guardtec@2026@db:5432/guardtec
+      - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - N8N_TOKEN=${N8N_TOKEN}
+    depends_on:
+      - db
     restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=guardtec
+      - POSTGRES_PASSWORD=Guardtec@2026
+      - POSTGRES_DB=guardtec
+    volumes:
+      - guardtec-db-data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./schema-phase3.sql:/docker-entrypoint-initdb.d/02-schema-phase3.sql:ro
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=asrar
+      - N8N_BASIC_AUTH_PASSWORD=Guardtec@2026
+      - N8N_USER_MANAGEMENT_DISABLED=true
+      - TZ=Europe/London
+      - GENERIC_TIMEZONE=Europe/London
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=db
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=guardtec
+      - DB_POSTGRESDB_USER=guardtec
+      - DB_POSTGRESDB_PASSWORD=Guardtec@2026
+    depends_on:
+      - db
+    restart: unless-stopped
+
+volumes:
+  guardtec-db-data:
+  n8n-data:

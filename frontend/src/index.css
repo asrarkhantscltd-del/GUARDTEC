@@ -1,0 +1,220 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+/* @theme (without inline) → utility classes use var(--color-xxx), so html.dark overrides work */
+@theme {
+  /* ── Light mode defaults ── */
+  --color-background: hsl(220 20% 97%);
+  --color-foreground: hsl(224 14% 10%);
+  --color-card: hsl(0 0% 100%);
+  --color-card-foreground: hsl(224 14% 10%);
+  --color-popover: hsl(0 0% 100%);
+  --color-popover-foreground: hsl(224 14% 10%);
+
+  --color-primary: hsl(354 96% 46%);
+  --color-primary-foreground: hsl(0 0% 100%);
+
+  --color-secondary: hsl(220 14% 94%);
+  --color-secondary-foreground: hsl(224 14% 10%);
+  --color-muted: hsl(220 14% 94%);
+  --color-muted-foreground: hsl(220 9% 46%);
+  --color-accent: hsl(220 14% 94%);
+  --color-accent-foreground: hsl(224 14% 10%);
+  --color-destructive: hsl(0 84% 60%);
+  --color-destructive-foreground: hsl(0 0% 98%);
+  --color-border: hsl(220 13% 88%);
+  --color-input: hsl(220 13% 88%);
+  --color-ring: hsl(354 96% 46%);
+
+  --color-chart-1: hsl(354 96% 46%);
+  --color-chart-2: hsl(173 58% 39%);
+  --color-chart-3: hsl(197 37% 24%);
+  --color-chart-4: hsl(43 74% 66%);
+  --color-chart-5: hsl(27 87% 67%);
+
+  /* Sidebar — LIGHT mode defaults */
+  --color-sidebar: hsl(0 0% 100%);
+  --color-sidebar-foreground: hsl(224 14% 15%);
+  --color-sidebar-primary: hsl(354 96% 46%);
+  --color-sidebar-primary-foreground: hsl(0 0% 100%);
+  --color-sidebar-accent: hsl(220 13% 91%);
+  --color-sidebar-accent-foreground: hsl(224 14% 10%);
+  --color-sidebar-border: hsl(220 13% 91%);
+  --color-sidebar-ring: hsl(354 96% 46%);
+
+  --radius: 0.75rem;
+  --color-success: hsl(142 71% 45%);
+  --color-warning: hsl(38 92% 50%);
+  --color-danger: hsl(0 84% 60%);
+}
+
+
+/* ── Dark mode overrides ────────────────────────────────────────────────────── */
+html.dark {
+  --color-background: hsl(228 16% 8%);
+  --color-foreground: hsl(220 14% 92%);
+  --color-card: hsl(228 15% 11%);
+  --color-card-foreground: hsl(220 14% 92%);
+  --color-popover: hsl(228 14% 11%);
+  --color-popover-foreground: hsl(220 14% 92%);
+  --color-primary: hsl(354 96% 50%);
+  --color-primary-foreground: hsl(0 0% 100%);
+  --color-secondary: hsl(228 12% 16%);
+  --color-secondary-foreground: hsl(220 14% 92%);
+  --color-muted: hsl(228 12% 16%);
+  --color-muted-foreground: hsl(220 9% 55%);
+  --color-accent: hsl(228 12% 16%);
+  --color-accent-foreground: hsl(220 14% 92%);
+  --color-destructive: hsl(0 62% 40%);
+  --color-destructive-foreground: hsl(0 0% 98%);
+  --color-border: hsl(228 12% 17%);
+  --color-input: hsl(228 12% 16%);
+  --color-ring: hsl(354 96% 50%);
+  --color-success: hsl(142 71% 45%);
+  --color-warning: hsl(38 92% 50%);
+  --color-danger: hsl(0 62% 40%);
+  /* Sidebar — dark overrides */
+  --color-sidebar: hsl(228 14% 7%);
+  --color-sidebar-foreground: hsl(220 14% 72%);
+  --color-sidebar-primary: hsl(354 96% 50%);
+  --color-sidebar-primary-foreground: hsl(0 0% 100%);
+  --color-sidebar-accent: hsl(228 12% 13%);
+  --color-sidebar-accent-foreground: hsl(0 0% 95%);
+  --color-sidebar-border: hsl(228 12% 11%);
+  --color-sidebar-ring: hsl(354 96% 50%);
+}
+
+/* ── Light mode explicit overrides (when user toggles to light) ─────────────── */
+html.light {
+  --color-background: hsl(220 20% 97%);
+  --color-foreground: hsl(224 14% 10%);
+  --color-card: hsl(0 0% 100%);
+  --color-card-foreground: hsl(224 14% 10%);
+  --color-popover: hsl(0 0% 100%);
+  --color-popover-foreground: hsl(224 14% 10%);
+  --color-primary: hsl(354 96% 46%);
+  --color-primary-foreground: hsl(0 0% 100%);
+  --color-secondary: hsl(220 14% 94%);
+  --color-secondary-foreground: hsl(224 14% 10%);
+  --color-muted: hsl(220 14% 94%);
+  --color-muted-foreground: hsl(220 9% 46%);
+  --color-accent: hsl(220 14% 94%);
+  --color-accent-foreground: hsl(224 14% 10%);
+  --color-destructive: hsl(0 84% 60%);
+  --color-destructive-foreground: hsl(0 0% 98%);
+  --color-border: hsl(220 13% 88%);
+  --color-input: hsl(220 13% 88%);
+  --color-ring: hsl(354 96% 46%);
+  --color-success: hsl(142 71% 45%);
+  --color-warning: hsl(38 92% 50%);
+  --color-danger: hsl(0 84% 60%);
+  /* Sidebar — light overrides */
+  --color-sidebar: hsl(0 0% 100%);
+  --color-sidebar-foreground: hsl(224 14% 15%);
+  --color-sidebar-primary: hsl(354 96% 46%);
+  --color-sidebar-primary-foreground: hsl(0 0% 100%);
+  --color-sidebar-accent: hsl(220 13% 91%);
+  --color-sidebar-accent-foreground: hsl(224 14% 10%);
+  --color-sidebar-border: hsl(220 13% 91%);
+  --color-sidebar-ring: hsl(354 96% 46%);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* ── Hero animated gradient ───────────────────────────────────────────────── */
+@keyframes hero-gradient {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.hero-animated {
+  background-size: 300% 300%;
+  animation: hero-gradient 14s ease infinite;
+}
+
+/* ── Scrollbars — slim, red on hover ──────────────────────────────────────── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: hsl(354 96% 46% / 0.45); }
+
+/* ── Motion tokens ─────────────────────────────────────────────────────────── */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position: 200% 0; }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.animate-glow-pulse {
+  animation: glow-pulse 2.4s ease-in-out infinite;
+}
+
+/* ── Elevated surface — the standard "card" feel across the app ──────────── */
+.surface {
+  @apply rounded-xl border bg-card shadow-[0_1px_2px_rgba(16,24,40,0.04),0_1px_3px_rgba(16,24,40,0.06)];
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.surface-hover:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, hsl(354 96% 46%) 30%, var(--color-border));
+  box-shadow: 0 8px 24px -8px rgba(228, 6, 19, 0.12), 0 2px 8px rgba(16, 24, 40, 0.06);
+}
+
+/* ── Gradient text for hero numbers / headings ────────────────────────────── */
+.text-gradient-red {
+  background: linear-gradient(135deg, #ff2438 0%, #e40613 60%, #b8040f 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ── Soft radial glow blob (decorative, used behind hero panels) ──────────── */
+.glow-blob {
+  background: radial-gradient(circle, rgba(228, 6, 19, 0.35) 0%, rgba(228, 6, 19, 0) 70%);
+  filter: blur(20px);
+  pointer-events: none;
+}
+
+/* ── Dot-grid decorative background ───────────────────────────────────────── */
+.bg-dot-grid {
+  background-image: radial-gradient(currentColor 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* ── Icon badge — soft-tinted circle behind lucide icons on stat cards ───── */
+.icon-badge {
+  @apply flex items-center justify-center rounded-xl shrink-0;
+  width: 2.5rem;
+  height: 2.5rem;
+}
+
+/* ── Shimmer skeleton (for future loading states) ─────────────────────────── */
+.skeleton {
+  background: linear-gradient(90deg, var(--color-muted) 25%, color-mix(in srgb, var(--color-muted) 60%, white) 50%, var(--color-muted) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}

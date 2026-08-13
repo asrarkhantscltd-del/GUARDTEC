@@ -1,0 +1,84 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+import path from 'path'
+import { VitePWA } from 'vite-plugin-pwa'
+
+export default defineConfig({
+  plugins: [
+    react(),
+    tailwindcss(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      devOptions: { enabled: true },
+      includeAssets: ['icon.svg', 'favicon.svg'],
+      manifest: {
+        name: 'GuardTec Compliance',
+        short_name: 'GuardTec',
+        description: 'GuardTec Security — Staff Compliance Management',
+        theme_color: '#1e2535',
+        background_color: '#1e2535',
+        display: 'standalone',
+        orientation: 'any',
+        scope: '/',
+        start_url: '/',
+        icons: [
+          {
+            src: 'icon.svg',
+            sizes: 'any',
+            type: 'image/svg+xml',
+            purpose: 'any',
+          },
+          {
+            src: 'icon.svg',
+            sizes: 'any',
+            type: 'image/svg+xml',
+            purpose: 'maskable',
+          },
+        ],
+      },
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        // Without this, the SPA navigation fallback intercepts top-level
+        // navigations to /api/* (e.g. window.open, <a href="/api/...">
+        // target="_blank") and serves the cached index.html instead of
+        // the real response — breaking file downloads and document viewing.
+        navigateFallbackDenylist: [/^\/api\//],
+        // A new service worker otherwise sits "waiting" until every open
+        // tab closes before it takes over, so a rebuild silently keeps
+        // serving the old JS bundle. These make the new version activate
+        // and take control of open tabs immediately after install.
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
+        runtimeCaching: [
+          {
+            urlPattern: /^\/api\//,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'api-cache',
+              networkTimeoutSeconds: 10,
+              expiration: { maxEntries: 100, maxAgeSeconds: 300 },
+            },
+          },
+        ],
+      },
+    }),
+  ],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+      'react': path.resolve(__dirname, './node_modules/react'),
+      'react-dom': path.resolve(__dirname, './node_modules/react-dom'),
+    },
+  },
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+    },
+  },
+})

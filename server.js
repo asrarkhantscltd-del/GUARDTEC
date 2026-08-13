@@ -1,46 +1,422 @@
-﻿const express  = require('express');
-const { exec } = require('child_process');
-const fs      = require('fs');
-const path    = require('path');
-const XLSX    = require('xlsx');
+﻿const express      = require('express');
+const { execFile }  = require('child_process');
+const fs           = require('fs');
+const path         = require('path');
+const XLSX         = require('xlsx');
+const cookieParser = require('cookie-parser');
+const jwt          = require('jsonwebtoken');
+const bcrypt       = require('bcryptjs');
+const crypto       = require('crypto');
+const { Pool }     = require('pg');
 
 const app  = express();
 const PORT = 3000;
+
+const JWT_SECRET = process.env.JWT_SECRET;
+const pgPool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// Self-healing schema — adds columns introduced after the original users table
+// was created, so upgrades never require a manual migration step.
+(async function ensureUsersSchema() {
+  try {
+    await pgPool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT DEFAULT ''");
+    await pgPool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE");
+    await pgPool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_id TEXT");
+  } catch (e) {
+    console.error('[DB] users schema migration failed:', e.message);
+  }
+})();
+
+(async function ensureMessageAttachmentsSchema() {
+  try {
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS message_attachments (
+        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        message_id    UUID NOT NULL REFERENCES staff_messages(id) ON DELETE CASCADE,
+        filename      TEXT NOT NULL,
+        original_name TEXT NOT NULL,
+        mime_type     TEXT NOT NULL,
+        size_bytes    INTEGER NOT NULL,
+        uploaded_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pgPool.query("CREATE INDEX IF NOT EXISTS idx_msg_attach_message ON message_attachments(message_id)");
+  } catch (e) {
+    console.error('[DB] message_attachments schema migration failed:', e.message);
+  }
+})();
+
+// Per-event notification feed for the management bell — distinct from the
+// compliance-alerts card, which stays status-based (persists until the real
+// issue is fixed). These are dismissible: created on a staff action, cleared
+// once a manager clicks through to see it.
+(async function ensureNotificationsSchema() {
+  try {
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        type         TEXT NOT NULL,
+        actor_name   TEXT NOT NULL,
+        summary      TEXT NOT NULL,
+        link_staff_id     TEXT,
+        link_tab          TEXT,
+        link_incident_id  UUID,
+        created_at   TIMESTAMPTZ DEFAULT NOW(),
+        seen_at      TIMESTAMPTZ
+      )
+    `);
+    await pgPool.query("CREATE INDEX IF NOT EXISTS idx_notifications_unseen ON notifications(seen_at) WHERE seen_at IS NULL");
+  } catch (e) {
+    console.error('[DB] notifications schema migration failed:', e.message);
+  }
+})();
+
+async function createNotification(opts) {
+  try {
+    await pgPool.query(
+      `INSERT INTO notifications (type, actor_name, summary, link_staff_id, link_tab, link_incident_id)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [opts.type, opts.actorName, opts.summary, opts.linkStaffId || null, opts.linkTab || null, opts.linkIncidentId || null]
+    );
+  } catch (e) {
+    console.error('[NOTIFY] failed to create notification:', e.message);
+  }
+}
+
+// ── ROLES (configurable, module-level permissions) ────────────────────────────
+// Modules a role can be granted: staff, fleet, sites, compliance, pending_review.
+// Team Access + Manage Roles are deliberately NOT part of this system — they stay
+// hardcoded director-only everywhere, so no role can ever grant itself the power
+// to create/edit other accounts or roles (privilege-escalation guard).
+var DEFAULT_ROLES = [
+  { slug: 'director',       name: 'Director',            is_system: true,  permissions: { staff: true,  fleet: true,  sites: true,  compliance: true,  pending_review: true  } },
+  { slug: 'ops_manager',    name: 'Operations Manager',  is_system: true,  permissions: { staff: true,  fleet: true,  sites: true,  compliance: true,  pending_review: true  } },
+  { slug: 'hr_manager',     name: 'HR Manager',          is_system: true,  permissions: { staff: true,  fleet: false, sites: true,  compliance: true,  pending_review: false } },
+  { slug: 'office_manager', name: 'Office Manager',      is_system: true,  permissions: { staff: true,  fleet: false, sites: true,  compliance: false, pending_review: false } },
+  { slug: 'accounts',       name: 'Accounts',            is_system: true,  permissions: { staff: true,  fleet: false, sites: false, compliance: false, pending_review: false } },
+  { slug: 'media',          name: 'Media',               is_system: true,  permissions: { staff: false, fleet: false, sites: false, compliance: false, pending_review: false } },
+  { slug: 'supervisor',     name: 'Supervisor',          is_system: true,  permissions: { staff: true,  fleet: false, sites: true,  compliance: true,  pending_review: false } },
+  { slug: 'fleet_manager',  name: 'Fleet Manager',       is_system: true,  permissions: { staff: false, fleet: true,  sites: false, compliance: false, pending_review: false } },
+  { slug: 'staff',          name: 'Staff (self-service)',is_system: true,  permissions: {} },
+];
+
+(async function ensureRolesSchema() {
+  try {
+    await pgPool.query(
+      "CREATE TABLE IF NOT EXISTS roles (" +
+      "slug TEXT PRIMARY KEY, name TEXT NOT NULL, is_system BOOLEAN NOT NULL DEFAULT FALSE, " +
+      "permissions JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ DEFAULT NOW())"
+    );
+    for (var i = 0; i < DEFAULT_ROLES.length; i++) {
+      var r = DEFAULT_ROLES[i];
+      await pgPool.query(
+        'INSERT INTO roles (slug, name, is_system, permissions) VALUES ($1,$2,$3,$4) ON CONFLICT (slug) DO NOTHING',
+        [r.slug, r.name, r.is_system, JSON.stringify(r.permissions)]
+      );
+    }
+  } catch (e) {
+    console.error('[DB] roles schema migration failed:', e.message);
+  }
+})();
+
+var rolesCache = null;
+async function loadRoles() {
+  if (!rolesCache) {
+    var result = await pgPool.query('SELECT slug, name, is_system, permissions FROM roles ORDER BY name');
+    rolesCache = result.rows;
+  }
+  return rolesCache;
+}
+function invalidateRolesCache() { rolesCache = null; }
+
+// Director always passes — a safety net so a misconfigured role can never
+// lock the Director out of their own system.
+function requirePermission(moduleKey) {
+  return async function(req, res, next) {
+    if (!req.user || !req.user.role) return res.status(403).json({ error: 'Forbidden' });
+    if (req.user.role === 'director') return next();
+    try {
+      var roles = await loadRoles();
+      var roleDef = roles.find(function(r){ return r.slug === req.user.role; });
+      if (!roleDef || !roleDef.permissions || !roleDef.permissions[moduleKey]) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      next();
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  };
+}
+
+// ── AUTH HELPERS ──────────────────────────────────────────────────────────────
+function signToken(user) {
+  return jwt.sign({ id: user.id, username: user.username, role: user.role || 'supervisor', staff_id: user.staff_id || null }, JWT_SECRET, { expiresIn: '7d' });
+}
+
+// Double-submit CSRF token — readable by JS (unlike the httpOnly auth cookie)
+// so the frontend can echo it back as a header on every mutating request.
+// Defense-in-depth on top of sameSite:'strict', which already blocks the
+// auth cookie from being sent on any cross-site request.
+function issueCsrfCookie(res) {
+  var csrfToken = crypto.randomBytes(24).toString('hex');
+  res.cookie('csrf_token', csrfToken, {
+    httpOnly: false,
+    sameSite: 'strict',
+    secure: false, // TODO: set true once Phase 7 adds HTTPS, matches the auth cookie's own TODO
+    maxAge: 7 * 24 * 60 * 60 * 1000
+  });
+}
+
+// Pulls the token from wherever it might be — cookie (web/PWA) or Authorization
+// header (future native mobile app) — without sending any response itself.
+function getAuthedUser(req) {
+  var token = null;
+  if (req.cookies && req.cookies.token) token = req.cookies.token;
+  else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+    token = req.headers.authorization.slice(7);
+  }
+  if (!token) return null;
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch (e) {
+    return null; // missing, expired, or tampered — all treated as "not logged in"
+  }
+}
+
+// The gatekeeper: sits in front of API routes. No valid token -> 401, real
+// route code never runs.
+function requireLogin(req, res, next) {
+  var user = getAuthedUser(req);
+  if (!user) return res.status(401).json({ error: 'Not logged in' });
+  req.user = user;
+  next();
+}
+
+function requireRole() {
+  var allowedRoles = Array.prototype.slice.call(arguments);
+  return function(req, res, next) {
+    if (!req.user || !req.user.role) return res.status(403).json({ error: 'Forbidden' });
+    if (allowedRoles.indexOf(req.user.role) === -1) return res.status(403).json({ error: 'Forbidden' });
+    next();
+  };
+}
+
+// Lets a staff user act on their OWN record (req.params.id must match their
+// staff_id), or falls back to the normal management permission check for
+// everyone else (director / any role granted moduleKey).
+function requireOwnStaffOrPermission(moduleKey) {
+  var permCheck = requirePermission(moduleKey);
+  return function(req, res, next) {
+    if (req.user && req.user.role === 'staff') {
+      if (req.user.staff_id && req.user.staff_id === req.params.id) return next();
+      return res.status(403).json({ ok: false, error: 'Forbidden' });
+    }
+    permCheck(req, res, next);
+  };
+}
+
 
 const HOME        = process.env.USERPROFILE || ('C:\\Users\\' + require('os').userInfo().username);
 const BASE        = process.env.DATA_PATH || path.join(HOME, "First Call Site Services", "FCSS - Managers", "HR and Legal", "Asrar", "GuardTec Compliance");
 const ACTIVE_DIR  = path.join(BASE, "02 - Vetting & Screening", "Active Staff");
 const OVERVIEW    = path.join(BASE, "02 - Vetting & Screening", "GUARDTEC — COMPLIANCE OVERVIEW.html");
 const SPREADSHEET = process.env.DATA_PATH ? path.join(process.env.DATA_PATH, "01 - Staff Compliance Tracker", "GuardTec Security — Staff Compliance Tracker.xlsx") : path.join(HOME, "OneDrive - First Call Site Services", "TOTAL EMPLOYEE spreadsheet.xlsl.xlsx");
-const LOGO_PATH = null;
 const COMPLIANCE_TRACKER   = path.join(BASE, "01 - Staff Compliance Tracker", "GuardTec Security — Staff Compliance Tracker.xlsx");
 const REFERENCE_TRACKER    = path.join(BASE, "05 - Reference Tracker", "GuardTec Security — Reference Check Tracker.xlsx");
 const SHAREPOINT_DASHBOARD = path.join(BASE, "! GuardTec Compliance Dashboard.html");
+const SITES_FILE           = path.join(BASE, "deployment-sites.json");
+const SITE_DOCS_DIR        = path.join(BASE, "site-documents");
+if (!fs.existsSync(SITE_DOCS_DIR)) fs.mkdirSync(SITE_DOCS_DIR, { recursive: true });
 
 const SUBFOLDERS = ['01 - SIA Licence','02 - CSCS Card','03 - Right to Work & Visa','04 - References','05 - Employment Contract','06 - Training & Induction'];
 function getTodayStr() { return new Date().toISOString().split('T')[0]; }
 
 app.use(express.json({ limit: '10mb' }));
+app.use(cookieParser());
 
-// Serve logo as its own endpoint
-app.get('/logo', (req, res) => {
-  res.setHeader('Content-Type', 'image/png');
-  if (!LOGO_PATH || !fs.existsSync(LOGO_PATH)) return res.status(404).end();
-  res.send(fs.readFileSync(LOGO_PATH));
+// ── CSRF double-submit check ──────────────────────────────────────────────────
+// Every mutating request must echo the csrf_token cookie back as a header.
+// A cross-site attacker's page can trigger the request but can never read the
+// cookie to put in the header, so the two won't match. Login/register are
+// exempt — no CSRF cookie exists yet before the user is authenticated.
+var CSRF_EXEMPT_PATHS = ['/api/login', '/api/register'];
+app.use(function(req, res, next) {
+  if (['GET', 'HEAD', 'OPTIONS'].indexOf(req.method) !== -1) return next();
+  if (CSRF_EXEMPT_PATHS.indexOf(req.path) !== -1) return next();
+  var cookieToken = req.cookies && req.cookies.csrf_token;
+  var headerToken = req.headers['x-csrf-token'];
+  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+    return res.status(403).json({ ok: false, error: 'Invalid or missing CSRF token. Please log out and back in.' });
+  }
+  next();
+});
+
+// ── LOGIN / LOGOUT (no gatekeeper — these ARE the gate) ───────────────────────
+async function resolveRoleInfo(role) {
+  if (role === 'director') {
+    return { name: 'Director', permissions: { staff: true, fleet: true, sites: true, compliance: true, pending_review: true } };
+  }
+  var roles = await loadRoles();
+  var def = roles.find(function(r){ return r.slug === role; });
+  return { name: (def && def.name) || role, permissions: (def && def.permissions) || {} };
+}
+
+app.post('/api/login', async function(req, res) {
+  try {
+    var username = String((req.body && req.body.username) || '').trim();
+    var password = String((req.body && req.body.password) || '');
+    var result = await pgPool.query('SELECT id, username, password_hash, role, full_name, staff_id, is_active FROM users WHERE username = $1', [username]);
+    if (!result.rows.length) return res.status(401).json({ error: 'Invalid username or password' });
+
+    var user = result.rows[0];
+    if (user.is_active === false) return res.status(401).json({ error: 'This account has been suspended' });
+    var match = await bcrypt.compare(password, user.password_hash);
+    if (!match) return res.status(401).json({ error: 'Invalid username or password' });
+
+    var deptResult = await pgPool.query(
+      'SELECT d.slug, d.name FROM user_departments ud JOIN departments d ON d.id = ud.department_id WHERE ud.user_id = $1',
+      [user.id]
+    ).catch(function() { return { rows: [] }; });
+
+    var token = signToken(user);
+    res.cookie('token', token, {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: false, // TODO: set true once Phase 7 adds HTTPS — a secure cookie is silently dropped over plain HTTP
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days, matches the token's own expiry
+    });
+    issueCsrfCookie(res);
+    var roleInfo = await resolveRoleInfo(user.role);
+    res.json({
+      ok: true,
+      token: token,
+      user: {
+        id: user.id,
+        username: user.username,
+        full_name: user.full_name || user.username,
+        role: user.role || 'supervisor',
+        role_name: roleInfo.name,
+        staff_id: user.staff_id || null,
+        permissions: roleInfo.permissions,
+        departments: deptResult.rows.map(function(d) { return d.slug; })
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/logout', function(req, res) {
+  res.clearCookie('token');
+  res.clearCookie('csrf_token');
+  res.json({ ok: true });
+});
+
+// Staff self-registration — proves identity with a one-time code an Ops
+// Manager/Director hands them, then the staff member picks their own
+// username & password. No requireLogin gate — this IS how staff get in.
+app.post('/api/register', async function(req, res) {
+  try {
+    var code     = String((req.body && req.body.registration_code) || '').trim().toUpperCase();
+    var username = String((req.body && req.body.username) || '').trim().toLowerCase();
+    var password = String((req.body && req.body.password) || '');
+
+    if (!code)      return res.status(400).json({ ok: false, error: 'Registration code is required.' });
+    if (!username)  return res.status(400).json({ ok: false, error: 'Username is required.' });
+    if (!password || password.length < 6) return res.status(400).json({ ok: false, error: 'Password must be at least 6 characters.' });
+
+    var all = loadAllStaff();
+    var emp = all.find(function(e) { return e.registration_code === code && !e.registration_claimed; });
+    if (!emp) return res.status(400).json({ ok: false, error: 'Invalid or already-used registration code. Ask your manager for a new one.' });
+
+    var exists = await pgPool.query('SELECT id FROM users WHERE username = $1', [username]);
+    if (exists.rows.length) return res.status(400).json({ ok: false, error: 'That username is already taken.' });
+
+    var hash = await bcrypt.hash(password, 10);
+    var r = await pgPool.query(
+      'INSERT INTO users (username, password_hash, full_name, role, email, is_active, staff_id) VALUES ($1,$2,$3,$4,$5,TRUE,$6) RETURNING id, username, full_name, role, staff_id',
+      [username, hash, emp.name, 'staff', emp.email || '', emp.id]
+    );
+    var user = r.rows[0];
+
+    emp.registration_claimed = true;
+    saveStaff(emp, emp._folderPath);
+
+    var token = signToken(user);
+    res.cookie('token', token, {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: false,
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+    issueCsrfCookie(res);
+    var registerRoleInfo = await resolveRoleInfo(user.role);
+    res.json({
+      ok: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        full_name: user.full_name || user.username,
+        role: user.role,
+        role_name: registerRoleInfo.name,
+        staff_id: user.staff_id,
+        permissions: registerRoleInfo.permissions,
+        departments: []
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/me', async function(req, res) {
+  var authed = getAuthedUser(req);
+  if (!authed) return res.status(401).json({ error: 'Not logged in' });
+  try {
+    var result = await pgPool.query('SELECT id, username, role, full_name, staff_id, is_active FROM users WHERE id = $1', [authed.id]);
+    if (!result.rows.length) return res.status(401).json({ error: 'User not found' });
+    var user = result.rows[0];
+    if (user.is_active === false) return res.status(401).json({ error: 'This account has been suspended' });
+    var deptResult = await pgPool.query(
+      'SELECT d.slug, d.name FROM user_departments ud JOIN departments d ON d.id = ud.department_id WHERE ud.user_id = $1',
+      [user.id]
+    ).catch(function() { return { rows: [] }; });
+    var meRoleInfo = await resolveRoleInfo(user.role);
+    res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        full_name: user.full_name || user.username,
+        role: user.role || 'supervisor',
+        role_name: meRoleInfo.name,
+        staff_id: user.staff_id || null,
+        permissions: meRoleInfo.permissions,
+        departments: deptResult.rows.map(function(d) { return d.slug; })
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Serve logo as its own endpoint (no logo configured — always 404)
+app.get('/logo', function(req, res) {
+  res.status(404).end();
 });
 
 // ── PROFILE PHOTO ─────────────────────────────────────────────────────────────
-function findProfilePhoto(folderPath) {
-  // Check for dedicated profile photo first
-  var exts = ['.jpg','.jpeg','.png','.webp'];
+function findFileByExts(dir, prefix) {
+  var exts = ['.jpg', '.jpeg', '.png', '.webp'];
   for (var e of exts) {
-    var p = path.join(folderPath, 'profile' + e);
+    var p = path.join(dir, prefix + e);
     if (fs.existsSync(p)) return p;
   }
   return null;
 }
 
-app.get('/api/staff/:id/photo', function(req, res) {
+function findProfilePhoto(folderPath) { return findFileByExts(folderPath, 'profile'); }
+
+app.get('/api/staff/:id/photo', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -57,7 +433,7 @@ app.get('/api/staff/:id/photo', function(req, res) {
   }
 });
 
-app.post('/api/staff/:id/photo', function(req, res) {
+app.post('/api/staff/:id/photo', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -84,6 +460,276 @@ app.post('/api/staff/:id/photo', function(req, res) {
       res.json({ ok: true });
     });
   } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── STAFF DOCUMENT FILES ──────────────────────────────────────────────────────
+var ALLOWED_DOC_KEYS = [
+  'siaPhysical','passport','brpCard','proofOfAddress1','proofOfAddress2',
+  'p45','bankLetter','application','assignmentInstructions','cscsCard'
+];
+
+var ALLOWED_TRAINING_KEYS = [
+  'siaCertificate','firstAid','manualHandling','fireAwareness',
+  'conflictManagement','bwcTraining','cscsTest'
+];
+
+var DOC_KEY_LABELS = {
+  siaPhysical: 'SIA Licence copy', passport: 'Passport / Photo ID', brpCard: 'BRP Card',
+  proofOfAddress1: 'Proof of Address', proofOfAddress2: 'Proof of Address',
+  p45: 'P45/P60', bankLetter: 'Bank Letter', application: 'Application Form',
+  assignmentInstructions: 'Assignment Instructions', cscsCard: 'CSCS Card',
+};
+var TRAINING_KEY_LABELS = {
+  siaCertificate: 'SIA Qualifying Certificate', firstAid: 'First Aid certificate',
+  manualHandling: 'Manual Handling certificate', fireAwareness: 'Fire Awareness certificate',
+  conflictManagement: 'Conflict Management certificate', bwcTraining: 'BWC Training certificate',
+  cscsTest: 'CSCS Health & Safety Test certificate',
+};
+
+function findDocFile(folderPath, docKey) {
+  var exts = ['.pdf','.jpg','.jpeg','.png','.webp'];
+  for (var e of exts) {
+    var dp = path.join(folderPath, 'doc_' + docKey + e);
+    if (fs.existsSync(dp)) return dp;
+  }
+  return null;
+}
+
+app.get('/api/staff/:id/documents/:docKey', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
+  var docKey = req.params.docKey;
+  if (!ALLOWED_DOC_KEYS.includes(docKey)) return res.status(400).end();
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp || !emp._folderPath) return res.status(404).end();
+    var fp = findDocFile(emp._folderPath, docKey);
+    if (!fp) return res.status(404).end();
+    var ext = path.extname(fp).toLowerCase();
+    var mime = ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', 'inline; filename="' + docKey + ext + '"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(fp));
+  } catch(e) {
+    res.status(500).end();
+  }
+});
+
+app.post('/api/staff/:id/documents/:docKey', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
+  var docKey = req.params.docKey;
+  if (!ALLOWED_DOC_KEYS.includes(docKey)) return res.status(400).json({ ok:false, error:'Invalid document key' });
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp || !emp._folderPath) return res.status(404).json({ ok:false, error:'Staff not found' });
+    var chunks = [];
+    req.on('data', function(c){ chunks.push(c); });
+    req.on('end', function() {
+      var buf = Buffer.concat(chunks);
+      // Detect file type from magic bytes
+      var ext = '.pdf';
+      if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
+      else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
+      // Remove any existing file for this docKey
+      ['.pdf','.jpg','.jpeg','.png','.webp'].forEach(function(e){
+        var old = path.join(emp._folderPath, 'doc_' + docKey + e);
+        if (fs.existsSync(old)) fs.unlinkSync(old);
+      });
+      fs.writeFileSync(path.join(emp._folderPath, 'doc_' + docKey + ext), buf);
+      // Auto-update metadata in staff_data.json
+      var jp = path.join(emp._folderPath, 'staff_data.json');
+      var data = JSON.parse(fs.readFileSync(jp, 'utf8'));
+      if (!data.documents) data.documents = {};
+      var today = new Date().toISOString().split('T')[0];
+      data.documents[docKey] = { uploaded: true, date: today };
+      fs.writeFileSync(jp, JSON.stringify(data, null, 2));
+      console.log('[DOCS] Saved', docKey, 'for', emp.name);
+      if (req.user.role === 'staff') {
+        createNotification({
+          type: 'document', actorName: emp.name,
+          summary: 'uploaded ' + (DOC_KEY_LABELS[docKey] || docKey),
+          linkStaffId: req.params.id, linkTab: 'documents',
+        });
+      }
+      res.json({ ok:true, date: today });
+    });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// Management-only — deliberately requirePermission, not requireOwnStaffOrPermission,
+// so a staff member can never remove a document their manager has already reviewed.
+app.delete('/api/staff/:id/documents/:docKey', requireLogin, requirePermission('staff'), function(req, res) {
+  var docKey = req.params.docKey;
+  if (!ALLOWED_DOC_KEYS.includes(docKey)) return res.status(400).json({ ok:false, error:'Invalid document key' });
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp || !emp._folderPath) return res.status(404).json({ ok:false, error:'Staff not found' });
+    var fp = findDocFile(emp._folderPath, docKey);
+    if (fp) fs.unlinkSync(fp);
+    var jp = path.join(emp._folderPath, 'staff_data.json');
+    var data = JSON.parse(fs.readFileSync(jp, 'utf8'));
+    if (data.documents) delete data.documents[docKey];
+    fs.writeFileSync(jp, JSON.stringify(data, null, 2));
+    console.log('[DOCS] Deleted', docKey, 'for', emp.name);
+    res.json({ ok:true });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── TRAINING CERTIFICATE FILES ────────────────────────────────────────────────
+// Staff upload their own certificate for each standard course; management can
+// only view whether one is on file (no upload button on that side of the UI).
+app.get('/api/staff/:id/training/:key/certificate', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
+  var key = req.params.key;
+  if (!ALLOWED_TRAINING_KEYS.includes(key)) return res.status(400).end();
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp || !emp._folderPath) return res.status(404).end();
+    var fp = findDocFile(emp._folderPath, 'training_' + key);
+    if (!fp) return res.status(404).end();
+    var ext = path.extname(fp).toLowerCase();
+    var mime = ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', 'inline; filename="' + key + ext + '"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(fp));
+  } catch(e) {
+    res.status(500).end();
+  }
+});
+
+app.post('/api/staff/:id/training/:key/certificate', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
+  var key = req.params.key;
+  if (!ALLOWED_TRAINING_KEYS.includes(key)) return res.status(400).json({ ok:false, error:'Invalid training key' });
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp || !emp._folderPath) return res.status(404).json({ ok:false, error:'Staff not found' });
+    var chunks = [];
+    req.on('data', function(c){ chunks.push(c); });
+    req.on('end', function() {
+      var buf = Buffer.concat(chunks);
+      var ext = '.pdf';
+      if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
+      else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
+      ['.pdf','.jpg','.jpeg','.png','.webp'].forEach(function(e){
+        var old = path.join(emp._folderPath, 'doc_training_' + key + e);
+        if (fs.existsSync(old)) fs.unlinkSync(old);
+      });
+      fs.writeFileSync(path.join(emp._folderPath, 'doc_training_' + key + ext), buf);
+      var jp = path.join(emp._folderPath, 'staff_data.json');
+      var data = JSON.parse(fs.readFileSync(jp, 'utf8'));
+      if (!data.training) data.training = {};
+      if (!data.training[key]) data.training[key] = {};
+      var today = new Date().toISOString().split('T')[0];
+      data.training[key].certUploaded = true;
+      data.training[key].certDate = today;
+      fs.writeFileSync(jp, JSON.stringify(data, null, 2));
+      console.log('[TRAINING CERT] Saved', key, 'for', emp.name);
+      if (req.user.role === 'staff') {
+        createNotification({
+          type: 'training_cert', actorName: emp.name,
+          summary: 'uploaded ' + (TRAINING_KEY_LABELS[key] || key),
+          linkStaffId: req.params.id, linkTab: 'training',
+        });
+      }
+      res.json({ ok:true, date: today });
+    });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// Management-only, same reasoning as the documents delete route above.
+app.delete('/api/staff/:id/training/:key/certificate', requireLogin, requirePermission('staff'), function(req, res) {
+  var key = req.params.key;
+  if (!ALLOWED_TRAINING_KEYS.includes(key)) return res.status(400).json({ ok:false, error:'Invalid training key' });
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp || !emp._folderPath) return res.status(404).json({ ok:false, error:'Staff not found' });
+    var fp = findDocFile(emp._folderPath, 'training_' + key);
+    if (fp) fs.unlinkSync(fp);
+    var jp = path.join(emp._folderPath, 'staff_data.json');
+    var data = JSON.parse(fs.readFileSync(jp, 'utf8'));
+    if (data.training && data.training[key]) {
+      data.training[key].certUploaded = false;
+      delete data.training[key].certDate;
+    }
+    fs.writeFileSync(jp, JSON.stringify(data, null, 2));
+    console.log('[TRAINING CERT] Deleted', key, 'for', emp.name);
+    res.json({ ok:true });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── USER (ACCOUNT) PROFILE PHOTOS ────────────────────────────────────────────
+// One photo per logged-in account (stored by postgres user id, not staff id).
+// Works for every role — director, manager, staff — anyone with a login.
+var USER_PHOTOS_DIR = path.join(BASE, 'user-photos');
+if (!fs.existsSync(USER_PHOTOS_DIR)) fs.mkdirSync(USER_PHOTOS_DIR, { recursive: true });
+
+function findUserPhoto(userId) { return findFileByExts(USER_PHOTOS_DIR, String(userId)); }
+
+app.get('/api/users/:id/photo', requireLogin, function(req, res) {
+  try {
+    var photo = findUserPhoto(req.params.id);
+    if (!photo) return res.status(404).end();
+    var ext = path.extname(photo).toLowerCase();
+    var mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(photo));
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+app.get('/api/me/photo', requireLogin, function(req, res) {
+  try {
+    var photo = findUserPhoto(req.user.id);
+    if (!photo) return res.status(404).end();
+    var ext = path.extname(photo).toLowerCase();
+    var mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(photo));
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+app.post('/api/me/photo', requireLogin, function(req, res) {
+  try {
+    var chunks = [];
+    req.on('data', function(c) { chunks.push(c); });
+    req.on('end', function() {
+      try {
+        var buf = Buffer.concat(chunks);
+        var ext = '.jpg';
+        if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
+        else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
+
+        ['.jpg', '.jpeg', '.png', '.webp'].forEach(function(e) {
+          var old = path.join(USER_PHOTOS_DIR, String(req.user.id) + e);
+          if (fs.existsSync(old)) fs.unlinkSync(old);
+        });
+
+        fs.writeFileSync(path.join(USER_PHOTOS_DIR, String(req.user.id) + ext), buf);
+        res.json({ ok: true });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: e.message });
+      }
+    });
+  } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -348,6 +994,15 @@ function saveStaff(emp, oldFolderPath) {
   return newFolder;
 }
 
+// ── DEPLOYMENT SITES ──────────────────────────────────────────────────────────
+function loadSites() {
+  if (!fs.existsSync(SITES_FILE)) return [];
+  try { return JSON.parse(fs.readFileSync(SITES_FILE, 'utf8')).sites || []; } catch(e) { return []; }
+}
+function saveSites(sites) {
+  fs.writeFileSync(SITES_FILE, JSON.stringify({ sites: sites }, null, 2), 'utf8');
+}
+
 // ── INIT FROM SPREADSHEET ─────────────────────────────────────────────────────
 function initFromSpreadsheet() {
   try {
@@ -358,6 +1013,14 @@ function initFromSpreadsheet() {
       if (!r || !r[0]) return;
       var name = String(r[0]).trim();
       if (!name) return;
+
+      // Sanity check: real staff rows always have a real phone number.
+      // Legend/summary/caption rows in the spreadsheet (e.g. "COLOUR KEY",
+      // "TOTAL STAFF TRACKED") have either a blank phone column or non-numeric
+      // text there instead — skip anything that isn't a real phone number so
+      // it doesn't get created as a fake staff folder on every app restart.
+      var phoneDigits = (r[3] ? String(r[3]) : '').replace(/\D/g, '');
+      if (phoneDigits.length < 7) return;
 
       var siaNum = r[5] ? String(r[5]).trim().replace(/\s+/g,'') : '';
       if (['N/A','NA',''].includes(siaNum.toUpperCase())) siaNum = '';
@@ -475,6 +1138,12 @@ function buildReportHTML(emp) {
 }
 
 // ── OVERVIEW HTML ─────────────────────────────────────────────────────────────
+function refreshOverview() {
+  var html = buildOverviewHTML(loadAllStaff());
+  fs.writeFileSync(OVERVIEW, html, 'utf8');
+  fs.writeFileSync(SHAREPOINT_DASHBOARD, html, 'utf8');
+}
+
 function buildOverviewHTML(staff) {
   var logoB64 = '';
   var green = staff.filter(function(e){return e.overall==='green';}).length;
@@ -511,7 +1180,7 @@ function buildOverviewHTML(staff) {
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
-app.get('/api/staff', function(req, res) {
+app.get('/api/staff', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     res.json(loadAllStaff());
   } catch(e) {
@@ -519,13 +1188,110 @@ app.get('/api/staff', function(req, res) {
   }
 });
 
+// ── STAFF EXCEL EXPORT ────────────────────────────────────────────────────────
+// Mirrors the frontend's normDeploy() so filters match what the UI shows.
+function normDeployStatus(raw) {
+  var v = String(raw || '').toLowerCase().replace(/[\s_-]/g, '');
+  if (v.indexOf('onsite') !== -1 || v.indexOf('site') !== -1 || v.indexOf('deployed') !== -1) return 'onsite';
+  if (v.indexOf('available') !== -1 || v.indexOf('standby') !== -1) return 'available';
+  if (v.indexOf('off') !== -1 || v.indexOf('leave') !== -1 || v.indexOf('rest') !== -1 || v.indexOf('inactive') !== -1) return 'offduty';
+  return 'unknown';
+}
+
+app.get('/api/staff/export', requireLogin, requirePermission('staff'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var sites = loadSites();
+    var siteName = function(id) {
+      var s = sites.find(function(x) { return x.id === id; });
+      return s ? s.name : (id || '');
+    };
+
+    var ids = req.query.ids ? String(req.query.ids).split(',') : null;
+    var list = ids ? all.filter(function(s) { return ids.indexOf(s.id) !== -1; }) : all;
+
+    var deployFilter = req.query.deployStatus ? String(req.query.deployStatus) : null;
+    if (deployFilter) list = list.filter(function(s) { return normDeployStatus(s.deployStatus) === deployFilter; });
+
+    var siteFilter = req.query.site ? String(req.query.site) : null;
+    if (siteFilter) list = list.filter(function(s) { return s.currentSite === siteFilter; });
+
+    var overallFilter = req.query.overall ? String(req.query.overall) : null;
+    if (overallFilter) list = list.filter(function(s) { return s.overall === overallFilter; });
+
+    var rows = list.map(function(s) {
+      var missingItems = [];
+      if (!(s.sia && s.sia.number)) missingItems.push('SIA');
+      if (!(s.cscs && s.cscs.number)) missingItems.push('CSCS');
+      if (!(s.dbs && s.dbs.type)) missingItems.push('DBS');
+      if (!(s.bs7858 && s.bs7858.completed)) missingItems.push('BS7858');
+      return {
+        'Name': s.name || '',
+        'Job Role': s.jobRole || '',
+        'Overall Status': s.overall || '',
+        'Email': s.email || '',
+        'Phone': s.phone || '',
+        'Nationality': s.nationality || '',
+        'Date of Birth': s.dateOfBirth || s.dob || '',
+        'NI Number': s.ni || '',
+        'Address': s.address || '',
+        'Deploy Status': normDeployStatus(s.deployStatus),
+        'Current Site': s.currentSite ? siteName(s.currentSite) : '',
+        'SIA Number': (s.sia && s.sia.number) || 'Missing',
+        'SIA Expiry': (s.sia && s.sia.expiry) || 'Missing',
+        'CSCS Number': (s.cscs && s.cscs.number) || 'Missing',
+        'CSCS Expiry': (s.cscs && s.cscs.expiry) || 'Missing',
+        'Visa Type': (s.visa && s.visa.type) || 'Missing',
+        'Visa Expiry': (s.visa && s.visa.expiry) || 'Missing',
+        'DBS Type': (s.dbs && s.dbs.type) || 'Missing',
+        'DBS Check Date': (s.dbs && s.dbs.checkDate) || 'Missing',
+        'BS7858 Completed': (s.bs7858 && s.bs7858.completed) ? 'Yes' : 'No',
+        'Missing Documents': missingItems.length ? missingItems.join(', ') : 'None',
+      };
+    });
+    sendXlsx(res, 'GuardTec-Staff-Report-' + new Date().toISOString().slice(0,10) + '.xlsx', rows);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── COMPLIANCE ALERTS ─────────────────────────────────────────────────────────
+app.get('/api/compliance/alerts', requireLogin, requirePermission('staff'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var in30 = new Date(today.getTime() + 30 * 86400000);
+    var items = [];
+
+    all.forEach(function(s) {
+      function check(label, dateStr) {
+        if (!dateStr) return;
+        var d = new Date(dateStr);
+        if (isNaN(d.getTime())) return;
+        var isExpired = d < today;
+        var isExpiring = !isExpired && d <= in30;
+        if (isExpired || isExpiring) {
+          items.push({ staffId: s.id, name: s.name, label: label, expiry: dateStr, type: isExpired ? 'expired' : 'expiring' });
+        }
+      }
+      check('SIA Licence',    s.sia  && s.sia.expiry);
+      check('CSCS Card',      s.cscs && s.cscs.expiry);
+      var isBritish = (s.nationality || '').toLowerCase().includes('british');
+      if (!isBritish) check('Right to Work', s.visa && s.visa.expiry);
+    });
+
+    res.json({ total: items.length, expiredCount: items.filter(function(i){ return i.type === 'expired'; }).length, expiringCount: items.filter(function(i){ return i.type === 'expiring'; }).length, items: items.slice(0, 20) });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── DEPLOYMENT STATUS ─────────────────────────────────────────────────────────
-app.patch('/api/staff/:id/deploy', function(req, res) {
+app.patch('/api/staff/:id/deploy', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
     if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
-    emp.deployStatus = req.body.deployStatus || 'inactive';
+    emp.deployStatus = req.body.deployStatus || emp.deployStatus || 'inactive';
+    if (req.body.currentSite !== undefined) emp.currentSite = req.body.currentSite;
     saveStaff(emp, emp._folderPath);
     res.json({ ok: true });
   } catch(e) {
@@ -534,7 +1300,507 @@ app.patch('/api/staff/:id/deploy', function(req, res) {
   }
 });
 
-app.put('/api/staff/:id', function(req, res) {
+// ── TRAINING ──────────────────────────────────────────────────────────────────
+app.patch('/api/staff/:id/training', requireLogin, requirePermission('staff'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
+    emp.training = req.body.training || {};
+    saveStaff(emp, emp._folderPath);
+    res.json({ ok: true });
+  } catch(e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── STAFF SELF-SERVICE PORTAL ─────────────────────────────────────────────────
+
+function generateRegistrationCode() {
+  var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous 0/O/1/I
+  var code = '';
+  for (var i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+// Ops Manager / Director generate & share this with a staff member so they
+// can self-register their own portal login.
+app.get('/api/staff/:id/registration-code', requireLogin, requirePermission('pending_review'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
+    if (emp.registration_claimed) return res.json({ ok: true, claimed: true, code: null });
+    if (!emp.registration_code) {
+      emp.registration_code = generateRegistrationCode();
+      saveStaff(emp, emp._folderPath);
+    }
+    res.json({ ok: true, claimed: false, code: emp.registration_code });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/staff/:id/registration-code/regenerate', requireLogin, requirePermission('pending_review'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
+    emp.registration_code = generateRegistrationCode();
+    emp.registration_claimed = false;
+    saveStaff(emp, emp._folderPath);
+    res.json({ ok: true, code: emp.registration_code });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+function sanitizeForStaffView(emp) {
+  var copy = Object.assign({}, emp);
+  delete copy._folderPath;
+  return copy;
+}
+
+// The logged-in staff member's own profile — reads via the staff_id baked
+// into their JWT at login/registration time.
+app.get('/api/my-profile', requireLogin, requireRole('staff'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.user.staff_id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Profile not found' });
+    res.json({ ok: true, profile: sanitizeForStaffView(emp) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Staff submit changes here — they land in pending_submission and do NOT
+// touch the live compliance record until a manager approves them.
+app.post('/api/my-profile', requireLogin, requireRole('staff'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.user.staff_id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Profile not found' });
+
+    var b = req.body || {};
+    var pending = Object.assign({}, emp.pending_submission, {
+      submitted_at: new Date().toISOString(),
+      phone: b.phone, address: b.address,
+      emergencyContact: b.emergencyContact,
+      sia: b.sia, cscs: b.cscs, visa: b.visa, references: b.references,
+      bankDetails: b.bankDetails,
+      notes: b.notes,
+    });
+    emp.pending_submission = pending;
+    delete emp.rejection_reason;
+    saveStaff(emp, emp._folderPath);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/my-profile/photo', requireLogin, requireRole('staff'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.user.staff_id; });
+    if (!emp || !emp._folderPath) return res.status(404).json({ ok: false, error: 'Profile not found' });
+
+    var chunks = [];
+    req.on('data', function(c) { chunks.push(c); });
+    req.on('end', function() {
+      var buf = Buffer.concat(chunks);
+      var ext = '.jpg';
+      if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
+      else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
+
+      ['.jpg', '.jpeg', '.png', '.webp'].forEach(function(e) {
+        var old = path.join(emp._folderPath, 'pending-profile' + e);
+        if (fs.existsSync(old)) fs.unlinkSync(old);
+      });
+      fs.writeFileSync(path.join(emp._folderPath, 'pending-profile' + ext), buf);
+
+      emp.pending_submission = Object.assign({}, emp.pending_submission, {
+        submitted_at: new Date().toISOString(),
+        photo_pending: true,
+      });
+      saveStaff(emp, emp._folderPath);
+      res.json({ ok: true });
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+function findPendingPhoto(folderPath) { return findFileByExts(folderPath, 'pending-profile'); }
+
+app.get('/api/staff/:id/pending-photo', requireLogin, requirePermission('pending_review'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp || !emp._folderPath) return res.status(404).end();
+    var photo = findPendingPhoto(emp._folderPath);
+    if (!photo) return res.status(404).end();
+    var ext = path.extname(photo).toLowerCase();
+    var mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(photo));
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+// Ops Manager / Director review queue — every staff member with an
+// outstanding self-submitted change.
+app.get('/api/staff/pending-review', requireLogin, requirePermission('pending_review'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var pending = all
+      .filter(function(e){ return !!e.pending_submission; })
+      .map(function(e){ return sanitizeForStaffView(e); });
+    res.json({ ok: true, staff: pending });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/staff/:id/approve', requireLogin, requirePermission('pending_review'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
+    var pending = emp.pending_submission;
+    if (!pending) return res.status(400).json({ ok: false, error: 'No pending submission for this staff member' });
+
+    ['phone', 'address', 'emergencyContact', 'sia', 'cscs', 'visa', 'references', 'bankDetails', 'notes'].forEach(function(field) {
+      if (pending[field] !== undefined) emp[field] = pending[field];
+    });
+
+    if (pending.photo_pending && emp._folderPath) {
+      var pendingPhoto = findPendingPhoto(emp._folderPath);
+      if (pendingPhoto) {
+        var ext = path.extname(pendingPhoto);
+        ['.jpg', '.jpeg', '.png', '.webp'].forEach(function(e) {
+          var old = path.join(emp._folderPath, 'profile' + e);
+          if (fs.existsSync(old)) fs.unlinkSync(old);
+        });
+        fs.renameSync(pendingPhoto, path.join(emp._folderPath, 'profile' + ext));
+      }
+    }
+
+    delete emp.pending_submission;
+    delete emp.rejection_reason;
+    saveStaff(emp, emp._folderPath);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/staff/:id/reject', requireLogin, requirePermission('pending_review'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
+    if (!emp.pending_submission) return res.status(400).json({ ok: false, error: 'No pending submission for this staff member' });
+
+    if (emp._folderPath) {
+      var pendingPhoto = findPendingPhoto(emp._folderPath);
+      if (pendingPhoto) fs.unlinkSync(pendingPhoto);
+    }
+
+    emp.rejection_reason = String(req.body.reason || 'Please review and resubmit your details.').trim();
+    delete emp.pending_submission;
+    saveStaff(emp, emp._folderPath);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── DEPLOYMENT SITES CRUD ─────────────────────────────────────────────────────
+app.get('/api/sites', requireLogin, function(req, res) {
+  res.json({ sites: loadSites() });
+});
+
+app.post('/api/sites', requireLogin, requirePermission('sites'), function(req, res) {
+  try {
+    var name = String(req.body.name || '').trim();
+    if (!name) return res.status(400).json({ ok: false, error: 'Site name required' });
+    var sites = loadSites();
+    if (sites.some(function(s){ return s.name.toLowerCase() === name.toLowerCase(); })) {
+      return res.status(409).json({ ok: false, error: 'Site already exists' });
+    }
+    var site = {
+      id: Date.now().toString(),
+      name: name,
+      type: String(req.body.type || 'other').trim(),
+      client_name: String(req.body.client_name || '').trim(),
+      client_phone: String(req.body.client_phone || '').trim(),
+      client_email: String(req.body.client_email || '').trim(),
+      address: String(req.body.address || '').trim(),
+      supervisor_name: String(req.body.supervisor_name || '').trim(),
+      supervisor_phone: String(req.body.supervisor_phone || '').trim(),
+      supervisor_email: String(req.body.supervisor_email || '').trim(),
+      status: String(req.body.status || 'active').trim(),
+      notes: String(req.body.notes || '').trim(),
+    };
+    sites.push(site);
+    saveSites(sites);
+    res.json({ ok: true, site: site });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.patch('/api/sites/:id', requireLogin, requirePermission('sites'), function(req, res) {
+  try {
+    var sites = loadSites();
+    var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    var b = req.body;
+    var o = sites[idx];
+    sites[idx] = Object.assign({}, o, {
+      name:             String(b.name             !== undefined ? b.name             : o.name             || '').trim(),
+      type:             String(b.type             !== undefined ? b.type             : o.type             || 'other').trim(),
+      client_name:      String(b.client_name      !== undefined ? b.client_name      : o.client_name      || '').trim(),
+      client_phone:     String(b.client_phone     !== undefined ? b.client_phone     : o.client_phone     || '').trim(),
+      client_email:     String(b.client_email     !== undefined ? b.client_email     : o.client_email     || '').trim(),
+      address:          String(b.address          !== undefined ? b.address          : o.address          || '').trim(),
+      supervisor_name:  String(b.supervisor_name  !== undefined ? b.supervisor_name  : o.supervisor_name  || '').trim(),
+      supervisor_phone: String(b.supervisor_phone !== undefined ? b.supervisor_phone : o.supervisor_phone || '').trim(),
+      supervisor_email: String(b.supervisor_email !== undefined ? b.supervisor_email : o.supervisor_email || '').trim(),
+      status:           String(b.status           !== undefined ? b.status           : o.status           || 'active').trim(),
+      notes:            String(b.notes            !== undefined ? b.notes            : o.notes            || '').trim(),
+    });
+    saveSites(sites);
+    res.json({ ok: true, site: sites[idx] });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/sites/:id', requireLogin, requirePermission('sites'), function(req, res) {
+  try {
+    var sites = loadSites().filter(function(s){ return s.id !== req.params.id; });
+    saveSites(sites);
+    var docsDir = path.join(SITE_DOCS_DIR, req.params.id);
+    if (fs.existsSync(docsDir)) {
+      try { fs.rmSync(docsDir, { recursive: true, force: true }); } catch (e) {}
+    }
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── SITE DOCUMENTATION ─────────────────────────────────────────────────────────
+// Per-site file library: general documentation, presentations, induction packs.
+
+function ensureSiteDocsDir(siteId) {
+  var dir = path.join(SITE_DOCS_DIR, siteId);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function loadSiteDocs(siteId) {
+  return loadJsonFile(path.join(SITE_DOCS_DIR, siteId, 'index.json'));
+}
+
+function saveSiteDocs(siteId, docs) {
+  ensureSiteDocsDir(siteId);
+  fs.writeFileSync(path.join(SITE_DOCS_DIR, siteId, 'index.json'), JSON.stringify(docs, null, 2), 'utf8');
+}
+
+app.get('/api/sites/:id/documents', requireLogin, requirePermission('sites'), function(req, res) {
+  res.json({ ok: true, items: loadSiteDocs(path.basename(req.params.id)) });
+});
+
+app.post('/api/sites/:id/documents', requireLogin, requirePermission('sites'), function(req, res) {
+  try {
+    var siteId = path.basename(req.params.id);
+    var site = loadSites().find(function(s) { return s.id === siteId; });
+    if (!site) return res.status(404).json({ ok: false, error: 'Site not found' });
+
+    ensureSiteDocsDir(siteId);
+    var originalName = 'document';
+    try { originalName = decodeURIComponent(req.headers['x-filename'] || 'document'); } catch (e) {}
+    var category = req.headers['x-doc-category'] || 'documentation';
+    var timestamp = Date.now().toString();
+    var ext = path.extname(originalName) || '';
+    var filename = timestamp + ext;
+    var filePath = path.join(SITE_DOCS_DIR, siteId, filename);
+
+    var chunks = [];
+    req.on('data', function(c) { chunks.push(c); });
+    req.on('end', function() {
+      try {
+        var buf = Buffer.concat(chunks);
+        fs.writeFileSync(filePath, buf);
+
+        var docs = loadSiteDocs(siteId);
+        var doc = { filename: filename, originalName: originalName, category: category, size: buf.length, uploadedAt: new Date().toISOString() };
+        docs.push(doc);
+        saveSiteDocs(siteId, docs);
+
+        res.json({ ok: true, doc: doc });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: e.message });
+      }
+    });
+    req.on('error', function(e) {
+      res.status(500).json({ ok: false, error: e.message });
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/sites/:id/documents/:filename', requireLogin, requirePermission('sites'), function(req, res) {
+  try {
+    var siteId = path.basename(req.params.id);
+    var filename = path.basename(req.params.filename);
+    var filePath = path.join(SITE_DOCS_DIR, siteId, filename);
+    if (!fs.existsSync(filePath)) return res.status(404).end();
+
+    var docs = loadSiteDocs(siteId);
+    var doc = docs.find(function(d) { return d.filename === filename; });
+    var originalName = doc ? doc.originalName : filename;
+
+    res.setHeader('Content-Disposition', 'inline; filename="' + originalName.replace(/"/g, '\\"') + '"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(filePath));
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+app.delete('/api/sites/:id/documents/:filename', requireLogin, requirePermission('sites'), function(req, res) {
+  try {
+    var siteId = path.basename(req.params.id);
+    var filename = path.basename(req.params.filename);
+    var filePath = path.join(SITE_DOCS_DIR, siteId, filename);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+    var docs = loadSiteDocs(siteId);
+    docs = docs.filter(function(d) { return d.filename !== filename; });
+    saveSiteDocs(siteId, docs);
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── SITE STAFF ASSIGNMENT ─────────────────────────────────────────────────────
+app.get('/api/sites/:id/staff', requireLogin, function(req, res) {
+  var site = loadSites().find(function(s){ return s.id === req.params.id; });
+  if (!site) return res.status(404).json({ ok: false, error: 'Site not found' });
+  var assignedIds = site.assigned_staff || [];
+  var allStaff = loadAllStaff();
+  var assigned = allStaff.filter(function(s){ return assignedIds.indexOf(s.id) !== -1; })
+    .map(function(s){ return { id: s.id, name: s.name, overall: s.overall }; });
+  res.json({ ok: true, staff: assigned, count: assigned.length });
+});
+
+app.post('/api/sites/:id/staff', requireLogin, requirePermission('sites'), function(req, res) {
+  try {
+    var sites = loadSites();
+    var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    var staffId = String(req.body.staff_id || '').trim();
+    if (!staffId) return res.status(400).json({ ok: false, error: 'staff_id required' });
+    if (!sites[idx].assigned_staff) sites[idx].assigned_staff = [];
+    if (sites[idx].assigned_staff.indexOf(staffId) === -1) {
+      sites[idx].assigned_staff.push(staffId);
+      saveSites(sites);
+    }
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.delete('/api/sites/:id/staff/:staffId', requireLogin, requirePermission('sites'), function(req, res) {
+  try {
+    var sites = loadSites();
+    var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    sites[idx].assigned_staff = (sites[idx].assigned_staff || []).filter(function(id){ return id !== req.params.staffId; });
+    saveSites(sites);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── SITE WELFARE / ASSETS ─────────────────────────────────────────────────────
+app.get('/api/sites/:id/welfare', requireLogin, function(req, res) {
+  var site = loadSites().find(function(s){ return s.id === req.params.id; });
+  if (!site) return res.status(404).json({ ok: false, error: 'Site not found' });
+  res.json({ ok: true, items: site.welfare_items || [] });
+});
+
+app.post('/api/sites/:id/welfare', requireLogin, requirePermission('sites'), function(req, res) {
+  try {
+    var sites = loadSites();
+    var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    if (!sites[idx].welfare_items) sites[idx].welfare_items = [];
+    var item = {
+      id: Date.now().toString(),
+      name: String(req.body.name || '').trim(),
+      quantity: parseInt(req.body.quantity) || 1,
+      condition: String(req.body.condition || 'good').trim(),
+      serial_number: String(req.body.serial_number || '').trim(),
+      notes: String(req.body.notes || '').trim(),
+    };
+    if (!item.name) return res.status(400).json({ ok: false, error: 'Item name required' });
+    sites[idx].welfare_items.push(item);
+    saveSites(sites);
+    res.json({ ok: true, item: item });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.patch('/api/sites/:id/welfare/:itemId', requireLogin, requirePermission('sites'), function(req, res) {
+  try {
+    var sites = loadSites();
+    var sIdx = sites.findIndex(function(s){ return s.id === req.params.id; });
+    if (sIdx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    var items = sites[sIdx].welfare_items || [];
+    var iIdx = items.findIndex(function(i){ return i.id === req.params.itemId; });
+    if (iIdx === -1) return res.status(404).json({ ok: false, error: 'Item not found' });
+    var b = req.body; var o = items[iIdx];
+    items[iIdx] = {
+      id: o.id,
+      name:          String(b.name          !== undefined ? b.name          : o.name          || '').trim(),
+      quantity:      parseInt(b.quantity     !== undefined ? b.quantity      : o.quantity)    || 1,
+      condition:     String(b.condition      !== undefined ? b.condition     : o.condition     || 'good').trim(),
+      serial_number: String(b.serial_number  !== undefined ? b.serial_number : o.serial_number || '').trim(),
+      notes:         String(b.notes          !== undefined ? b.notes         : o.notes         || '').trim(),
+    };
+    sites[sIdx].welfare_items = items;
+    saveSites(sites);
+    res.json({ ok: true, item: items[iIdx] });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/sites/:id/welfare/:itemId', requireLogin, requirePermission('sites'), function(req, res) {
+  try {
+    var sites = loadSites();
+    var sIdx = sites.findIndex(function(s){ return s.id === req.params.id; });
+    if (sIdx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    sites[sIdx].welfare_items = (sites[sIdx].welfare_items || []).filter(function(i){ return i.id !== req.params.itemId; });
+    saveSites(sites);
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.put('/api/staff/:id', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var emp = req.body;
     var all = loadAllStaff();
@@ -542,9 +1808,7 @@ app.put('/api/staff/:id', function(req, res) {
     saveStaff(emp, old ? old._folderPath : null);
     updateComplianceTracker(emp);
     updateReferenceTracker(emp);
-    var overviewHtml = buildOverviewHTML(loadAllStaff());
-    fs.writeFileSync(OVERVIEW, overviewHtml, 'utf8');
-    fs.writeFileSync(SHAREPOINT_DASHBOARD, overviewHtml, 'utf8');
+    refreshOverview();
     res.json({ ok: true });
   } catch(e) {
     console.error(e);
@@ -552,16 +1816,14 @@ app.put('/api/staff/:id', function(req, res) {
   }
 });
 
-app.post('/api/staff', function(req, res) {
+app.post('/api/staff', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var emp = req.body;
     if (!emp.id) emp.id = emp.name.toLowerCase().replace(/[^a-z0-9]/g,'-');
     saveStaff(emp, null);
     updateComplianceTracker(emp);
     updateReferenceTracker(emp);
-    var overviewHtml = buildOverviewHTML(loadAllStaff());
-    fs.writeFileSync(OVERVIEW, overviewHtml, 'utf8');
-    fs.writeFileSync(SHAREPOINT_DASHBOARD, overviewHtml, 'utf8');
+    refreshOverview();
     res.json({ ok: true });
   } catch(e) {
     console.error(e);
@@ -569,7 +1831,7 @@ app.post('/api/staff', function(req, res) {
   }
 });
 
-app.delete('/api/staff/:id', function(req, res) {
+app.delete('/api/staff/:id', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -596,9 +1858,7 @@ app.delete('/api/staff/:id', function(req, res) {
     var destFolder = path.join(exStaffDir, path.basename(folderPath));
     fs.renameSync(folderPath, destFolder);
 
-    var overviewHtml = buildOverviewHTML(loadAllStaff());
-    fs.writeFileSync(OVERVIEW, overviewHtml, 'utf8');
-    fs.writeFileSync(SHAREPOINT_DASHBOARD, overviewHtml, 'utf8');
+    refreshOverview();
 
     console.log('[DELETE] Moved to Ex-Staff:', path.basename(folderPath));
     res.json({ ok: true });
@@ -608,7 +1868,7 @@ app.delete('/api/staff/:id', function(req, res) {
   }
 });
 
-app.get('/api/exstaff', function(req, res) {
+app.get('/api/exstaff', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var exDir = path.join(BASE, '02 - Vetting & Screening', 'Ex-Staff');
     if (!fs.existsSync(exDir)) return res.json([]);
@@ -636,7 +1896,29 @@ app.get('/api/exstaff', function(req, res) {
   }
 });
 
-app.post('/api/exstaff/restore', function(req, res) {
+// Permanently delete an ex-staff folder (director only)
+app.delete('/api/exstaff/permanent', requireLogin, requireRole('director'), function(req, res) {
+  try {
+    var folderId = req.body.folderId;
+    if (!folderId) return res.status(400).json({ ok: false, error: 'No folderId provided' });
+    var safeFolderId = path.basename(folderId);
+    var exDir = path.join(BASE, '02 - Vetting & Screening', 'Ex-Staff');
+    var targetFolder = path.join(exDir, safeFolderId);
+    if (!fs.existsSync(targetFolder)) return res.status(404).json({ ok: false, error: 'Ex-staff folder not found' });
+    var resolvedTarget = path.resolve(targetFolder);
+    var resolvedExDir  = path.resolve(exDir);
+    if (!resolvedTarget.startsWith(resolvedExDir + path.sep)) {
+      return res.status(400).json({ ok: false, error: 'Invalid folder path' });
+    }
+    fs.rmSync(targetFolder, { recursive: true, force: true });
+    console.log('[DELETE] Permanently deleted ex-staff:', safeFolderId);
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/exstaff/restore', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var folderId = req.body.folderId;
     if (!folderId) return res.status(400).json({ ok: false, error: 'No folderId provided' });
@@ -661,9 +1943,7 @@ app.post('/api/exstaff/restore', function(req, res) {
     emp._folderPath = destFolder;
     fs.writeFileSync(path.join(destFolder, 'staff_data.json'), JSON.stringify(emp, null, 2), 'utf8');
 
-    var overviewHtml = buildOverviewHTML(loadAllStaff());
-    fs.writeFileSync(OVERVIEW, overviewHtml, 'utf8');
-    fs.writeFileSync(SHAREPOINT_DASHBOARD, overviewHtml, 'utf8');
+    refreshOverview();
 
     console.log('[RESTORE] ' + emp.name + ' moved back to Active Staff');
     res.json({ ok: true, name: emp.name });
@@ -673,11 +1953,9 @@ app.post('/api/exstaff/restore', function(req, res) {
   }
 });
 
-app.post('/api/overview', function(req, res) {
+app.post('/api/overview', requireLogin, function(req, res) {
   try {
-    var overviewHtml = buildOverviewHTML(loadAllStaff());
-    fs.writeFileSync(OVERVIEW, overviewHtml, 'utf8');
-    fs.writeFileSync(SHAREPOINT_DASHBOARD, overviewHtml, 'utf8');
+    refreshOverview();
     res.json({ ok: true });
   } catch(e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -685,9 +1963,23 @@ app.post('/api/overview', function(req, res) {
 });
 
 // ── SERVE APP WITH EMBEDDED STAFF DATA (no browser fetch needed) ──────────────
-app.get('/', function(req, res) {
+app.get('/', async function(req, res) {
+  var authed = getAuthedUser(req);
+  if (!authed) {
+    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.sendFile(path.join(__dirname, 'public', 'login.html'));
+  }
   try {
-    var staff = loadAllStaff();
+    // Only embed the full staff roster (now including bank/NI details) for
+    // users who actually hold the 'staff' permission — same gate as /api/staff.
+    var hasStaffPerm = authed.role === 'director';
+    if (!hasStaffPerm) {
+      var roles = await loadRoles();
+      var roleDef = roles.find(function(r){ return r.slug === authed.role; });
+      hasStaffPerm = !!(roleDef && roleDef.permissions && roleDef.permissions.staff);
+    }
+    var staff = hasStaffPerm ? loadAllStaff() : [];
     var staffJSON = JSON.stringify(staff);
     var tpl = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
     var page = tpl.replace('/*STAFF_DATA_PLACEHOLDER*/[]', staffJSON);
@@ -703,7 +1995,7 @@ app.get('/new-starter', function(req, res) {
   res.sendFile(path.join(__dirname, 'public', 'new-starter.html'));
 });
 
-app.get('/reload', function(req, res) {
+app.get('/reload', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var staff = loadAllStaff();
     res.json(staff);
@@ -720,16 +2012,21 @@ function scheduleGitPush(reason) {
   _gitTimer = setTimeout(function() {
     var appDir = __dirname;
     var now    = new Date();
-    var stamp  = now.getFullYear() + '-'
-      + String(now.getMonth()+1).padStart(2,'0') + '-'
-      + String(now.getDate()).padStart(2,'0') + ' '
-      + String(now.getHours()).padStart(2,'0') + ':'
-      + String(now.getMinutes()).padStart(2,'0');
-    var msg = 'Auto-save: ' + stamp + (reason ? ' — ' + reason : '');
-    var cmd = 'cd /d "' + appDir + '" && git add -A && git commit -m "' + msg + '" && git push origin main';
-    exec(cmd, function(err, stdout, stderr) {
-      if (err) { console.log('[GIT] Push failed:', stderr || err.message); }
-      else      { console.log('[GIT] Pushed to GitHub —', msg); }
+    var stamp = now.toISOString().slice(0, 16).replace('T', ' ');
+    // reason can originate from untrusted input (e.g. a name from the New Staff
+    // Inbox) — pass it to git as a single argv element via execFile, never
+    // through a shell, so it can't break out into arbitrary command execution.
+    var msg = 'Auto-save: ' + stamp + (reason ? ' — ' + String(reason).slice(0, 200) : '');
+    var opts = { cwd: appDir };
+    execFile('git', ['add', '-A'], opts, function(errAdd) {
+      if (errAdd) { console.log('[GIT] add failed:', errAdd.message); return; }
+      execFile('git', ['commit', '-m', msg], opts, function(errCommit, _out, errCommitStderr) {
+        if (errCommit) { console.log('[GIT] commit failed (likely nothing to commit):', errCommitStderr || errCommit.message); return; }
+        execFile('git', ['push', 'origin', 'main'], opts, function(errPush, _out2, errPushStderr) {
+          if (errPush) { console.log('[GIT] Push failed:', errPushStderr || errPush.message); }
+          else          { console.log('[GIT] Pushed to GitHub —', msg); }
+        });
+      });
     });
   }, 5000);
 }
@@ -969,6 +2266,1266 @@ function autoDedup() {
     console.error('[DEDUP] Error:', e.message);
   }
 }
+
+// ── PHASE 3 API: Departments, Dashboard Stats, Fleet ──────────────────────────
+
+app.get('/api/departments', requireLogin, async function(req, res) {
+  try {
+    var result = await pgPool.query('SELECT id, slug, name, description, is_active FROM departments ORDER BY name');
+    res.json({ departments: result.rows });
+  } catch (e) {
+    res.json({ departments: [] });
+  }
+});
+
+app.get('/api/dashboard/stats', requireLogin, async function(req, res) {
+  try {
+    var allStaff = loadAllStaff();
+    var totalStaff = allStaff.length;
+
+    var compliant = 0;
+    var expiringSoon = 0;
+    var expired = 0;
+
+    // overall is calculated by calcOverall() in loadAllStaff() using the real
+    // field names (sia.expiry, cscs.expiry, visa.expiry) — use it directly.
+    allStaff.forEach(function(s) {
+      if      (s.overall === 'red')   expired++;
+      else if (s.overall === 'amber') expiringSoon++;
+      else if (s.overall === 'green') compliant++;
+    });
+
+    var vehicleCount = loadVehicles().filter(function(v){ return v.status === 'active'; }).length;
+
+    var activeSites = loadSites().filter(function(s){ return s.status !== 'inactive'; }).length;
+    var fleetDrivers = loadFleetDrivers().length;
+
+    res.json({
+      totalStaff: totalStaff,
+      compliant: compliant,
+      expiringSoon: expiringSoon,
+      expired: expired,
+      vehicles: vehicleCount,
+      activeSites: activeSites,
+      drivers: fleetDrivers,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── VEHICLES ──────────────────────────────────────────────────────────────────
+var VEHICLES_FILE = path.join(BASE, 'vehicles.json');
+var VEHICLE_PHOTOS_DIR = path.join(BASE, 'vehicle-photos');
+if (!fs.existsSync(VEHICLE_PHOTOS_DIR)) fs.mkdirSync(VEHICLE_PHOTOS_DIR, { recursive: true });
+
+var VEHICLE_DOCS_DIR = path.join(BASE, 'vehicle-docs');
+if (!fs.existsSync(VEHICLE_DOCS_DIR)) fs.mkdirSync(VEHICLE_DOCS_DIR, { recursive: true });
+
+function ensureVehicleDocsDir(vehicleId) {
+  var dir = path.join(VEHICLE_DOCS_DIR, vehicleId);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function loadVehicleDocs(vehicleId) {
+  return loadJsonFile(path.join(VEHICLE_DOCS_DIR, vehicleId, 'index.json'));
+}
+
+function saveVehicleDocs(vehicleId, docs) {
+  var dir = ensureVehicleDocsDir(vehicleId);
+  fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify(docs, null, 2), 'utf8');
+}
+
+// ── EXCEL EXPORT HELPER ────────────────────────────────────────────────────────
+function sendXlsx(res, filename, rows) {
+  var ws = XLSX.utils.json_to_sheet(rows);
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Report');
+  var buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="' + filename + '"');
+  res.send(buf);
+}
+
+function loadJsonFile(filePath, defaultVal) {
+  if (defaultVal === undefined) defaultVal = [];
+  if (!fs.existsSync(filePath)) return defaultVal;
+  try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); }
+  catch (e) { return defaultVal; }
+}
+
+function loadVehicles() { return loadJsonFile(VEHICLES_FILE); }
+
+function saveVehicles(vehicles) {
+  fs.writeFileSync(VEHICLES_FILE, JSON.stringify(vehicles, null, 2), 'utf8');
+}
+
+function findVehiclePhoto(id) { return findFileByExts(VEHICLE_PHOTOS_DIR, id); }
+
+app.get('/api/vehicles', requireLogin, requirePermission('fleet'), function(req, res) {
+  res.json({ vehicles: loadVehicles() });
+});
+
+app.post('/api/vehicles', requireLogin, requirePermission('fleet'), function(req, res) {
+  try {
+    var vehicles = loadVehicles();
+    var newVehicle = Object.assign({}, req.body, { id: Date.now().toString() });
+    vehicles.push(newVehicle);
+    saveVehicles(vehicles);
+    res.json({ ok: true, vehicle: newVehicle });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.patch('/api/vehicles/:id', requireLogin, requirePermission('fleet'), function(req, res) {
+  try {
+    var vehicles = loadVehicles();
+    var idx = vehicles.findIndex(function(v) { return v.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Vehicle not found' });
+    vehicles[idx] = Object.assign({}, vehicles[idx], req.body);
+    saveVehicles(vehicles);
+    res.json({ ok: true, vehicle: vehicles[idx] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/vehicles/:id', requireLogin, requirePermission('fleet'), function(req, res) {
+  try {
+    var vehicles = loadVehicles();
+    vehicles = vehicles.filter(function(v) { return v.id !== req.params.id; });
+    saveVehicles(vehicles);
+    var oldPhoto = findVehiclePhoto(req.params.id);
+    if (oldPhoto) fs.unlinkSync(oldPhoto);
+    var docsDir = path.join(VEHICLE_DOCS_DIR, req.params.id);
+    if (fs.existsSync(docsDir)) {
+      try { fs.rmSync(docsDir, { recursive: true, force: true }); } catch (e) {}
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/vehicles/:id/photo', requireLogin, function(req, res) {
+  try {
+    var photo = findVehiclePhoto(req.params.id);
+    if (!photo) return res.status(404).end();
+    var ext = path.extname(photo).toLowerCase();
+    var mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(photo));
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+app.post('/api/vehicles/:id/photo', requireLogin, requirePermission('fleet'), function(req, res) {
+  try {
+    var vehicles = loadVehicles();
+    var idx = vehicles.findIndex(function(v) { return v.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Vehicle not found' });
+
+    var chunks = [];
+    req.on('data', function(c) { chunks.push(c); });
+    req.on('end', function() {
+      var buf = Buffer.concat(chunks);
+      var ext = '.jpg';
+      if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
+      else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
+
+      ['.jpg', '.jpeg', '.png', '.webp'].forEach(function(e) {
+        var old = path.join(VEHICLE_PHOTOS_DIR, req.params.id + e);
+        if (fs.existsSync(old)) fs.unlinkSync(old);
+      });
+
+      fs.writeFileSync(path.join(VEHICLE_PHOTOS_DIR, req.params.id + ext), buf);
+      vehicles[idx].has_photo = true;
+      saveVehicles(vehicles);
+      res.json({ ok: true });
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── VEHICLE DOCUMENTS ─────────────────────────────────────────────────────────
+
+app.get('/api/vehicles/:id/docs', requireLogin, requirePermission('fleet'), function(req, res) {
+  res.json(loadVehicleDocs(req.params.id));
+});
+
+app.post('/api/vehicles/:id/docs', requireLogin, requirePermission('fleet'), function(req, res) {
+  try {
+    var vehicles = loadVehicles();
+    var idx = vehicles.findIndex(function(v) { return v.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Vehicle not found' });
+
+    ensureVehicleDocsDir(req.params.id);
+    var originalName = 'document';
+    try { originalName = decodeURIComponent(req.headers['x-filename'] || 'document'); } catch (e) {}
+    var docType = req.headers['x-doc-type'] || 'other';
+    var timestamp = Date.now().toString();
+    var ext = path.extname(originalName) || '';
+    var filename = timestamp + ext;
+    var filePath = path.join(VEHICLE_DOCS_DIR, req.params.id, filename);
+
+    var chunks = [];
+    req.on('data', function(c) { chunks.push(c); });
+    req.on('end', function() {
+      try {
+        var buf = Buffer.concat(chunks);
+        fs.writeFileSync(filePath, buf);
+
+        var docs = loadVehicleDocs(req.params.id);
+        var doc = { filename: filename, originalName: originalName, docType: docType, size: buf.length, uploadedAt: new Date().toISOString() };
+        docs.push(doc);
+        saveVehicleDocs(req.params.id, docs);
+
+        res.json({ ok: true, doc: doc });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: e.message });
+      }
+    });
+    req.on('error', function(e) {
+      res.status(500).json({ ok: false, error: e.message });
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/vehicles/:id/docs/:filename', requireLogin, function(req, res) {
+  try {
+    var filename = path.basename(req.params.filename);
+    var filePath = path.join(VEHICLE_DOCS_DIR, req.params.id, filename);
+    if (!fs.existsSync(filePath)) return res.status(404).end();
+
+    var docs = loadVehicleDocs(req.params.id);
+    var doc = docs.find(function(d) { return d.filename === filename; });
+    var originalName = doc ? doc.originalName : filename;
+
+    res.setHeader('Content-Disposition', 'attachment; filename="' + originalName.replace(/"/g, '\\"') + '"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(filePath));
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+app.delete('/api/vehicles/:id/docs/:filename', requireLogin, requirePermission('fleet'), function(req, res) {
+  try {
+    var filename = path.basename(req.params.filename);
+    var filePath = path.join(VEHICLE_DOCS_DIR, req.params.id, filename);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+    var docs = loadVehicleDocs(req.params.id);
+    docs = docs.filter(function(d) { return d.filename !== filename; });
+    saveVehicleDocs(req.params.id, docs);
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── FLEET DRIVERS ─────────────────────────────────────────────────────────────
+var FLEET_DRIVERS_FILE = path.join(BASE, 'fleet-drivers.json');
+
+function loadFleetDrivers() { return loadJsonFile(FLEET_DRIVERS_FILE); }
+
+function saveFleetDrivers(drivers) {
+  fs.writeFileSync(FLEET_DRIVERS_FILE, JSON.stringify(drivers, null, 2), 'utf8');
+}
+
+app.get('/api/fleet-drivers', requireLogin, requirePermission('fleet'), function(req, res) {
+  res.json(loadFleetDrivers());
+});
+
+app.post('/api/fleet-drivers', requireLogin, requirePermission('fleet'), function(req, res) {
+  try {
+    var drivers = loadFleetDrivers();
+    var newDriver = Object.assign({}, req.body, { id: Date.now().toString() });
+    drivers.push(newDriver);
+    saveFleetDrivers(drivers);
+    res.json({ ok: true, driver: newDriver });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.patch('/api/fleet-drivers/:id', requireLogin, requirePermission('fleet'), function(req, res) {
+  try {
+    var drivers = loadFleetDrivers();
+    var idx = drivers.findIndex(function(d) { return d.id === req.params.id; });
+    if (idx === -1) return res.status(404).json({ ok: false, error: 'Driver not found' });
+    drivers[idx] = Object.assign({}, drivers[idx], req.body);
+    saveFleetDrivers(drivers);
+    res.json({ ok: true, driver: drivers[idx] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/fleet-drivers/:id', requireLogin, requirePermission('fleet'), function(req, res) {
+  try {
+    var drivers = loadFleetDrivers();
+    drivers = drivers.filter(function(d) { return d.id !== req.params.id; });
+    saveFleetDrivers(drivers);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── FLEET EXCEL EXPORTS ───────────────────────────────────────────────────────
+app.get('/api/vehicles/export', requireLogin, requirePermission('fleet'), function(req, res) {
+  try {
+    var all = loadVehicles();
+    var drivers = loadFleetDrivers();
+    var ids = req.query.ids ? String(req.query.ids).split(',') : null;
+    var list = ids ? all.filter(function(v) { return ids.indexOf(v.id) !== -1; }) : all;
+
+    var statusFilter = req.query.status ? String(req.query.status) : null;
+    if (statusFilter) list = list.filter(function(v) { return v.status === statusFilter; });
+
+    var typeFilter = req.query.type ? String(req.query.type) : null;
+    if (typeFilter) list = list.filter(function(v) { return v.type === typeFilter; });
+
+    var rows = list.map(function(v) {
+      var driver = drivers.find(function(d) { return d.id === v.assignedDriverId; });
+      return {
+        'Registration': v.registration || '',
+        'Make': v.make || '',
+        'Model': v.model || '',
+        'Year': v.year || '',
+        'Colour': v.colour || '',
+        'Type': v.type || '',
+        'Status': v.status || '',
+        'Mileage': v.mileage || '',
+        'MOT Expiry': v.mot_expiry || '',
+        'Insurance Expiry': v.insurance_expiry || '',
+        'Road Tax Expiry': v.road_tax_expiry || '',
+        'Service Due': v.service_due || '',
+        'Assigned Driver': driver ? (driver.first_name + ' ' + driver.last_name) : '',
+      };
+    });
+    sendXlsx(res, 'GuardTec-Fleet-Report-' + new Date().toISOString().slice(0,10) + '.xlsx', rows);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.get('/api/drivers/export', requireLogin, requirePermission('fleet'), function(req, res) {
+  try {
+    var all = loadFleetDrivers();
+    var vehicles = loadVehicles();
+    var ids = req.query.ids ? String(req.query.ids).split(',') : null;
+    var list = ids ? all.filter(function(d) { return ids.indexOf(d.id) !== -1; }) : all;
+
+    var statusFilter = req.query.status ? String(req.query.status) : null;
+    if (statusFilter) list = list.filter(function(d) { return d.status === statusFilter; });
+
+    var rows = list.map(function(d) {
+      var vehicle = vehicles.find(function(v) { return v.id === d.assignedVehicleId; });
+      return {
+        'First Name': d.first_name || '',
+        'Last Name': d.last_name || '',
+        'Phone': d.phone || '',
+        'Email': d.email || '',
+        'Licence Number': d.licenceNumber || '',
+        'Licence Expiry': d.licenceExpiry || '',
+        'Licence Categories': (d.licenceCategories || []).join(', '),
+        'CPC Card': d.cpcCard || '',
+        'CPC Expiry': d.cpcExpiry || '',
+        'Tacho Card': d.tachoCard || '',
+        'Tacho Expiry': d.tachoExpiry || '',
+        'Medical Expiry': d.medicalExpiry || '',
+        'DBS Number': d.dbsNumber || '',
+        'DBS Date': d.dbsDate || '',
+        'Status': d.status || '',
+        'Assigned Vehicle': vehicle ? vehicle.registration : '',
+        'Notes': d.notes || '',
+      };
+    });
+    sendXlsx(res, 'GuardTec-Drivers-Report-' + new Date().toISOString().slice(0,10) + '.xlsx', rows);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.get('/api/users', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var result = await pgPool.query('SELECT id, username, full_name, role, email, is_active, created_at FROM users ORDER BY full_name');
+    res.json({ users: result.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/users', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var b = req.body;
+    var username  = String(b.username  || '').trim().toLowerCase();
+    var full_name = String(b.full_name || '').trim();
+    var role      = String(b.role      || 'supervisor').trim();
+    var email     = String(b.email     || '').trim().toLowerCase();
+    var password  = String(b.password  || '');
+
+    if (!username)  return res.status(400).json({ ok: false, error: 'Username is required.' });
+    if (!full_name) return res.status(400).json({ ok: false, error: 'Full name is required.' });
+    if (!password || password.length < 6) return res.status(400).json({ ok: false, error: 'Password must be at least 6 characters.' });
+
+    var exists = await pgPool.query('SELECT id FROM users WHERE username = $1', [username]);
+    if (exists.rows.length) return res.status(400).json({ ok: false, error: 'Username already exists.' });
+
+    var hash = await bcrypt.hash(password, 10);
+    var r = await pgPool.query(
+      'INSERT INTO users (username, password_hash, full_name, role, email, is_active) VALUES ($1,$2,$3,$4,$5,TRUE) RETURNING id, username, full_name, role, email, is_active, created_at',
+      [username, hash, full_name, role, email]
+    );
+    res.json({ ok: true, user: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.patch('/api/users/:id', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var b = req.body;
+    var id        = req.params.id;
+    var full_name = String(b.full_name || '').trim();
+    var role      = String(b.role      || '').trim();
+    var email     = String(b.email     || '').trim().toLowerCase();
+    var is_active = b.is_active !== undefined ? Boolean(b.is_active) : true;
+
+    if (!full_name) return res.status(400).json({ ok: false, error: 'Full name is required.' });
+
+    // Prevent director from suspending their own account
+    if (String(req.user.id) === String(id) && !is_active) {
+      return res.status(400).json({ ok: false, error: 'You cannot suspend your own account.' });
+    }
+
+    var r = await pgPool.query(
+      'UPDATE users SET full_name=$1, role=$2, email=$3, is_active=$4 WHERE id=$5 RETURNING id, username, full_name, role, email, is_active',
+      [full_name, role, email, is_active, id]
+    );
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'User not found.' });
+    res.json({ ok: true, user: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/users/:id/reset-password', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var password = String(req.body.password || '');
+    if (!password || password.length < 6) return res.status(400).json({ ok: false, error: 'New password must be at least 6 characters.' });
+    var hash = await bcrypt.hash(password, 10);
+    var r = await pgPool.query('UPDATE users SET password_hash=$1 WHERE id=$2 RETURNING id', [hash, req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'User not found.' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/users/:id', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    if (String(req.user.id) === String(req.params.id)) {
+      return res.status(400).json({ ok: false, error: 'You cannot delete your own account.' });
+    }
+    var r = await pgPool.query('DELETE FROM users WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'User not found.' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── ROLES MANAGEMENT ──────────────────────────────────────────────────────────
+// Deliberately director-only and NOT itself permission-configurable — letting
+// any role grant/edit roles would be a privilege-escalation hole.
+function slugify(name) {
+  return String(name).toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'role';
+}
+
+app.get('/api/roles', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var roles = await loadRoles();
+    res.json({ ok: true, roles: roles });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/roles', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var name = String(req.body.name || '').trim();
+    var permissions = req.body.permissions && typeof req.body.permissions === 'object' ? req.body.permissions : {};
+    if (!name) return res.status(400).json({ ok: false, error: 'Role name is required.' });
+
+    var slug = slugify(name);
+    var existing = await pgPool.query('SELECT slug FROM roles WHERE slug = $1', [slug]);
+    if (existing.rows.length) {
+      slug = slug + '_' + Date.now().toString().slice(-5);
+    }
+
+    var r = await pgPool.query(
+      'INSERT INTO roles (slug, name, is_system, permissions) VALUES ($1,$2,FALSE,$3) RETURNING slug, name, is_system, permissions',
+      [slug, name, JSON.stringify(permissions)]
+    );
+    invalidateRolesCache();
+    res.json({ ok: true, role: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.patch('/api/roles/:slug', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var slug = req.params.slug;
+    var existing = await pgPool.query('SELECT * FROM roles WHERE slug = $1', [slug]);
+    if (!existing.rows.length) return res.status(404).json({ ok: false, error: 'Role not found.' });
+    var current = existing.rows[0];
+
+    if (slug === 'director' || slug === 'staff') {
+      return res.status(400).json({ ok: false, error: 'This role is required by the system and cannot be edited.' });
+    }
+
+    var name = String(req.body.name || current.name).trim();
+    var permissions = req.body.permissions && typeof req.body.permissions === 'object' ? req.body.permissions : current.permissions;
+    if (!name) return res.status(400).json({ ok: false, error: 'Role name is required.' });
+
+    var r = await pgPool.query(
+      'UPDATE roles SET name=$1, permissions=$2 WHERE slug=$3 RETURNING slug, name, is_system, permissions',
+      [name, JSON.stringify(permissions), slug]
+    );
+    invalidateRolesCache();
+    res.json({ ok: true, role: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/roles/:slug', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var slug = req.params.slug;
+    var existing = await pgPool.query('SELECT is_system FROM roles WHERE slug = $1', [slug]);
+    if (!existing.rows.length) return res.status(404).json({ ok: false, error: 'Role not found.' });
+    if (existing.rows[0].is_system) {
+      return res.status(400).json({ ok: false, error: 'Built-in roles cannot be deleted.' });
+    }
+
+    var inUse = await pgPool.query('SELECT COUNT(*) as count FROM users WHERE role = $1', [slug]);
+    var count = parseInt(inUse.rows[0].count) || 0;
+    if (count > 0) {
+      return res.status(400).json({ ok: false, error: count + ' user(s) currently have this role. Reassign them first in Team Access.' });
+    }
+
+    await pgPool.query('DELETE FROM roles WHERE slug = $1', [slug]);
+    invalidateRolesCache();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── DB HELPERS ────────────────────────────────────────────────────────────────
+async function resolveEmpId(legacyId) {
+  var r = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [legacyId]);
+  return r.rows.length ? r.rows[0].id : null;
+}
+
+async function hasStaffPermission(req) {
+  if (!req.user || !req.user.role) return false;
+  if (req.user.role === 'director') return true;
+  var roles = await loadRoles();
+  var roleDef = roles.find(function(r){ return r.slug === req.user.role; });
+  return !!(roleDef && roleDef.permissions && roleDef.permissions.staff);
+}
+
+// Shared ownership gate for incident-report / message attachment routes, which
+// are keyed by reportId/messageId/attachId — not a staff :id — so the existing
+// requireOwnStaffOrPermission() pattern can't compare params directly. Callers
+// resolve the row's owning employees.id first, then this checks either
+// management (`staff` permission) or "this employees.id is me". Sends the 403
+// itself so call sites can just `if (!await ...) return;`.
+async function canAccessOwnerEmpId(req, res, ownerEmpId) {
+  if (await hasStaffPermission(req)) return true;
+  var myEmpId = req.user.staff_id ? await resolveEmpId(req.user.staff_id) : null;
+  if (myEmpId && ownerEmpId && myEmpId === ownerEmpId) return true;
+  res.status(403).json({ ok: false, error: 'Forbidden' });
+  return false;
+}
+
+// ── PHASE 4 API: Disciplinary Records & Incident Reports ─────────────────────
+
+// ── Disciplinary: list for a staff member (management) ──
+app.get('/api/staff/:id/disciplinary', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var empId = await resolveEmpId(req.params.id);
+    if (!empId) return res.json({ ok: true, records: [] });
+    var result = await pgPool.query(
+      `SELECT dr.*, u.full_name AS issued_by_name
+       FROM disciplinary_records dr
+       LEFT JOIN users u ON u.id = dr.issued_by
+       WHERE dr.employee_id = $1
+       ORDER BY dr.incident_date DESC`,
+      [empId]
+    );
+    res.json({ ok: true, records: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Disciplinary: add record (Director / Ops Manager only) ──
+app.post('/api/staff/:id/disciplinary', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var b = req.body;
+    if (!b.incident_date || !b.type || !b.description) {
+      return res.status(400).json({ ok: false, error: 'incident_date, type and description are required.' });
+    }
+    var empId = await resolveEmpId(req.params.id);
+    if (!empId) return res.status(404).json({ ok: false, error: 'Staff member not found in database.' });
+    var result = await pgPool.query(
+      `INSERT INTO disciplinary_records (employee_id, incident_date, type, description, action_taken, issued_by)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [empId, b.incident_date, b.type, b.description, b.action_taken || null, req.user.id]
+    );
+    res.json({ ok: true, record: result.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Disciplinary: delete a record (Director only) ──
+app.delete('/api/disciplinary/:recordId', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    await pgPool.query('DELETE FROM disciplinary_records WHERE id = $1', [req.params.recordId]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Disciplinary: staff view their own record ──
+app.get('/api/my-disciplinary', requireLogin, requireRole('staff'), async function(req, res) {
+  try {
+    if (!req.user.staff_id) return res.json({ ok: true, records: [] });
+    var empId = await resolveEmpId(req.user.staff_id);
+    if (!empId) return res.json({ ok: true, records: [] });
+    var result = await pgPool.query(
+      `SELECT id, incident_date, type, description, action_taken, created_at
+       FROM disciplinary_records WHERE employee_id = $1 ORDER BY incident_date DESC`,
+      [empId]
+    );
+    res.json({ ok: true, records: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Incident Reports: submit (any logged-in staff member) ──
+app.post('/api/incident-reports', requireLogin, async function(req, res) {
+  try {
+    var b = req.body;
+    if (!b.incident_type || !b.description) {
+      return res.status(400).json({ ok: false, error: 'incident_type and description are required.' });
+    }
+    var reporterId = null;
+    var reporterName = null;
+    if (!b.is_anonymous && req.user.staff_id) {
+      var empResult = await pgPool.query('SELECT id, name FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
+      if (empResult.rows.length) { reporterId = empResult.rows[0].id; reporterName = empResult.rows[0].name; }
+    }
+    var result = await pgPool.query(
+      `INSERT INTO incident_reports
+         (reporter_id, is_anonymous, report_date, site_location, incident_type, against_person, description)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [
+        b.is_anonymous ? null : reporterId,
+        !!b.is_anonymous,
+        b.report_date || new Date().toISOString().slice(0, 10),
+        b.site_location || null,
+        b.incident_type,
+        b.against_person || null,
+        b.description,
+      ]
+    );
+    createNotification({
+      type: 'incident_report',
+      actorName: b.is_anonymous ? 'Anonymous' : (reporterName || 'A staff member'),
+      summary: 'submitted an incident report',
+      linkIncidentId: result.rows[0].id,
+    });
+    res.json({ ok: true, report: result.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Incident Reports: staff view their own submitted reports ──
+app.get('/api/my-incident-reports', requireLogin, requireRole('staff'), async function(req, res) {
+  try {
+    if (!req.user.staff_id) return res.json({ ok: true, reports: [] });
+    var empId = await resolveEmpId(req.user.staff_id);
+    if (!empId) return res.json({ ok: true, reports: [] });
+    var result = await pgPool.query(
+      `SELECT ir.id, ir.is_anonymous, ir.report_date, ir.site_location, ir.incident_type, ir.against_person, ir.description, ir.status, ir.resolution_notes, ir.created_at,
+              COUNT(ia.id)::int AS attachment_count
+       FROM incident_reports ir
+       LEFT JOIN incident_attachments ia ON ia.incident_id = ir.id
+       WHERE ir.reporter_id = $1
+       GROUP BY ir.id ORDER BY ir.created_at DESC`,
+      [empId]
+    );
+    res.json({ ok: true, reports: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Incident Reports: management — view all ──
+app.get('/api/incident-reports', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var result = await pgPool.query(
+      `SELECT ir.*,
+         CASE WHEN ir.is_anonymous THEN NULL ELSE e.name END AS reporter_name,
+         u.full_name AS reviewed_by_name,
+         COUNT(ia.id)::int AS attachment_count
+       FROM incident_reports ir
+       LEFT JOIN employees e ON e.id = ir.reporter_id
+       LEFT JOIN users u ON u.id = ir.reviewed_by
+       LEFT JOIN incident_attachments ia ON ia.incident_id = ir.id
+       GROUP BY ir.id, e.name, u.full_name
+       ORDER BY ir.created_at DESC`
+    );
+    res.json({ ok: true, reports: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Incident Reports: management — update status ──
+app.patch('/api/incident-reports/:reportId', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var b = req.body;
+    await pgPool.query(
+      `UPDATE incident_reports
+       SET status = COALESCE($1, status),
+           resolution_notes = COALESCE($2, resolution_notes),
+           reviewed_by = $3,
+           reviewed_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $4`,
+      [b.status || null, b.resolution_notes || null, req.user.id, req.params.reportId]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Incident Attachments ──────────────────────────────────────────────────────
+var INCIDENT_ATTACH_DIR = path.join(BASE, 'incident-attachments');
+if (!fs.existsSync(INCIDENT_ATTACH_DIR)) fs.mkdirSync(INCIDENT_ATTACH_DIR, { recursive: true });
+
+var ALLOWED_ATTACH_MIME = {
+  'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp',
+  'video/mp4': '.mp4', 'video/quicktime': '.mov', 'video/webm': '.webm', 'video/avi': '.avi',
+  'application/pdf': '.pdf',
+  'application/msword': '.doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx'
+};
+var MAX_ATTACH_SIZE = 100 * 1024 * 1024; // 100 MB
+
+// Upload attachment for an incident report
+app.post('/api/incident-reports/:reportId/attachments', requireLogin, async function(req, res) {
+  var reportRow = await pgPool.query('SELECT reporter_id FROM incident_reports WHERE id = $1', [req.params.reportId]);
+  if (!reportRow.rows.length) return res.status(404).json({ ok: false, error: 'Report not found.' });
+  if (!await canAccessOwnerEmpId(req, res, reportRow.rows[0].reporter_id)) return;
+
+  var mime = (req.headers['content-type'] || '').split(';')[0].trim();
+  var ext = ALLOWED_ATTACH_MIME[mime];
+  if (!ext) return res.status(400).json({ ok: false, error: 'File type not allowed.' });
+
+  var originalName = decodeURIComponent(req.headers['x-original-name'] || 'attachment' + ext);
+  var filename = crypto.randomUUID() + ext;
+  var dest = path.join(INCIDENT_ATTACH_DIR, filename);
+
+  var chunks = [];
+  var total = 0;
+  req.on('data', function(c) {
+    total += c.length;
+    if (total > MAX_ATTACH_SIZE) { req.destroy(); return res.status(413).json({ ok: false, error: 'File too large (max 100 MB).' }); }
+    chunks.push(c);
+  });
+  req.on('end', async function() {
+    try {
+      var buf = Buffer.concat(chunks);
+      fs.writeFileSync(dest, buf);
+      var r = await pgPool.query(
+        'INSERT INTO incident_attachments (incident_id, filename, original_name, mime_type, size_bytes) VALUES ($1,$2,$3,$4,$5) RETURNING id, filename, original_name, mime_type, size_bytes, uploaded_at',
+        [req.params.reportId, filename, originalName, mime, buf.length]
+      );
+      res.json({ ok: true, attachment: r.rows[0] });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+  req.on('error', function() { res.status(500).json({ ok: false, error: 'Upload failed.' }); });
+});
+
+// List attachments for an incident report
+app.get('/api/incident-reports/:reportId/attachments', requireLogin, async function(req, res) {
+  try {
+    var reportRow = await pgPool.query('SELECT reporter_id FROM incident_reports WHERE id = $1', [req.params.reportId]);
+    if (!reportRow.rows.length) return res.status(404).json({ ok: false, error: 'Report not found.' });
+    if (!await canAccessOwnerEmpId(req, res, reportRow.rows[0].reporter_id)) return;
+    var r = await pgPool.query(
+      'SELECT id, filename, original_name, mime_type, size_bytes, uploaded_at FROM incident_attachments WHERE incident_id = $1 ORDER BY uploaded_at ASC',
+      [req.params.reportId]
+    );
+    res.json({ ok: true, attachments: r.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Serve / download an attachment
+app.get('/api/incident-attachments/:filename', requireLogin, async function(req, res) {
+  try {
+    var safe = path.basename(req.params.filename);
+    var owner = await pgPool.query(
+      'SELECT ir.reporter_id FROM incident_attachments ia JOIN incident_reports ir ON ir.id = ia.incident_id WHERE ia.filename = $1',
+      [safe]
+    );
+    if (!owner.rows.length) return res.status(404).end();
+    if (!await canAccessOwnerEmpId(req, res, owner.rows[0].reporter_id)) return;
+    var filePath = path.join(INCIDENT_ATTACH_DIR, safe);
+    if (!fs.existsSync(filePath)) return res.status(404).end();
+    res.sendFile(filePath);
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+// Delete an attachment (reporter or management)
+app.delete('/api/incident-attachments/:attachId', requireLogin, async function(req, res) {
+  try {
+    var r = await pgPool.query(
+      'SELECT ia.filename, ir.reporter_id FROM incident_attachments ia JOIN incident_reports ir ON ir.id = ia.incident_id WHERE ia.id = $1',
+      [req.params.attachId]
+    );
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Not found.' });
+    if (!await canAccessOwnerEmpId(req, res, r.rows[0].reporter_id)) return;
+    var filePath = path.join(INCIDENT_ATTACH_DIR, r.rows[0].filename);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    await pgPool.query('DELETE FROM incident_attachments WHERE id = $1', [req.params.attachId]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Staff Messages ────────────────────────────────────────────────────────────
+
+var MESSAGES_SELECT = `
+  SELECT sm.id, sm.message, sm.is_read, sm.created_at,
+         u.full_name AS sender_name, u.role AS sender_role,
+         ma.id AS attachment_id, ma.filename AS attachment_filename,
+         ma.original_name AS attachment_original_name,
+         ma.mime_type AS attachment_mime_type, ma.size_bytes AS attachment_size
+  FROM staff_messages sm
+  JOIN users u ON u.id = sm.sender_id
+  LEFT JOIN message_attachments ma ON ma.message_id = sm.id
+  WHERE sm.employee_id = $1
+  ORDER BY sm.created_at ASC
+`;
+
+// Management: view full conversation for a staff member
+app.get('/api/staff/:id/messages', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var empId = await resolveEmpId(req.params.id);
+    if (!empId) return res.json({ ok: true, messages: [] });
+    var result = await pgPool.query(MESSAGES_SELECT, [empId]);
+    // Mark all unread (sent by staff) as read when management opens
+    await pgPool.query(
+      `UPDATE staff_messages SET is_read = TRUE WHERE employee_id = $1 AND sender_id IN (SELECT id FROM users WHERE role = 'staff') AND is_read = FALSE`,
+      [empId]
+    );
+    res.json({ ok: true, messages: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Management: send a message to a staff member
+app.post('/api/staff/:id/messages', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var empId = await resolveEmpId(req.params.id);
+    if (!empId) return res.status(404).json({ ok: false, error: 'Staff not found.' });
+    var msg = String((req.body && req.body.message) || '').trim();
+    if (!msg) return res.status(400).json({ ok: false, error: 'Message cannot be empty.' });
+    var r = await pgPool.query(
+      'INSERT INTO staff_messages (employee_id, sender_id, message) VALUES ($1,$2,$3) RETURNING id, message, created_at',
+      [empId, req.user.id, msg]
+    );
+    res.json({ ok: true, message: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Staff: view their own messages
+app.get('/api/my-messages', requireLogin, requireRole('staff'), async function(req, res) {
+  try {
+    if (!req.user.staff_id) return res.json({ ok: true, messages: [], unread: 0 });
+    var empId = await resolveEmpId(req.user.staff_id);
+    if (!empId) return res.json({ ok: true, messages: [], unread: 0 });
+    var result = await pgPool.query(MESSAGES_SELECT, [empId]);
+    var unread = result.rows.filter(function(m) { return !m.is_read && m.sender_role !== 'staff'; }).length;
+    // Mark management messages as read
+    await pgPool.query(
+      `UPDATE staff_messages SET is_read = TRUE WHERE employee_id = $1 AND is_read = FALSE AND sender_id NOT IN (SELECT id FROM users WHERE role = 'staff')`,
+      [empId]
+    );
+    res.json({ ok: true, messages: result.rows, unread: unread });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Staff: reply to management
+app.post('/api/my-messages', requireLogin, requireRole('staff'), async function(req, res) {
+  try {
+    if (!req.user.staff_id) return res.status(400).json({ ok: false, error: 'No staff profile linked.' });
+    var empRow = await pgPool.query('SELECT id, name FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
+    if (!empRow.rows.length) return res.status(400).json({ ok: false, error: 'Staff profile not found.' });
+    var empId = empRow.rows[0].id;
+    var msg = String((req.body && req.body.message) || '').trim();
+    if (!msg) return res.status(400).json({ ok: false, error: 'Message cannot be empty.' });
+    var r = await pgPool.query(
+      'INSERT INTO staff_messages (employee_id, sender_id, message, is_read) VALUES ($1,$2,$3, FALSE) RETURNING id, message, created_at',
+      [empId, req.user.id, msg]
+    );
+    createNotification({
+      type: 'message', actorName: empRow.rows[0].name, summary: 'sent you a message',
+      linkStaffId: req.user.staff_id, linkTab: 'messages',
+    });
+    res.json({ ok: true, message: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Message Attachments ───────────────────────────────────────────────────────
+var MESSAGE_ATTACH_DIR = path.join(BASE, 'message-attachments');
+if (!fs.existsSync(MESSAGE_ATTACH_DIR)) fs.mkdirSync(MESSAGE_ATTACH_DIR, { recursive: true });
+
+// Attach a file to a message either party just sent (reuses the same
+// image/video/doc whitelist and 100MB cap already defined for incident reports).
+app.post('/api/messages/:messageId/attachment', requireLogin, async function(req, res) {
+  var msgRow = await pgPool.query('SELECT employee_id FROM staff_messages WHERE id = $1', [req.params.messageId]);
+  if (!msgRow.rows.length) return res.status(404).json({ ok: false, error: 'Message not found.' });
+  if (!await canAccessOwnerEmpId(req, res, msgRow.rows[0].employee_id)) return;
+
+  var mime = (req.headers['content-type'] || '').split(';')[0].trim();
+  var ext = ALLOWED_ATTACH_MIME[mime];
+  if (!ext) return res.status(400).json({ ok: false, error: 'File type not allowed.' });
+
+  var originalName = decodeURIComponent(req.headers['x-original-name'] || 'attachment' + ext);
+  var filename = crypto.randomUUID() + ext;
+  var dest = path.join(MESSAGE_ATTACH_DIR, filename);
+
+  var chunks = [];
+  var total = 0;
+  req.on('data', function(c) {
+    total += c.length;
+    if (total > MAX_ATTACH_SIZE) { req.destroy(); return res.status(413).json({ ok: false, error: 'File too large (max 100 MB).' }); }
+    chunks.push(c);
+  });
+  req.on('end', async function() {
+    try {
+      var buf = Buffer.concat(chunks);
+      fs.writeFileSync(dest, buf);
+      var r = await pgPool.query(
+        'INSERT INTO message_attachments (message_id, filename, original_name, mime_type, size_bytes) VALUES ($1,$2,$3,$4,$5) RETURNING id, filename, original_name, mime_type, size_bytes, uploaded_at',
+        [req.params.messageId, filename, originalName, mime, buf.length]
+      );
+      res.json({ ok: true, attachment: r.rows[0] });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+  req.on('error', function() { res.status(500).json({ ok: false, error: 'Upload failed.' }); });
+});
+
+app.get('/api/message-attachments/:filename', requireLogin, async function(req, res) {
+  try {
+    var safe = path.basename(req.params.filename);
+    var owner = await pgPool.query(
+      'SELECT sm.employee_id FROM message_attachments ma JOIN staff_messages sm ON sm.id = ma.message_id WHERE ma.filename = $1',
+      [safe]
+    );
+    if (!owner.rows.length) return res.status(404).end();
+    if (!await canAccessOwnerEmpId(req, res, owner.rows[0].employee_id)) return;
+    var filePath = path.join(MESSAGE_ATTACH_DIR, safe);
+    if (!fs.existsSync(filePath)) return res.status(404).end();
+    res.sendFile(filePath);
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+// Delete a message (and its attachment, if any). Management-only — deliberately
+// not exposed to staff, so a message can't be used to hide something and then
+// erased before a manager has a chance to review it.
+app.delete('/api/messages/:messageId', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var attRes = await pgPool.query('SELECT filename FROM message_attachments WHERE message_id = $1', [req.params.messageId]);
+    attRes.rows.forEach(function(row) {
+      var fp = path.join(MESSAGE_ATTACH_DIR, row.filename);
+      if (fs.existsSync(fp)) fs.unlinkSync(fp);
+    });
+    var r = await pgPool.query('DELETE FROM staff_messages WHERE id = $1', [req.params.messageId]);
+    if (!r.rowCount) return res.status(404).json({ ok: false, error: 'Message not found.' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Staff Provisions (Uniform & Equipment) ────────────────────────────────────
+
+// Management: list provisions for a staff member
+app.get('/api/staff/:id/provisions', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var empId = await resolveEmpId(req.params.id);
+    if (!empId) return res.json({ ok: true, provisions: [] });
+    var result = await pgPool.query(
+      `SELECT sp.*, u.full_name AS recorded_by_name
+       FROM staff_provisions sp
+       LEFT JOIN users u ON u.id = sp.recorded_by
+       WHERE sp.employee_id = $1 ORDER BY sp.created_at DESC`,
+      [empId]
+    );
+    res.json({ ok: true, provisions: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Management: add a provision record
+app.post('/api/staff/:id/provisions', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var empId = await resolveEmpId(req.params.id);
+    if (!empId) return res.status(404).json({ ok: false, error: 'Staff not found.' });
+    var b = req.body;
+    if (!b.item) return res.status(400).json({ ok: false, error: 'Item name is required.' });
+    var r = await pgPool.query(
+      `INSERT INTO staff_provisions (employee_id, item, provided, date_given, date_returned, notes, recorded_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [empId, b.item, b.provided !== false, b.date_given || null, b.date_returned || null, b.notes || null, req.user.id]
+    );
+    res.json({ ok: true, provision: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Management: delete a provision record
+app.delete('/api/provisions/:id', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    await pgPool.query('DELETE FROM staff_provisions WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Staff: view their own provisions
+app.get('/api/my-provisions', requireLogin, requireRole('staff'), async function(req, res) {
+  try {
+    if (!req.user.staff_id) return res.json({ ok: true, provisions: [] });
+    var empId = await resolveEmpId(req.user.staff_id);
+    if (!empId) return res.json({ ok: true, provisions: [] });
+    var result = await pgPool.query(
+      'SELECT id, item, provided, date_given, date_returned, notes, created_at FROM staff_provisions WHERE employee_id = $1 ORDER BY created_at DESC',
+      [empId]
+    );
+    res.json({ ok: true, provisions: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── STAFF CONTRACT DOCUMENTS ─────────────────────────────────────────────────
+// Stored at BASE/contracts/{legacy_id}_contract.{ext}
+
+var CONTRACT_DIR = path.join(BASE, 'contracts');
+if (!fs.existsSync(CONTRACT_DIR)) fs.mkdirSync(CONTRACT_DIR, { recursive: true });
+
+function findContractFile(legacyId) {
+  var exts = ['.pdf', '.docx', '.doc', '.jpg', '.jpeg', '.png'];
+  for (var e of exts) {
+    var p = path.join(CONTRACT_DIR, String(legacyId) + '_contract' + e);
+    if (fs.existsSync(p)) return { filePath: p, ext: e };
+  }
+  return null;
+}
+
+function contractMime(ext) {
+  if (ext === '.pdf')             return 'application/pdf';
+  if (ext === '.docx')            return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (ext === '.doc')             return 'application/msword';
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.png')             return 'image/png';
+  return 'application/octet-stream';
+}
+
+// Check if contract exists (management)
+app.get('/api/staff/:id/contract/info', requireLogin, requirePermission('staff'), function(req, res) {
+  var found = findContractFile(req.params.id);
+  res.json({ ok: true, exists: !!found, ext: found ? found.ext : null });
+});
+
+// Upload contract (management)
+app.post('/api/staff/:id/contract', requireLogin, requirePermission('staff'), function(req, res) {
+  var legacyId = req.params.id;
+  var mime = (req.headers['content-type'] || '').toLowerCase();
+  var ext = '.pdf';
+  if      (mime.includes('pdf'))    ext = '.pdf';
+  else if (mime.includes('docx'))   ext = '.docx';
+  else if (mime.includes('msword')) ext = '.doc';
+  else if (mime.includes('jpeg'))   ext = '.jpg';
+  else if (mime.includes('png'))    ext = '.png';
+
+  var chunks = [];
+  req.on('data', function(c) { chunks.push(c); });
+  req.on('end', function() {
+    try {
+      var buf = Buffer.concat(chunks);
+      ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png'].forEach(function(e) {
+        var old = path.join(CONTRACT_DIR, legacyId + '_contract' + e);
+        if (fs.existsSync(old)) fs.unlinkSync(old);
+      });
+      fs.writeFileSync(path.join(CONTRACT_DIR, legacyId + '_contract' + ext), buf);
+      res.json({ ok: true });
+    } catch(e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+});
+
+// Download / view contract (management)
+app.get('/api/staff/:id/contract', requireLogin, requirePermission('staff'), function(req, res) {
+  var found = findContractFile(req.params.id);
+  if (!found) return res.status(404).json({ ok: false, error: 'No contract on file.' });
+  res.setHeader('Content-Type', contractMime(found.ext));
+  res.setHeader('Content-Disposition', 'inline; filename="contract' + found.ext + '"');
+  res.send(fs.readFileSync(found.filePath));
+});
+
+// Delete contract (management)
+app.delete('/api/staff/:id/contract', requireLogin, requirePermission('staff'), function(req, res) {
+  var found = findContractFile(req.params.id);
+  if (found) fs.unlinkSync(found.filePath);
+  res.json({ ok: true });
+});
+
+// Staff: check own contract
+app.get('/api/my-contract/info', requireLogin, requireRole('staff'), function(req, res) {
+  if (!req.user.staff_id) return res.json({ ok: true, exists: false });
+  var found = findContractFile(req.user.staff_id);
+  res.json({ ok: true, exists: !!found });
+});
+
+// Staff: view own contract
+app.get('/api/my-contract', requireLogin, requireRole('staff'), function(req, res) {
+  if (!req.user.staff_id) return res.status(404).json({ ok: false, error: 'No contract on file.' });
+  var found = findContractFile(req.user.staff_id);
+  if (!found) return res.status(404).json({ ok: false, error: 'No contract on file.' });
+  res.setHeader('Content-Type', contractMime(found.ext));
+  res.setHeader('Content-Disposition', 'inline; filename="your-contract' + found.ext + '"');
+  res.send(fs.readFileSync(found.filePath));
+});
+
+// ── INTERNAL n8n ENDPOINTS ────────────────────────────────────────────────────
+// These endpoints use a pre-shared token instead of session auth — for n8n agents only.
+
+var N8N_TOKEN = process.env.N8N_TOKEN || '';
+
+function requireN8nToken(req, res, next) {
+  var token = req.headers['x-n8n-token'] || req.query.token;
+  if (!N8N_TOKEN || token !== N8N_TOKEN) return res.status(401).json({ ok: false, error: 'Unauthorised' });
+  next();
+}
+
+// GET /api/internal/fleet — returns all vehicles with pre-computed days_until_* fields
+app.get('/api/internal/fleet', requireN8nToken, function(req, res) {
+  try {
+    var vehicles = loadVehicles();
+    var now = Date.now();
+    function daysUntil(dateStr) {
+      if (!dateStr) return null;
+      var d = new Date(dateStr);
+      if (isNaN(d.getTime())) return null;
+      return Math.floor((d.getTime() - now) / 86400000);
+    }
+    var enriched = vehicles
+      .filter(function(v) { return v.status !== 'sold'; })
+      .map(function(v) {
+        return {
+          id: v.id,
+          registration: v.registration,
+          make: v.make,
+          model: v.model,
+          year: v.year,
+          type: v.type,
+          status: v.status,
+          mot_expiry:       v.mot_expiry       || null,
+          insurance_expiry: v.insurance_expiry || null,
+          road_tax_expiry:  v.road_tax_expiry  || null,
+          service_due:      v.service_due      || null,
+          days_mot:       daysUntil(v.mot_expiry),
+          days_insurance: daysUntil(v.insurance_expiry),
+          days_road_tax:  daysUntil(v.road_tax_expiry),
+          days_service:   daysUntil(v.service_due),
+        };
+      });
+    res.json({ ok: true, vehicles: enriched, generatedAt: new Date().toISOString() });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
+
+// Management: which staff have unread messages (for bell notification list)
+// Management: unseen per-event notifications for the bell — each one clickable,
+// each disappears (seen_at set) once the manager has navigated to it.
+app.get('/api/notifications', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var result = await pgPool.query(
+      `SELECT id, type, actor_name, summary, link_staff_id, link_tab, link_incident_id, created_at
+       FROM notifications WHERE seen_at IS NULL ORDER BY created_at DESC LIMIT 50`
+    );
+    res.json({ ok: true, notifications: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/notifications/:id/seen', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    await pgPool.query('UPDATE notifications SET seen_at = NOW() WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 // ── START ─────────────────────────────────────────────────────────────────────
 console.log('\nInitialising staff data from spreadsheet...');

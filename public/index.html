@@ -539,6 +539,7 @@ body, button, input, select { font-family: 'Inter', system-ui, -apple-system, sa
   <button class="hbtn-ghost" onclick="doRefreshOverview()">&#8635; Refresh</button>
     <button class="hbtn-outline" onclick="doShowExStaff()">Ex-Staff</button>
     <button class="hbtn-primary" onclick="doOpenNew()">+ New Starter</button>
+    <button class="hbtn-ghost" onclick="doLogout()">Log Out</button>
   </div>
 </header>
 
@@ -961,22 +962,20 @@ function doDelete() {
   if (!confirm('Move ' + editing.name + ' to Ex-Staff?\n\nTheir folder will be kept as a record — nothing is permanently deleted.')) return;
   var btn = document.getElementById('delbtn');
   btn.disabled = true; btn.textContent = 'Moving...';
-  var xhr = new XMLHttpRequest();
-  xhr.open('DELETE', '/api/staff/' + editing.id, true);
-  xhr.setRequestHeader('Content-Type', 'application/json');
-  xhr.onload = function() {
+  fetch('/api/staff/' + editing.id, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ _folderPath: editing._folderPath })
+  }).then(function(res) {
     btn.disabled = false; btn.textContent = 'Move to Ex-Staff';
-    try {
-      var r = JSON.parse(xhr.responseText);
+    return res.json().then(function(r) {
       if (r.ok) {
         showToast(editing.name + ' moved to Ex-Staff.');
         doClose();
         reloadStaff();
       } else { showToast('Error: ' + (r.error || 'Unknown')); }
-    } catch(ex) { showToast('Failed. Please try again.'); }
-  };
-  xhr.onerror = function() { btn.disabled=false; btn.textContent='Move to Ex-Staff'; showToast('Connection error.'); };
-  xhr.send(JSON.stringify({ _folderPath: editing._folderPath }));
+    }).catch(function() { showToast('Failed. Please try again.'); });
+  }).catch(function() { btn.disabled=false; btn.textContent='Move to Ex-Staff'; showToast('Connection error.'); });
 }
 
 function setDelBtn(show) {
@@ -1140,38 +1139,31 @@ function doSave() {
     bsKeys.forEach(function(k){var el=document.getElementById('bsc_'+k);if(el)bsData[k]=el.value;});
     var cscsPathway={citbStatus:gv('fcitbstatus'),citbDate:gv('fcitbdate'),cscsAppStatus:gv('fcscsapp')};
   var isNew = !editing.id;
-  var xhr = new XMLHttpRequest();
-  xhr.open(isNew?'POST':'PUT', isNew?'/api/staff':'/api/staff/'+editing.id, true);
-  xhr.setRequestHeader('Content-Type','application/json');
-  xhr.onload = function() {
+  fetch(isNew?'/api/staff':'/api/staff/'+editing.id, {
+    method: isNew?'POST':'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).then(function(res) {
     btn.disabled=false; btn.textContent='Save & Update Files';
-    try {
-      var r = JSON.parse(xhr.responseText);
+    return res.json().then(function(r) {
       if (r.ok) {
         showToast('Saved! Files updated on your laptop.');
         doClose();
         reloadStaff();
       } else { showToast('Error: '+(r.error||'Unknown')); }
-    } catch(ex) { showToast('Save failed. Please try again.'); }
-  };
-  xhr.onerror = function() {
+    }).catch(function() { showToast('Save failed. Please try again.'); });
+  }).catch(function() {
     btn.disabled=false; btn.textContent='Save & Update Files';
     showToast('Connection error. Is the server running?');
-  };
-  xhr.send(JSON.stringify(payload));
+  });
 }
 
 function reloadStaff() {
-  var xhr = new XMLHttpRequest();
-  xhr.open('GET','/api/staff',true);
-  xhr.onload = function() {
-    try {
-      ALL = JSON.parse(xhr.responseText);
-      ALL.sort(function(a,b){return (a.name||'').localeCompare(b.name||'');});
-      doStats(); doDocStats(); doRender(); gtUpdateBadge(); sbUpdateCounts();
-    } catch(e) {}
-  };
-  xhr.send();
+  fetch('/api/staff').then(function(res) { return res.json(); }).then(function(data) {
+    ALL = data;
+    ALL.sort(function(a,b){return (a.name||'').localeCompare(b.name||'');});
+    doStats(); doDocStats(); doRender(); gtUpdateBadge(); sbUpdateCounts();
+  }).catch(function(e) {});
 }
 
 function doShowExStaff() {
@@ -1180,11 +1172,8 @@ function doShowExStaff() {
   document.getElementById('exmask').style.display = 'block';
   var ep = document.getElementById('expanel');
   ep.style.display = 'flex';
-  var xhr = new XMLHttpRequest();
-  xhr.open('GET', '/api/exstaff', true);
-  xhr.onload = function() {
-    try {
-      var list = JSON.parse(xhr.responseText);
+  fetch('/api/exstaff').then(function(res) {
+    return res.json().then(function(list) {
       if (!list.length) {
         body.innerHTML = '<div style="color:#6b7280;text-align:center;padding:40px;font-size:15px">No ex-staff found.</div>';
         return;
@@ -1201,12 +1190,10 @@ function doShowExStaff() {
         h += '</div>';
       });
       body.innerHTML = h;
-    } catch(e) {
+    }).catch(function(e) {
       body.innerHTML = '<div style="color:red;padding:20px">Error loading ex-staff.</div>';
-    }
-  };
-  xhr.onerror = function() { body.innerHTML = '<div style="color:red;padding:20px">Connection error.</div>'; };
-  xhr.send();
+    });
+  }).catch(function() { body.innerHTML = '<div style="color:red;padding:20px">Connection error.</div>'; });
 }
 
 function doCloseExStaff() {
@@ -1216,21 +1203,19 @@ function doCloseExStaff() {
 
 function doRestore(folderId) {
   if (!confirm('Restore this employee to Active Staff?')) return;
-  var xhr = new XMLHttpRequest();
-  xhr.open('POST', '/api/exstaff/restore', true);
-  xhr.setRequestHeader('Content-Type', 'application/json');
-  xhr.onload = function() {
-    try {
-      var r = JSON.parse(xhr.responseText);
+  fetch('/api/exstaff/restore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderId: folderId })
+  }).then(function(res) {
+    return res.json().then(function(r) {
       if (r.ok) {
         showToast(r.name + ' restored to Active Staff.');
         doCloseExStaff();
         reloadStaff();
       } else { showToast('Error: ' + (r.error || 'Unknown')); }
-    } catch(e) { showToast('Failed. Please try again.'); }
-  };
-  xhr.onerror = function() { showToast('Connection error.'); };
-  xhr.send(JSON.stringify({ folderId: folderId }));
+    }).catch(function() { showToast('Failed. Please try again.'); });
+  }).catch(function() { showToast('Connection error.'); });
 }
 
 function doUploadPhoto(input) {
@@ -1239,12 +1224,12 @@ function doUploadPhoto(input) {
   var file = input.files[0];
   var reader = new FileReader();
   reader.onload = function(ev) {
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/staff/' + encodeURIComponent(editing.id) + '/photo', true);
-    xhr.setRequestHeader('Content-Type', file.type);
-    xhr.onload = function() {
-      try {
-        var r = JSON.parse(xhr.responseText);
+    fetch('/api/staff/' + encodeURIComponent(editing.id) + '/photo', {
+      method: 'POST',
+      headers: { 'Content-Type': file.type },
+      body: file
+    }).then(function(res) {
+      return res.json().then(function(r) {
         if (r.ok) {
           showToast('Photo uploaded successfully!');
           // Update panel avatar immediately
@@ -1262,23 +1247,24 @@ function doUploadPhoto(input) {
           // Update card avatar on main grid
           loadCardPhoto(editing.id);
         } else { showToast('Upload failed: ' + (r.error || 'Unknown')); }
-      } catch(e) { showToast('Upload failed.'); }
-    };
-    xhr.onerror = function() { showToast('Connection error during upload.'); };
-    // Send raw binary
-    xhr.send(file);
+      }).catch(function(e) { showToast('Upload failed.'); });
+    }).catch(function() { showToast('Connection error during upload.'); });
   };
   reader.readAsArrayBuffer(file);
 }
 
+function doLogout() {
+  fetch('/api/logout', { method: 'POST' }).finally(function() {
+    window.location.href = '/';
+  });
+}
+
 function doRefreshOverview() {
-  var xhr = new XMLHttpRequest();
-  xhr.open('POST','/api/overview',true);
-  xhr.onload = function() {
-    try { var r=JSON.parse(xhr.responseText); showToast(r.ok?'Overview updated!':'Error: '+r.error); }
-    catch(e) { showToast('Done.'); }
-  };
-  xhr.send();
+  fetch('/api/overview', { method: 'POST' }).then(function(res) {
+    return res.json().then(function(r) {
+      showToast(r.ok?'Overview updated!':'Error: '+r.error);
+    }).catch(function(e) { showToast('Done.'); });
+  }).catch(function() {});
 }
 
 function showToast(msg) {
