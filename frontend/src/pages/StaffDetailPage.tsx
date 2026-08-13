@@ -173,7 +173,7 @@ type TabId = typeof TABS[number]["id"]
 export default function StaffDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { user: me } = useAuth()
   const [staff, setStaff]     = useState<StaffMember | null>(null)
   const [loading, setLoading]   = useState(true)
@@ -288,6 +288,16 @@ export default function StaffDetailPage() {
     const t = searchParams.get("tab")
     if (t && TABS.some(x => x.id === t)) setTab(t as TabId)
   }, [searchParams])
+
+  // Deep-link support: /staff/:id?edit=1 (used by the Staff Overview quick-edit action)
+  useEffect(() => {
+    if (searchParams.get("edit") === "1" && staff && canEdit) {
+      openEdit()
+      const next = new URLSearchParams(searchParams)
+      next.delete("edit")
+      setSearchParams(next, { replace: true })
+    }
+  }, [searchParams, staff])
 
   const canManagePortalAccess = me?.role === "director" || me?.role === "ops_manager"
   const canEdit   = me?.role === "director" || !!me?.permissions?.edit_staff
@@ -936,7 +946,7 @@ export default function StaffDetailPage() {
   const acsTotal = Object.values(acs).length
 
   return (
-    <div className="space-y-4 max-w-3xl">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <Button variant="ghost" size="sm" onClick={() => navigate("/staff")}>
           <ArrowLeft className="mr-2 h-4 w-4" />Back to Staff
