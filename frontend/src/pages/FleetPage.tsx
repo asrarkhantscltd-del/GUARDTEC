@@ -68,6 +68,10 @@ const BLANK_DRIVER: Omit<FleetDriver, "id"> = {
 
 const LICENCE_CATS = ["B", "B+E", "C1", "C1+E", "C", "C+E", "D1", "D1+E", "D", "AM"]
 
+function downloadExport(url: string) {
+  window.open(url, "_blank")
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function daysUntil(dateStr?: string): number | null {
@@ -159,6 +163,10 @@ export default function FleetPage() {
   const [statusFilter, setStatusFilter] = useState("all")
   const [typeFilter, setTypeFilter] = useState("all")
 
+  // Row selection for Excel export
+  const [selectedVehicleIds, setSelectedVehicleIds] = useState<Set<string>>(new Set())
+  const [selectedDriverIds, setSelectedDriverIds] = useState<Set<string>>(new Set())
+
   // Add/Delete state — drivers
   const [showPanel, setShowPanel] = useState(false)
   const [editDriver, setEditDriver] = useState<Omit<FleetDriver, "id">>(BLANK_DRIVER)
@@ -187,6 +195,34 @@ export default function FleetPage() {
 
   function switchTab(tab: "vehicles" | "drivers") {
     setSearch(""); setSearchParams({ tab })
+  }
+
+  function toggleSelected(id: string, setFn: React.Dispatch<React.SetStateAction<Set<string>>>) {
+    setFn(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  function toggleSelectAll(ids: string[], selected: Set<string>, setFn: React.Dispatch<React.SetStateAction<Set<string>>>) {
+    const allSelected = ids.length > 0 && ids.every(id => selected.has(id))
+    setFn(prev => {
+      const next = new Set(prev)
+      if (allSelected) ids.forEach(id => next.delete(id))
+      else ids.forEach(id => next.add(id))
+      return next
+    })
+  }
+
+  function exportFleetReport() {
+    if (activeTab === "vehicles") {
+      const ids = selectedVehicleIds.size > 0 ? [...selectedVehicleIds] : filteredVehicles.map(v => v.id)
+      downloadExport(`/api/vehicles/export?ids=${ids.join(",")}`)
+    } else {
+      const ids = selectedDriverIds.size > 0 ? [...selectedDriverIds] : filteredDrivers.map(d => d.id)
+      downloadExport(`/api/drivers/export?ids=${ids.join(",")}`)
+    }
   }
 
   useEffect(() => {
@@ -586,6 +622,13 @@ export default function FleetPage() {
             </select>
           </>
         )}
+        <button onClick={exportFleetReport}
+          className="flex shrink-0 items-center gap-1.5 rounded-md border bg-background px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+          <Download className="h-4 w-4" />
+          {activeTab === "vehicles"
+            ? (selectedVehicleIds.size > 0 ? `Export Selected (${selectedVehicleIds.size})` : "Export Report")
+            : (selectedDriverIds.size > 0 ? `Export Selected (${selectedDriverIds.size})` : "Export Report")}
+        </button>
       </div>
 
       {/* Vehicles tab */}
@@ -594,13 +637,26 @@ export default function FleetPage() {
           ? <EmptyState icon={<Truck className="h-12 w-12" />}
               title={vehicles.length === 0 ? "No vehicles on record" : "No vehicles match your filters"}
               description="Add your first company vehicle to start tracking compliance." />
-          : <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {filteredVehicles.map(v => (
-                <VehicleCard key={v.id} v={v} drivers={drivers}
-                  onEdit={() => openEditVehicle(v)}
-                  onDelete={() => setDeleteVehicleId(v.id)}
-                  onDocs={() => openDocsPanel(v.id)} />
-              ))}
+          : <div className="space-y-3">
+              <div className="flex items-center gap-2 px-1">
+                <input
+                  type="checkbox"
+                  checked={filteredVehicles.length > 0 && filteredVehicles.every(v => selectedVehicleIds.has(v.id))}
+                  onChange={() => toggleSelectAll(filteredVehicles.map(v => v.id), selectedVehicleIds, setSelectedVehicleIds)}
+                  className="h-4 w-4 rounded border-border"
+                />
+                <span className="text-xs text-muted-foreground">Select all</span>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {filteredVehicles.map(v => (
+                  <VehicleCard key={v.id} v={v} drivers={drivers}
+                    selected={selectedVehicleIds.has(v.id)}
+                    onToggleSelect={() => toggleSelected(v.id, setSelectedVehicleIds)}
+                    onEdit={() => openEditVehicle(v)}
+                    onDelete={() => setDeleteVehicleId(v.id)}
+                    onDocs={() => openDocsPanel(v.id)} />
+                ))}
+              </div>
             </div>
       )}
 
@@ -616,6 +672,14 @@ export default function FleetPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-muted/50">
+                    <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">
+                      <input
+                        type="checkbox"
+                        checked={filteredDrivers.length > 0 && filteredDrivers.every(d => selectedDriverIds.has(d.id))}
+                        onChange={() => toggleSelectAll(filteredDrivers.map(d => d.id), selectedDriverIds, setSelectedDriverIds)}
+                        className="h-4 w-4 rounded border-border"
+                      />
+                    </th>
                     {["Driver","Licence No.","Categories","Lic. Expiry","CPC","Tachograph","Medical","DBS Date","Vehicle","Status",""].map(h => (
                       <th key={h} className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">{h}</th>
                     ))}
@@ -623,7 +687,10 @@ export default function FleetPage() {
                 </thead>
                 <tbody>
                   {filteredDrivers.map(d => (
-                    <DriverRow key={d.id} d={d} vehicles={vehicles} onDelete={() => setDeleteId(d.id)} />
+                    <DriverRow key={d.id} d={d} vehicles={vehicles}
+                      selected={selectedDriverIds.has(d.id)}
+                      onToggleSelect={() => toggleSelected(d.id, setSelectedDriverIds)}
+                      onDelete={() => setDeleteId(d.id)} />
                   ))}
                 </tbody>
               </table>
@@ -1066,7 +1133,10 @@ export default function FleetPage() {
 
 // ── Vehicle Card ──────────────────────────────────────────────────────────────
 
-function VehicleCard({ v, drivers, onEdit, onDelete, onDocs }: { v: Vehicle; drivers: FleetDriver[]; onEdit: () => void; onDelete: () => void; onDocs: () => void }) {
+function VehicleCard({ v, drivers, selected, onToggleSelect, onEdit, onDelete, onDocs }: {
+  v: Vehicle; drivers: FleetDriver[]; selected: boolean; onToggleSelect: () => void
+  onEdit: () => void; onDelete: () => void; onDocs: () => void
+}) {
   const driver = v.assignedDriverId ? drivers.find(d => d.id === v.assignedDriverId) : null
   const worst = worstDays([v.mot_expiry, v.insurance_expiry, v.road_tax_expiry])
   const borderClass =
@@ -1085,6 +1155,15 @@ function VehicleCard({ v, drivers, onEdit, onDelete, onDocs }: { v: Vehicle; dri
             <Car className="h-10 w-10" />
           </div>
         )}
+        <div className="absolute left-2 top-2">
+          <input
+            type="checkbox"
+            checked={selected}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => { e.stopPropagation(); onToggleSelect() }}
+            className="h-4 w-4 rounded border-border"
+          />
+        </div>
         <div className="absolute right-2 top-2 flex gap-1">
           <button onClick={onEdit} title="Edit vehicle details"
             className="rounded-md bg-black/40 p-1.5 text-white/80 backdrop-blur-sm transition-colors hover:bg-primary hover:text-white">
@@ -1161,7 +1240,9 @@ function ComplianceCell({ label, dateStr }: { label: string; dateStr?: string })
 
 // ── Driver Row ────────────────────────────────────────────────────────────────
 
-function DriverRow({ d, vehicles, onDelete }: { d: FleetDriver; vehicles: Vehicle[]; onDelete: () => void }) {
+function DriverRow({ d, vehicles, selected, onToggleSelect, onDelete }: {
+  d: FleetDriver; vehicles: Vehicle[]; selected: boolean; onToggleSelect: () => void; onDelete: () => void
+}) {
   const assignedVehicle = d.assignedVehicleId ? vehicles.find(v => v.id === d.assignedVehicleId) : null
   const worst = worstDays([d.licenceExpiry, d.cpcExpiry, d.tachoExpiry, d.medicalExpiry])
 
@@ -1176,6 +1257,15 @@ function DriverRow({ d, vehicles, onDelete }: { d: FleetDriver; vehicles: Vehicl
 
   return (
     <tr className={`border-b transition-colors hover:bg-muted/30 ${rowBg}`}>
+      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+        <input
+          type="checkbox"
+          checked={selected}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => { e.stopPropagation(); onToggleSelect() }}
+          className="h-4 w-4 rounded border-border"
+        />
+      </td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">

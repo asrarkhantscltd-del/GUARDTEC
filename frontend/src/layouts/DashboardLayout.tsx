@@ -8,9 +8,13 @@ import {
   Menu, X, MapPin,
   KeyRound, Bell, ClipboardCheck, Shield,
   Camera, Loader2, Sun, Moon, AlertTriangle, XCircle,
-  ChevronDown, UserCog, Eye, EyeOff,
+  ChevronDown, UserCog, Eye, EyeOff, FileSpreadsheet,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
+
+function downloadExport(url: string) {
+  window.open(url, "_blank")
+}
 
 interface NavItem {
   label: string
@@ -43,10 +47,13 @@ export default function DashboardLayout() {
   const photoInputRef = useRef<HTMLInputElement>(null)
   const [alertCount, setAlertCount] = useState(0)
   const [notifCount, setNotifCount] = useState({ messages: 0, incidents: 0, total: 0 })
+  const [unreadStaff, setUnreadStaff] = useState<{ staff_id: string, staff_name: string, unread_count: number }[]>([])
   const [showAlerts, setShowAlerts] = useState(false)
   const alertsRef = useRef<HTMLDivElement>(null)
   const [showProfile, setShowProfile] = useState(false)
   const profileRef = useRef<HTMLDivElement>(null)
+  const [showReports, setShowReports] = useState(false)
+  const reportsRef = useRef<HTMLDivElement>(null)
   const [ringHidden, setRingHidden] = useState(() => localStorage.getItem("guardtec_ring_hidden") === "true")
 
   function toggleRing() {
@@ -75,6 +82,10 @@ export default function DashboardLayout() {
         .then(r => r.ok ? r.json() : null)
         .then(d => { if (d?.ok) setNotifCount({ messages: d.messages, incidents: d.incidents, total: d.total }) })
         .catch(() => {})
+      fetch("/api/staff-messages/unread", { credentials: "include" })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d?.ok) setUnreadStaff(d.staff ?? []) })
+        .catch(() => {})
     }
     fetchNotifs()
     const id = setInterval(fetchNotifs, 30000)
@@ -91,6 +102,17 @@ export default function DashboardLayout() {
     if (showAlerts) document.addEventListener("mousedown", handleClick)
     return () => document.removeEventListener("mousedown", handleClick)
   }, [showAlerts])
+
+  // Close reports dropdown when clicking outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (reportsRef.current && !reportsRef.current.contains(e.target as Node)) {
+        setShowReports(false)
+      }
+    }
+    if (showReports) document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [showReports])
 
   // Close profile dropdown when clicking outside
   useEffect(() => {
@@ -238,6 +260,55 @@ export default function DashboardLayout() {
               {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
             </p>
 
+            {/* ── Generate Report — shows dropdown on click ── */}
+            {(user?.role === "director" || user?.permissions?.staff || user?.permissions?.fleet) && (
+              <div className="relative" ref={reportsRef}>
+                <button
+                  onClick={() => setShowReports(prev => !prev)}
+                  className="relative rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  title="Generate Report"
+                >
+                  <FileSpreadsheet className="h-4.5 w-4.5" />
+                </button>
+
+                {/* Reports dropdown panel */}
+                {showReports && (
+                  <div className="absolute right-0 top-12 z-50 w-56 rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
+                    <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                      <p className="text-sm font-semibold">Generate Report</p>
+                      <button onClick={() => setShowReports(false)}
+                        className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="p-2 space-y-0.5">
+                      <button
+                        onClick={() => { downloadExport("/api/staff/export"); setShowReports(false) }}
+                        className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
+                      >
+                        <FileSpreadsheet className="h-3.5 w-3.5 text-muted-foreground" />
+                        Staff Report
+                      </button>
+                      <button
+                        onClick={() => { downloadExport("/api/vehicles/export"); setShowReports(false) }}
+                        className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
+                      >
+                        <FileSpreadsheet className="h-3.5 w-3.5 text-muted-foreground" />
+                        Fleet Report
+                      </button>
+                      <button
+                        onClick={() => { downloadExport("/api/drivers/export"); setShowReports(false) }}
+                        className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
+                      >
+                        <FileSpreadsheet className="h-3.5 w-3.5 text-muted-foreground" />
+                        Driver Report
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* ── Bell — shows dropdown on click ── */}
             <div className="relative" ref={alertsRef}>
               <button
@@ -267,23 +338,31 @@ export default function DashboardLayout() {
                   <div className="p-3 space-y-2 max-h-[420px] overflow-y-auto">
 
                     {/* ── Messages section ── */}
-                    {notifCount.messages > 0 && (
-                      <button
-                        onClick={() => { navigate("/staff"); setShowAlerts(false) }}
-                        className="flex w-full items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3 text-left hover:bg-blue-500/10 transition-colors"
-                      >
-                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-500/15">
-                          <Bell className="h-3.5 w-3.5 text-blue-500" />
-                        </div>
-                        <div>
+                    {unreadStaff.length > 0 && (
+                      <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 overflow-hidden">
+                        <div className="flex items-center gap-2 px-3 pt-2.5">
+                          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-500/15">
+                            <Bell className="h-3.5 w-3.5 text-blue-500" />
+                          </div>
                           <p className="text-sm font-medium text-blue-600 dark:text-blue-400">
-                            {notifCount.messages} unread message{notifCount.messages !== 1 ? "s" : ""} from staff
-                          </p>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            Open a staff profile → Messages tab to reply
+                            Unread staff messages
                           </p>
                         </div>
-                      </button>
+                        <div className="mt-1 mb-1">
+                          {unreadStaff.map((s) => (
+                            <button
+                              key={s.staff_id}
+                              onClick={() => { navigate(`/staff/${s.staff_id}?tab=messages`); setShowAlerts(false) }}
+                              className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-blue-500/10 transition-colors"
+                            >
+                              <span className="truncate">{s.staff_name}</span>
+                              <span className="shrink-0 text-xs text-muted-foreground">
+                                {s.unread_count} message{s.unread_count !== 1 ? "s" : ""}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     )}
 
                     {/* ── Incident reports section ── */}
@@ -323,7 +402,7 @@ export default function DashboardLayout() {
                     )}
 
                     {/* All clear */}
-                    {alertCount === 0 && notifCount.total === 0 && (
+                    {alertCount === 0 && notifCount.incidents === 0 && unreadStaff.length === 0 && (
                       <div className="flex items-center gap-3 rounded-xl border border-success/20 bg-success/5 p-3">
                         <ShieldCheck className="h-4 w-4 shrink-0 text-success" />
                         <p className="text-sm font-medium text-success">All clear — no new notifications</p>

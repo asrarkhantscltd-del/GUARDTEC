@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { useParams, useNavigate } from "react-router-dom"
+import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
 import type { EmergencyContact, StaffMember, DiscRecord, TrainingItem, ExtraTrainingItem, TrainingRecord, DbsRecord, Bs7858Record } from "@/types/staff"
@@ -146,6 +146,7 @@ type TabId = typeof TABS[number]["id"]
 export default function StaffDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { user: me } = useAuth()
   const [staff, setStaff]     = useState<StaffMember | null>(null)
   const [loading, setLoading]   = useState(true)

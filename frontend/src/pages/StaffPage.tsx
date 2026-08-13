@@ -11,9 +11,13 @@ import {
   Search, ChevronRight, Loader2,
   Table2, StretchHorizontal, MapPin, Clock,
   CircleCheck, ShieldCheck, HardHat, FileCheck, Building2, Plus, X,
-  BarChart3, FileWarning, UserX, RotateCcw, Archive, Briefcase, Trash2,
+  BarChart3, FileWarning, UserX, RotateCcw, Archive, Briefcase, Trash2, Download,
 } from "lucide-react"
 import { StatusBadge } from "@/components/ui/status-badge"
+
+function downloadExport(url: string) {
+  window.open(url, "_blank")
+}
 
 const stagger = {
   container: { animate: { transition: { staggerChildren: 0.05 } } },
@@ -212,6 +216,9 @@ export default function StaffPage() {
   const [addForm, setAddForm]     = useState({ name: "", jobRole: "", email: "", phone: "", nationality: "" })
   const [addSaving, setAddSaving] = useState(false)
   const [addError, setAddError]   = useState("")
+
+  // Row selection for Excel export
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
   // Which section tab is active — defaults to Compliance Status if the URL
   // doesn't specify one (e.g. clicking the parent "Staff" nav item)
@@ -434,6 +441,32 @@ export default function StaffPage() {
     return staff.filter((s) => s.currentSite === id).length
   }
 
+  function toggleSelectId(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  function toggleSelectAllFiltered() {
+    const allSelected = filtered.length > 0 && filtered.every((s) => selectedIds.has(s.id))
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (allSelected) {
+        filtered.forEach((s) => next.delete(s.id))
+      } else {
+        filtered.forEach((s) => next.add(s.id))
+      }
+      return next
+    })
+  }
+
+  function exportStaffReport() {
+    const ids = selectedIds.size > 0 ? [...selectedIds] : filtered.map((s) => s.id)
+    downloadExport(`/api/staff/export?ids=${ids.join(",")}`)
+  }
+
   function goToStaff(id: string) { navigate(`/staff/${id}`) }
 
   function changeView(v: ViewMode) { setView(v); localStorage.setItem("staff-view", v) }
@@ -622,6 +655,11 @@ export default function StaffPage() {
             </button>
           ))}
         </div>
+        <button onClick={exportStaffReport}
+          className="flex shrink-0 items-center gap-1.5 rounded-md border bg-background px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+          <Download className="h-4 w-4" />
+          {selectedIds.size > 0 ? `Export Selected (${selectedIds.size})` : "Export Report"}
+        </button>
       </div>
 
       {loading ? (
@@ -639,6 +677,15 @@ export default function StaffPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
+                  <th className="px-4 py-3 w-8">
+                    <input
+                      type="checkbox"
+                      checked={filtered.length > 0 && filtered.every((s) => selectedIds.has(s.id))}
+                      onChange={(e) => { e.stopPropagation(); toggleSelectAllFiltered() }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="h-4 w-4 rounded border-border"
+                    />
+                  </th>
                   <th className="px-4 py-3">
                     <button onClick={() => toggleSort("name")} className="flex items-center gap-1 hover:text-foreground transition-colors">
                       Name {sortKey === "name" ? (sortDir === "asc" ? "↑" : "↓") : <span className="opacity-30">↕</span>}
@@ -668,6 +715,15 @@ export default function StaffPage() {
                 {filtered.map((s) => (
                   <tr key={s.id} onClick={() => goToStaff(s.id)}
                     className="hover:bg-muted/30 transition-colors cursor-pointer">
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(s.id)}
+                        onChange={(e) => { e.stopPropagation(); toggleSelectId(s.id) }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="h-4 w-4 rounded border-border"
+                      />
+                    </td>
                     <td className="px-4 py-3 font-medium">{s.name}</td>
                     <td className="px-4 py-3"><StatusBadge status={s.overall} /></td>
                     <td className="hidden sm:table-cell px-4 py-3" onClick={(e) => e.stopPropagation()}>

@@ -980,6 +980,46 @@ app.get('/api/staff', requireLogin, requirePermission('staff'), function(req, re
   }
 });
 
+// ── STAFF EXCEL EXPORT ────────────────────────────────────────────────────────
+app.get('/api/staff/export', requireLogin, requirePermission('staff'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var ids = req.query.ids ? String(req.query.ids).split(',') : null;
+    var list = ids ? all.filter(function(s) { return ids.indexOf(s.id) !== -1; }) : all;
+    var rows = list.map(function(s) {
+      var missingItems = [];
+      if (!(s.sia && s.sia.number)) missingItems.push('SIA');
+      if (!(s.cscs && s.cscs.number)) missingItems.push('CSCS');
+      if (!(s.dbs && s.dbs.type)) missingItems.push('DBS');
+      if (!(s.bs7858 && s.bs7858.completed)) missingItems.push('BS7858');
+      return {
+        'Name': s.name || '',
+        'Job Role': s.jobRole || '',
+        'Overall Status': s.overall || '',
+        'Email': s.email || '',
+        'Phone': s.phone || '',
+        'Nationality': s.nationality || '',
+        'Date of Birth': s.dateOfBirth || s.dob || '',
+        'NI Number': s.ni || '',
+        'Address': s.address || '',
+        'Deploy Status': s.deployStatus || '',
+        'Current Site': s.currentSite || '',
+        'SIA Number': (s.sia && s.sia.number) || 'Missing',
+        'SIA Expiry': (s.sia && s.sia.expiry) || 'Missing',
+        'CSCS Number': (s.cscs && s.cscs.number) || 'Missing',
+        'CSCS Expiry': (s.cscs && s.cscs.expiry) || 'Missing',
+        'Visa Type': (s.visa && s.visa.type) || 'Missing',
+        'Visa Expiry': (s.visa && s.visa.expiry) || 'Missing',
+        'DBS Type': (s.dbs && s.dbs.type) || 'Missing',
+        'DBS Check Date': (s.dbs && s.dbs.checkDate) || 'Missing',
+        'BS7858 Completed': (s.bs7858 && s.bs7858.completed) ? 'Yes' : 'No',
+        'Missing Documents': missingItems.length ? missingItems.join(', ') : 'None',
+      };
+    });
+    sendXlsx(res, 'GuardTec-Staff-Report-' + new Date().toISOString().slice(0,10) + '.xlsx', rows);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // ── COMPLIANCE ALERTS ─────────────────────────────────────────────────────────
 app.get('/api/compliance/alerts', requireLogin, requirePermission('staff'), function(req, res) {
   try {
@@ -1943,6 +1983,17 @@ function saveVehicleDocs(vehicleId, docs) {
   fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify(docs, null, 2), 'utf8');
 }
 
+// ── EXCEL EXPORT HELPER ────────────────────────────────────────────────────────
+function sendXlsx(res, filename, rows) {
+  var ws = XLSX.utils.json_to_sheet(rows);
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Report');
+  var buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', 'attachment; filename="' + filename + '"');
+  res.send(buf);
+}
+
 function loadJsonFile(filePath, defaultVal) {
   if (defaultVal === undefined) defaultVal = [];
   if (!fs.existsSync(filePath)) return defaultVal;
@@ -2174,6 +2225,67 @@ app.delete('/api/fleet-drivers/:id', requireLogin, requirePermission('fleet'), f
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+// ── FLEET EXCEL EXPORTS ───────────────────────────────────────────────────────
+app.get('/api/vehicles/export', requireLogin, requirePermission('fleet'), function(req, res) {
+  try {
+    var all = loadVehicles();
+    var drivers = loadFleetDrivers();
+    var ids = req.query.ids ? String(req.query.ids).split(',') : null;
+    var list = ids ? all.filter(function(v) { return ids.indexOf(v.id) !== -1; }) : all;
+    var rows = list.map(function(v) {
+      var driver = drivers.find(function(d) { return d.id === v.assignedDriverId; });
+      return {
+        'Registration': v.registration || '',
+        'Make': v.make || '',
+        'Model': v.model || '',
+        'Year': v.year || '',
+        'Colour': v.colour || '',
+        'Type': v.type || '',
+        'Status': v.status || '',
+        'Mileage': v.mileage || '',
+        'MOT Expiry': v.mot_expiry || '',
+        'Insurance Expiry': v.insurance_expiry || '',
+        'Road Tax Expiry': v.road_tax_expiry || '',
+        'Service Due': v.service_due || '',
+        'Assigned Driver': driver ? (driver.first_name + ' ' + driver.last_name) : '',
+      };
+    });
+    sendXlsx(res, 'GuardTec-Fleet-Report-' + new Date().toISOString().slice(0,10) + '.xlsx', rows);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.get('/api/drivers/export', requireLogin, requirePermission('fleet'), function(req, res) {
+  try {
+    var all = loadFleetDrivers();
+    var vehicles = loadVehicles();
+    var ids = req.query.ids ? String(req.query.ids).split(',') : null;
+    var list = ids ? all.filter(function(d) { return ids.indexOf(d.id) !== -1; }) : all;
+    var rows = list.map(function(d) {
+      var vehicle = vehicles.find(function(v) { return v.id === d.assignedVehicleId; });
+      return {
+        'First Name': d.first_name || '',
+        'Last Name': d.last_name || '',
+        'Phone': d.phone || '',
+        'Email': d.email || '',
+        'Licence Number': d.licenceNumber || '',
+        'Licence Expiry': d.licenceExpiry || '',
+        'Licence Categories': (d.licenceCategories || []).join(', '),
+        'CPC Card': d.cpcCard || '',
+        'CPC Expiry': d.cpcExpiry || '',
+        'Tacho Card': d.tachoCard || '',
+        'Tacho Expiry': d.tachoExpiry || '',
+        'Medical Expiry': d.medicalExpiry || '',
+        'DBS Number': d.dbsNumber || '',
+        'DBS Date': d.dbsDate || '',
+        'Status': d.status || '',
+        'Assigned Vehicle': vehicle ? vehicle.registration : '',
+        'Notes': d.notes || '',
+      };
+    });
+    sendXlsx(res, 'GuardTec-Drivers-Report-' + new Date().toISOString().slice(0,10) + '.xlsx', rows);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 app.get('/api/users', requireLogin, requireRole('director'), async function(req, res) {
@@ -2900,6 +3012,26 @@ app.get('/api/internal/fleet', requireN8nToken, function(req, res) {
 });
 
 // ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
+
+// Management: which staff have unread messages (for bell notification list)
+app.get('/api/staff-messages/unread', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var result = await pgPool.query(
+      `SELECT e.legacy_id AS staff_id, e.name AS staff_name, COUNT(*) AS unread_count,
+              MAX(sm.created_at) AS latest_at
+       FROM staff_messages sm
+       JOIN employees e ON e.id = sm.employee_id
+       JOIN users u ON u.id = sm.sender_id
+       WHERE u.role = 'staff' AND sm.is_read = FALSE
+       GROUP BY e.legacy_id, e.name
+       ORDER BY latest_at DESC`
+    );
+    res.json({ ok: true, staff: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // Management: count of unread staff messages + open incident reports
 app.get('/api/notifications/count', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
