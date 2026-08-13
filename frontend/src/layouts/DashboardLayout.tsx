@@ -13,6 +13,7 @@ import {
   ChevronDown, UserCog, Eye, EyeOff, FileSpreadsheet,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
+import AiChat from "@/components/AiChat"
 
 interface NavItem {
   label: string
@@ -763,6 +764,9 @@ export default function DashboardLayout() {
         disabled={uploadingPhoto}
         onChange={e => handleMyPhotoUpload(e.target.files?.[0] ?? null)}
       />
+
+      {/* AI Compliance Assistant — floating chat widget */}
+      <AiChat />
     </div>
   )
 }
