@@ -244,6 +244,12 @@ export default function StaffDetailPage() {
     if (tab === "hr")         loadContractInfo()
   }, [tab, id])
 
+  // Deep-link support: /staff/:id?tab=messages (used by the notification bell)
+  useEffect(() => {
+    const t = searchParams.get("tab")
+    if (t && TABS.some(x => x.id === t)) setTab(t as TabId)
+  }, [searchParams])
+
   const canManagePortalAccess = me?.role === "director" || me?.role === "ops_manager"
   const canEdit   = me?.role === "director" || !!me?.permissions?.edit_staff
   const canDelete = me?.role === "director" || !!me?.permissions?.delete_staff
