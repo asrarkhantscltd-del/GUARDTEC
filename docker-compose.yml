@@ -15,6 +15,7 @@ services:
       - "C:\\Users\\WORKSTATION\\First Call Site Services\\FCSS - Managers\\HR and Legal\\Asrar\\GuardTec Compliance:/data"
     environment:
       - DATA_PATH=/data
+      - N8N_AI_WEBHOOK=http://n8n:5678/webhook/ai-chat
       - PORT=3000
       - DATABASE_URL=postgresql://guardtec:Guardtec@2026@db:5432/guardtec
       - JWT_SECRET=${JWT_SECRET}
@@ -50,6 +51,8 @@ services:
       - N8N_BASIC_AUTH_USER=asrar
       - N8N_BASIC_AUTH_PASSWORD=Guardtec@2026
       - N8N_USER_MANAGEMENT_DISABLED=true
+      - GROQ_API_KEY=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
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
       - TZ=Europe/London
       - GENERIC_TIMEZONE=Europe/London
       - DB_TYPE=postgresdb
