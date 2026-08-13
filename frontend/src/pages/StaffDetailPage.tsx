@@ -17,6 +17,7 @@ import {
   MapPin, Contact, BadgeAlert, Pencil, Trash2, Plus, X as XIcon,
   KeyRound, Copy, RefreshCw, Check, UserX,
   MessageSquare, Package, Send,
+  Paperclip, FileVideo, Image as ImageIcon, Download, Landmark,
 } from "lucide-react"
 
 // ── Shared UI pieces ──────────────────────────────────────────────────────────
@@ -48,36 +49,62 @@ function DocStatusChip({ status }: { status: DocStatus }) {
 
 function DocRow({
   icon, label, status, uploadedDate, expiry, note, onEdit, viewUrl,
+  onDelete, confirmingDelete, onConfirmDelete, onCancelDelete, deleting,
 }: {
   icon: React.ReactNode; label: string; status: DocStatus
   uploadedDate?: string; expiry?: string; note?: string
   onEdit?: () => void
   viewUrl?: string
+  onDelete?: () => void
+  confirmingDelete?: boolean
+  onConfirmDelete?: () => void
+  onCancelDelete?: () => void
+  deleting?: boolean
 }) {
   return (
-    <div className="flex items-center gap-3 py-2.5 border-b last:border-0">
-      <div className="text-muted-foreground w-5 shrink-0">{icon}</div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium">{label}</p>
-        {uploadedDate && <p className="text-xs text-muted-foreground">Uploaded {fmtDate(uploadedDate)}</p>}
-        {expiry && <p className="text-xs text-muted-foreground">Expires {fmtDate(expiry)}</p>}
-        {note && <p className="text-xs text-muted-foreground italic">{note}</p>}
+    <div className="border-b last:border-0">
+      <div className="flex items-center gap-3 py-2.5">
+        <div className="text-muted-foreground w-5 shrink-0">{icon}</div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium">{label}</p>
+          {uploadedDate && <p className="text-xs text-muted-foreground">Uploaded {fmtDate(uploadedDate)}</p>}
+          {expiry && <p className="text-xs text-muted-foreground">Expires {fmtDate(expiry)}</p>}
+          {note && <p className="text-xs text-muted-foreground italic">{note}</p>}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <DocStatusChip status={status} />
+          {viewUrl && (
+            <a href={viewUrl} target="_blank" rel="noopener noreferrer"
+              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="View document">
+              <Eye className="h-3.5 w-3.5" />
+            </a>
+          )}
+          {onEdit && (
+            <button onClick={onEdit}
+              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Edit / Upload">
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {viewUrl && onDelete && (
+            <button onClick={onDelete}
+              className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors" title="Delete document">
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <DocStatusChip status={status} />
-        {viewUrl && (
-          <a href={viewUrl} target="_blank" rel="noopener noreferrer"
-            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="View document">
-            <Eye className="h-3.5 w-3.5" />
-          </a>
-        )}
-        {onEdit && (
-          <button onClick={onEdit}
-            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Edit / Upload">
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
+      {confirmingDelete && (
+        <div className="mb-2.5 flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+          <p className="text-xs font-medium text-destructive">Remove this document? The staff member will need to re-upload it.</p>
+          <div className="flex shrink-0 gap-2">
+            <button onClick={onCancelDelete} className="rounded px-2.5 py-1 text-xs border hover:bg-muted transition-colors">Cancel</button>
+            <button onClick={onConfirmDelete} disabled={deleting}
+              className="rounded bg-destructive px-2.5 py-1 text-xs text-white hover:bg-destructive/90 transition-colors disabled:opacity-50">
+              {deleting ? "Removing…" : "Yes, remove"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -174,10 +201,18 @@ export default function StaffDetailPage() {
   const [discError, setDiscError]       = useState("")
 
   // Messages
-  const [messages, setMessages]       = useState<{id:string;message:string;sender_name:string;sender_role:string;created_at:string}[]>([])
+  const [messages, setMessages]       = useState<{
+    id: string; message: string; sender_name: string; sender_role: string; created_at: string
+    attachment_id?: string; attachment_filename?: string; attachment_original_name?: string
+    attachment_mime_type?: string; attachment_size?: number
+  }[]>([])
   const [msgLoading, setMsgLoading]   = useState(false)
   const [msgDraft, setMsgDraft]       = useState("")
   const [msgSending, setMsgSending]   = useState(false)
+  const [msgFile, setMsgFile]         = useState<File | null>(null)
+  const [confirmDeleteMsgId, setConfirmDeleteMsgId] = useState<string | null>(null)
+  const [deletingMsg, setDeletingMsg] = useState(false)
+  const msgFileInputRef               = useRef<HTMLInputElement>(null)
   const msgEndRef                     = useRef<HTMLDivElement>(null)
 
   // Provisions
@@ -212,6 +247,10 @@ export default function StaffDetailPage() {
   const [uploadingDoc, setUploadingDoc]   = useState(false)
   const [docFileName, setDocFileName]     = useState("")
   const docFileInputRef                   = useRef<HTMLInputElement>(null)
+  const [confirmDeleteDocKey, setConfirmDeleteDocKey] = useState<string | null>(null)
+  const [deletingDoc, setDeletingDoc]     = useState(false)
+  const [confirmDeleteCertKey, setConfirmDeleteCertKey] = useState<string | null>(null)
+  const [deletingCert, setDeletingCert]   = useState(false)
 
   // Vetting editing
   const [editingVetting, setEditingVetting] = useState<"dbs" | "bs7858" | "ref1" | "ref2" | null>(null)
@@ -532,6 +571,65 @@ export default function StaffDetailPage() {
     setDocSaving(false)
   }
 
+  async function refreshStaffRecord() {
+    if (!id) return
+    const res = await fetch("/api/staff", { credentials: "include" })
+    const data: StaffMember[] = await res.json()
+    const updated = data.find(s => s.id === id) ?? null
+    setStaff(updated)
+    if (updated?.training) setTrainingData(updated.training)
+  }
+
+  async function deleteDocFile(docKey: string) {
+    if (!id) return
+    setDeletingDoc(true)
+    try {
+      const res = await fetch(`/api/staff/${id}/documents/${docKey}`, { method: "DELETE", credentials: "include" })
+      const d = await res.json()
+      if (d.ok) {
+        await refreshStaffRecord()
+        toast.success("Document removed")
+      } else {
+        toast.error(d.error ?? "Failed to remove document")
+      }
+    } catch {
+      toast.error("Network error — please try again")
+    } finally {
+      setDeletingDoc(false)
+      setConfirmDeleteDocKey(null)
+    }
+  }
+
+  function docDeleteProps(docKey: string) {
+    return {
+      onDelete: canEdit ? () => setConfirmDeleteDocKey(docKey) : undefined,
+      confirmingDelete: confirmDeleteDocKey === docKey,
+      onConfirmDelete: () => deleteDocFile(docKey),
+      onCancelDelete: () => setConfirmDeleteDocKey(null),
+      deleting: deletingDoc,
+    }
+  }
+
+  async function deleteCertFile(courseKey: string) {
+    if (!id) return
+    setDeletingCert(true)
+    try {
+      const res = await fetch(`/api/staff/${id}/training/${courseKey}/certificate`, { method: "DELETE", credentials: "include" })
+      const d = await res.json()
+      if (d.ok) {
+        await refreshStaffRecord()
+        toast.success("Certificate removed")
+      } else {
+        toast.error(d.error ?? "Failed to remove certificate")
+      }
+    } catch {
+      toast.error("Network error — please try again")
+    } finally {
+      setDeletingCert(false)
+      setConfirmDeleteCertKey(null)
+    }
+  }
+
   // ── Vetting helpers ──
   function openVettingEdit(section: "dbs" | "bs7858" | "ref1" | "ref2") {
     if (!staff) return
@@ -653,22 +751,61 @@ export default function StaffDetailPage() {
   }
 
   async function sendMessage() {
-    if (!msgDraft.trim()) return
+    if (!msgDraft.trim() && !msgFile) return
     setMsgSending(true)
     try {
       const res = await fetch(`/api/staff/${id}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ message: msgDraft }),
+        body: JSON.stringify({ message: msgDraft.trim() || `📎 ${msgFile?.name}` }),
       })
       const d = await res.json()
       if (!d.ok) { toast.error(d.error ?? "Failed to send."); return }
-      setMsgDraft("")
+      if (msgFile) {
+        const buf = await msgFile.arrayBuffer()
+        const attRes = await fetch(`/api/messages/${d.message.id}/attachment`, {
+          method: "POST",
+          headers: { "Content-Type": msgFile.type || "application/octet-stream", "x-original-name": encodeURIComponent(msgFile.name) },
+          credentials: "include",
+          body: buf,
+        })
+        const attD = await attRes.json()
+        if (!attD.ok) toast.error(attD.error ?? "Message sent, but the attachment failed to upload.")
+      }
+      setMsgDraft(""); setMsgFile(null)
       await loadMessages()
     } finally {
       setMsgSending(false)
     }
+  }
+
+  function pickMsgFile(file: File | null) {
+    if (!file) return
+    const allowed = ["image/jpeg","image/png","image/gif","image/webp","video/mp4","video/quicktime","video/webm","application/pdf","application/msword","application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
+    if (!allowed.includes(file.type)) { toast.error("Only images, videos, PDFs, and Word docs are allowed."); return }
+    if (file.size > 100 * 1024 * 1024) { toast.error("File too large (max 100 MB)."); return }
+    setMsgFile(file)
+  }
+
+  async function deleteMessage(messageId: string) {
+    setDeletingMsg(true)
+    try {
+      const res = await fetch(`/api/messages/${messageId}`, { method: "DELETE", credentials: "include" })
+      const d = await res.json()
+      if (d.ok) { setMessages(prev => prev.filter(m => m.id !== messageId)); toast.success("Message removed") }
+      else toast.error(d.error ?? "Failed to remove message")
+    } finally {
+      setDeletingMsg(false)
+      setConfirmDeleteMsgId(null)
+    }
+  }
+
+  function msgAttachIcon(mime?: string) {
+    if (!mime) return <FileText className="h-3.5 w-3.5 shrink-0" />
+    if (mime.startsWith("video/")) return <FileVideo className="h-3.5 w-3.5 shrink-0" />
+    if (mime.startsWith("image/")) return <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+    return <FileText className="h-3.5 w-3.5 shrink-0" />
   }
 
   async function loadProvisions() {
@@ -1001,6 +1138,38 @@ export default function StaffDetailPage() {
               </CardContent>
             </Card>
           )}
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Landmark className="h-4 w-4" />Bank Details
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid sm:grid-cols-2 gap-3 text-sm">
+              {staff.bankDetails?.accountNumber ? (
+                <>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Account Holder</p>
+                    <p className="mt-0.5">{staff.bankDetails.accountHolderName || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Bank</p>
+                    <p className="mt-0.5">{staff.bankDetails.bankName || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Sort Code</p>
+                    <p className="mt-0.5 font-mono">{staff.bankDetails.sortCode || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Account Number</p>
+                    <p className="mt-0.5 font-mono">{staff.bankDetails.accountNumber}</p>
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground italic sm:col-span-2">Not provided yet — staff can add this from their own portal.</p>
+              )}
+            </CardContent>
+          </Card>
         </div>
       )}
 
@@ -1075,17 +1244,22 @@ export default function StaffDetailPage() {
                 status={docStatusOf(docs.siaPhysical?.uploaded)} uploadedDate={docs.siaPhysical?.date}
                 note="Front and back of the physical SIA badge"
                 viewUrl={docs.siaPhysical?.uploaded ? `/api/staff/${id}/documents/siaPhysical` : undefined}
-                onEdit={canEdit ? () => openDocEdit("siaPhysical") : undefined} />
+                onEdit={canEdit ? () => openDocEdit("siaPhysical") : undefined} {...docDeleteProps("siaPhysical")} />
               <DocRow icon={<FileText className="h-4 w-4" />} label="Passport"
                 status={docStatusOf(docs.passport?.uploaded)} uploadedDate={docs.passport?.date}
                 note="Required for BS 7858 identity verification"
                 viewUrl={docs.passport?.uploaded ? `/api/staff/${id}/documents/passport` : undefined}
-                onEdit={canEdit ? () => openDocEdit("passport") : undefined} />
+                onEdit={canEdit ? () => openDocEdit("passport") : undefined} {...docDeleteProps("passport")} />
               <DocRow icon={<CreditCard className="h-4 w-4" />} label="BRP / Share Code / RTW Evidence"
                 status={docStatusOf(docs.brpCard?.uploaded)} uploadedDate={docs.brpCard?.date}
                 note="Biometric Residence Permit or right to work share code proof"
                 viewUrl={docs.brpCard?.uploaded ? `/api/staff/${id}/documents/brpCard` : undefined}
-                onEdit={canEdit ? () => openDocEdit("brpCard") : undefined} />
+                onEdit={canEdit ? () => openDocEdit("brpCard") : undefined} {...docDeleteProps("brpCard")} />
+              <DocRow icon={<CreditCard className="h-4 w-4" />} label="CSCS Card"
+                status={docStatusOf(docs.cscsCard?.uploaded)} uploadedDate={docs.cscsCard?.date}
+                note="Front of the physical CSCS card"
+                viewUrl={docs.cscsCard?.uploaded ? `/api/staff/${id}/documents/cscsCard` : undefined}
+                onEdit={canEdit ? () => openDocEdit("cscsCard") : undefined} {...docDeleteProps("cscsCard")} />
             </CardContent>
           </Card>
 
@@ -1100,12 +1274,12 @@ export default function StaffDetailPage() {
                 status={docStatusOf(docs.proofOfAddress1?.uploaded)} uploadedDate={docs.proofOfAddress1?.date}
                 note="Must be dated within the last 3 months"
                 viewUrl={docs.proofOfAddress1?.uploaded ? `/api/staff/${id}/documents/proofOfAddress1` : undefined}
-                onEdit={canEdit ? () => openDocEdit("proofOfAddress1") : undefined} />
+                onEdit={canEdit ? () => openDocEdit("proofOfAddress1") : undefined} {...docDeleteProps("proofOfAddress1")} />
               <DocRow icon={<FileText className="h-4 w-4" />} label="Proof of Address 2"
                 status={docStatusOf(docs.proofOfAddress2?.uploaded)} uploadedDate={docs.proofOfAddress2?.date}
                 note="Second document, also within last 3 months"
                 viewUrl={docs.proofOfAddress2?.uploaded ? `/api/staff/${id}/documents/proofOfAddress2` : undefined}
-                onEdit={canEdit ? () => openDocEdit("proofOfAddress2") : undefined} />
+                onEdit={canEdit ? () => openDocEdit("proofOfAddress2") : undefined} {...docDeleteProps("proofOfAddress2")} />
             </CardContent>
           </Card>
 
@@ -1120,7 +1294,7 @@ export default function StaffDetailPage() {
                 status={docStatusOf(docs.application?.uploaded)} uploadedDate={docs.application?.date}
                 note="Signed job application / new starter form"
                 viewUrl={docs.application?.uploaded ? `/api/staff/${id}/documents/application` : undefined}
-                onEdit={canEdit ? () => openDocEdit("application") : undefined} />
+                onEdit={canEdit ? () => openDocEdit("application") : undefined} {...docDeleteProps("application")} />
               <DocRow icon={<FileText className="h-4 w-4" />} label="Employment Contract"
                 status={staff.contract && staff.contract.toLowerCase() !== "not signed" ? "uploaded" : "missing"}
                 note={`Status: ${staff.contract || "Not signed"}`} />
@@ -1128,12 +1302,12 @@ export default function StaffDetailPage() {
                 status={docStatusOf(docs.p45?.uploaded)} uploadedDate={docs.p45?.date}
                 note="Last employer's P45 or most recent P60"
                 viewUrl={docs.p45?.uploaded ? `/api/staff/${id}/documents/p45` : undefined}
-                onEdit={canEdit ? () => openDocEdit("p45") : undefined} />
+                onEdit={canEdit ? () => openDocEdit("p45") : undefined} {...docDeleteProps("p45")} />
               <DocRow icon={<FileText className="h-4 w-4" />} label="Bank Account Letter / Void Cheque"
                 status={docStatusOf(docs.bankLetter?.uploaded)} uploadedDate={docs.bankLetter?.date}
                 note="Required for payroll setup"
                 viewUrl={docs.bankLetter?.uploaded ? `/api/staff/${id}/documents/bankLetter` : undefined}
-                onEdit={canEdit ? () => openDocEdit("bankLetter") : undefined} />
+                onEdit={canEdit ? () => openDocEdit("bankLetter") : undefined} {...docDeleteProps("bankLetter")} />
             </CardContent>
           </Card>
 
@@ -1148,7 +1322,7 @@ export default function StaffDetailPage() {
                 status={docStatusOf(docs.assignmentInstructions?.uploaded)} uploadedDate={docs.assignmentInstructions?.date}
                 note="Site-specific assignment instructions, legally required per SIA"
                 viewUrl={docs.assignmentInstructions?.uploaded ? `/api/staff/${id}/documents/assignmentInstructions` : undefined}
-                onEdit={canEdit ? () => openDocEdit("assignmentInstructions") : undefined} />
+                onEdit={canEdit ? () => openDocEdit("assignmentInstructions") : undefined} {...docDeleteProps("assignmentInstructions")} />
             </CardContent>
           </Card>
         </div>
@@ -1454,6 +1628,30 @@ export default function StaffDetailPage() {
                         {item?.date   && <p className="text-xs text-muted-foreground">Completed {fmtDate(item.date)}</p>}
                         {item?.expiry && <p className="text-xs text-muted-foreground">Expires {fmtDate(item.expiry)}</p>}
                         {item?.number && <p className="text-xs text-muted-foreground">Cert # {item.number}</p>}
+                        {item?.certUploaded ? (
+                          <span className="mt-0.5 flex items-center gap-2">
+                            <a href={`/api/staff/${id}/training/${key}/certificate`} target="_blank" rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                              <Eye className="h-3 w-3" />Certificate on file
+                            </a>
+                            <button onClick={() => setConfirmDeleteCertKey(key)}
+                              className="text-xs text-muted-foreground hover:text-destructive transition-colors">Remove</button>
+                          </span>
+                        ) : (
+                          <p className="mt-0.5 text-xs text-muted-foreground/60">No certificate uploaded by staff yet</p>
+                        )}
+                        {confirmDeleteCertKey === key && (
+                          <div className="mt-1.5 flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+                            <p className="text-xs font-medium text-destructive">Remove this certificate? Staff will need to re-upload it.</p>
+                            <div className="flex shrink-0 gap-2">
+                              <button onClick={() => setConfirmDeleteCertKey(null)} className="rounded px-2.5 py-1 text-xs border hover:bg-muted transition-colors">Cancel</button>
+                              <button onClick={() => deleteCertFile(key)} disabled={deletingCert}
+                                className="rounded bg-destructive px-2.5 py-1 text-xs text-white hover:bg-destructive/90 transition-colors disabled:opacity-50">
+                                {deletingCert ? "Removing…" : "Yes, remove"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                       <DocStatusChip status={item?.completed ? docStatusOf(true, item.expiry) : "missing"} />
                       <button onClick={() => isEditing ? setEditingKey(null) : startEdit(key, item)}
@@ -1461,7 +1659,7 @@ export default function StaffDetailPage() {
                         {isEditing ? <XIcon className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
                       </button>
                       <button onClick={() => clearStdCourse(key)}
-                        className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors" title="Clear">
+                        className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors" title="Clear entire record">
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </div>
@@ -1980,33 +2178,92 @@ export default function StaffDetailPage() {
                 )}
                 {messages.map(m => {
                   const isStaff = m.sender_role === "staff"
+                  const isImage = m.attachment_mime_type?.startsWith("image/")
                   return (
-                    <div key={m.id} className={`flex ${isStaff ? "justify-start" : "justify-end"}`}>
+                    <div key={m.id} className={`group flex items-end gap-1.5 ${isStaff ? "justify-start" : "justify-end"}`}>
+                      {!isStaff && (
+                        <button onClick={() => setConfirmDeleteMsgId(m.id)}
+                          className="mb-1 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive hover:bg-destructive/10 group-hover:opacity-100">
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
                       <div className={`max-w-xs rounded-2xl px-3.5 py-2 text-sm shadow-sm ${isStaff ? "bg-muted text-foreground rounded-tl-sm" : "bg-primary text-primary-foreground rounded-tr-sm"}`}>
                         <p className="text-[11px] font-medium mb-0.5 opacity-70">{m.sender_name}</p>
                         <p>{m.message}</p>
+                        {m.attachment_filename && (
+                          isImage ? (
+                            <a href={`/api/message-attachments/${m.attachment_filename}`} target="_blank" rel="noopener noreferrer" className="mt-1.5 block">
+                              <img src={`/api/message-attachments/${m.attachment_filename}`} alt={m.attachment_original_name}
+                                className="max-h-48 w-full rounded-lg object-cover" />
+                            </a>
+                          ) : (
+                            <a href={`/api/message-attachments/${m.attachment_filename}`} target="_blank" rel="noopener noreferrer" download={m.attachment_original_name}
+                              className={`mt-1.5 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs ${isStaff ? "bg-background/60" : "bg-white/15"}`}>
+                              {msgAttachIcon(m.attachment_mime_type)}
+                              <span className="flex-1 truncate">{m.attachment_original_name}</span>
+                              <Download className="h-3 w-3 shrink-0" />
+                            </a>
+                          )
+                        )}
                         <p className={`text-[10px] mt-0.5 opacity-60 text-right`}>
                           {new Date(m.created_at).toLocaleDateString("en-GB", { day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit" })}
                         </p>
                       </div>
+                      {isStaff && (
+                        <button onClick={() => setConfirmDeleteMsgId(m.id)}
+                          className="mb-1 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive hover:bg-destructive/10 group-hover:opacity-100">
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      )}
                     </div>
                   )
                 })}
                 <div ref={msgEndRef} />
               </div>
+              {confirmDeleteMsgId && (
+                <div className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+                  <p className="text-xs font-medium text-destructive">Remove this message for both sides?</p>
+                  <div className="flex shrink-0 gap-2">
+                    <button onClick={() => setConfirmDeleteMsgId(null)} className="rounded px-2.5 py-1 text-xs border hover:bg-muted transition-colors">Cancel</button>
+                    <button onClick={() => deleteMessage(confirmDeleteMsgId)} disabled={deletingMsg}
+                      className="rounded bg-destructive px-2.5 py-1 text-xs text-white hover:bg-destructive/90 transition-colors disabled:opacity-50">
+                      {deletingMsg ? "Removing…" : "Yes, remove"}
+                    </button>
+                  </div>
+                </div>
+              )}
               {/* Compose */}
-              <div className="border-t px-4 py-3 flex gap-2">
-                <input
-                  value={msgDraft}
-                  onChange={e => setMsgDraft(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
-                  placeholder={`Message ${staff.name}…`}
-                  className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                />
-                <Button size="sm" disabled={msgSending || !msgDraft.trim()} onClick={sendMessage} className="gap-1.5">
-                  {msgSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                  Send
-                </Button>
+              <div className="border-t px-4 py-3 space-y-2">
+                {msgFile && (
+                  <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs">
+                    {msgAttachIcon(msgFile.type)}
+                    <span className="flex-1 truncate">{msgFile.name}</span>
+                    <span className="text-muted-foreground shrink-0">{(msgFile.size / 1024 / 1024).toFixed(1)} MB</span>
+                    <button onClick={() => setMsgFile(null)} className="text-muted-foreground hover:text-destructive">
+                      <XIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <input ref={msgFileInputRef} type="file" hidden
+                    accept="image/*,video/mp4,video/quicktime,video/webm,application/pdf,.doc,.docx"
+                    onChange={e => { pickMsgFile(e.target.files?.[0] ?? null); e.target.value = "" }} />
+                  <button onClick={() => msgFileInputRef.current?.click()}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground hover:bg-muted transition-colors" title="Attach file">
+                    <Paperclip className="h-4 w-4" />
+                  </button>
+                  <input
+                    value={msgDraft}
+                    onChange={e => setMsgDraft(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
+                    placeholder={`Message ${staff.name}…`}
+                    className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  <Button size="sm" disabled={msgSending || (!msgDraft.trim() && !msgFile)} onClick={sendMessage} className="gap-1.5">
+                    {msgSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                    Send
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>

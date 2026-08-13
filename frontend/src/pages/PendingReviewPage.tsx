@@ -6,6 +6,7 @@ import {
 import { Button } from "@/components/ui/button"
 
 interface Ref { name?: string; company?: string; email?: string; phone?: string }
+interface Bank { accountHolderName?: string; bankName?: string; sortCode?: string; accountNumber?: string }
 
 interface PendingStaff {
   id: string
@@ -13,6 +14,7 @@ interface PendingStaff {
   phone?: string
   address?: string
   emergencyContact?: { name?: string; phone?: string; relationship?: string }
+  bankDetails?: Bank
   sia?:  { number?: string; expiry?: string; type?: string }
   cscs?: { number?: string; expiry?: string }
   visa?: { type?: string; expiry?: string }
@@ -22,6 +24,7 @@ interface PendingStaff {
     phone?: string
     address?: string
     emergencyContact?: { name?: string; phone?: string; relationship?: string }
+    bankDetails?: Bank
     sia?:  { number?: string; expiry?: string; type?: string }
     cscs?: { number?: string; expiry?: string }
     visa?: { type?: string; expiry?: string }
@@ -154,6 +157,10 @@ export default function PendingReviewPage() {
                 <div className="grid gap-3 sm:grid-cols-2">
                   <CompareField label="Phone" current={s.phone} proposed={p.phone} />
                   <CompareField label="Address" current={s.address} proposed={p.address} />
+                  <CompareField label="Bank account holder" current={s.bankDetails?.accountHolderName} proposed={p.bankDetails?.accountHolderName} />
+                  <CompareField label="Bank name" current={s.bankDetails?.bankName} proposed={p.bankDetails?.bankName} />
+                  <CompareField label="Sort code" current={s.bankDetails?.sortCode} proposed={p.bankDetails?.sortCode} />
+                  <CompareField label="Account number" current={s.bankDetails?.accountNumber} proposed={p.bankDetails?.accountNumber} />
                   <CompareField label="SIA number" current={s.sia?.number} proposed={p.sia?.number} />
                   <CompareField label="SIA expiry" current={s.sia?.expiry} proposed={p.sia?.expiry} />
                   <CompareField label="CSCS number" current={s.cscs?.number} proposed={p.cscs?.number} />

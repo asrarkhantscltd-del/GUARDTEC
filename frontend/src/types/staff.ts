@@ -4,7 +4,7 @@ export interface EmergencyContact {
   relationship?: string
 }
 
-export interface TrainingItem { completed?: boolean; date?: string; expiry?: string; provider?: string; number?: string }
+export interface TrainingItem { completed?: boolean; date?: string; expiry?: string; provider?: string; number?: string; certUploaded?: boolean; certDate?: string }
 export interface ExtraTrainingItem { id: string; label: string; completed?: boolean; date?: string; expiry?: string; number?: string; provider?: string }
 export interface TrainingRecord {
   siaCertificate?:     TrainingItem
@@ -18,6 +18,7 @@ export interface TrainingRecord {
 }
 export interface DbsRecord    { type?: string; checkDate?: string; certificateNo?: string }
 export interface Bs7858Record { completed?: boolean; completionDate?: string; reviewer?: string }
+export interface BankDetails  { accountHolderName?: string; bankName?: string; sortCode?: string; accountNumber?: string }
 
 export interface StaffMember {
   id: string
@@ -48,9 +49,11 @@ export interface StaffMember {
   dbs?: DbsRecord
   bs7858?: Bs7858Record
   emergencyContact?: EmergencyContact
+  bankDetails?: BankDetails
   training?: TrainingRecord
   documents?: {
     siaPhysical?:      { uploaded?: boolean; date?: string }
+    cscsCard?:         { uploaded?: boolean; date?: string }
     passport?:         { uploaded?: boolean; date?: string }
     brpCard?:          { uploaded?: boolean; date?: string }
     proofOfAddress1?:  { uploaded?: boolean; date?: string }

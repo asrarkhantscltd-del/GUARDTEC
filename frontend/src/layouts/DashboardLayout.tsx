@@ -1,8 +1,10 @@
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom"
 import { AnimatePresence, motion } from "framer-motion"
+import { toast } from "sonner"
 import { useAuth, type Permissions } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 import { Button } from "@/components/ui/button"
+import { downloadExport } from "@/lib/utils"
 import {
   LayoutDashboard, Users, Truck, ShieldCheck, LogOut,
   Menu, X, MapPin,
@@ -11,10 +13,6 @@ import {
   ChevronDown, UserCog, Eye, EyeOff, FileSpreadsheet,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
-
-function downloadExport(url: string) {
-  window.open(url, "_blank")
-}
 
 interface NavItem {
   label: string
@@ -46,20 +44,34 @@ export default function DashboardLayout() {
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const photoInputRef = useRef<HTMLInputElement>(null)
   const [alertCount, setAlertCount] = useState(0)
-  const [notifCount, setNotifCount] = useState({ messages: 0, incidents: 0, total: 0 })
-  const [unreadStaff, setUnreadStaff] = useState<{ staff_id: string, staff_name: string, unread_count: number }[]>([])
+  const [notifications, setNotifications] = useState<{
+    id: string; type: string; actor_name: string; summary: string
+    link_staff_id?: string; link_tab?: string; link_incident_id?: string; created_at: string
+  }[]>([])
   const [showAlerts, setShowAlerts] = useState(false)
   const alertsRef = useRef<HTMLDivElement>(null)
   const [showProfile, setShowProfile] = useState(false)
   const profileRef = useRef<HTMLDivElement>(null)
   const [showReports, setShowReports] = useState(false)
+  const [reportType, setReportType] = useState<"staff" | "fleet" | "drivers" | null>(null)
+  const [reportSites, setReportSites] = useState<{ id: string; name: string }[]>([])
+  const [staffFilters, setStaffFilters] = useState({ deployStatus: "", site: "", overall: "" })
+  const [vehicleFilters, setVehicleFilters] = useState({ status: "", type: "" })
+  const [driverFilters, setDriverFilters] = useState({ status: "" })
   const reportsRef = useRef<HTMLDivElement>(null)
   const [ringHidden, setRingHidden] = useState(() => localStorage.getItem("guardtec_ring_hidden") === "true")
+  const [complianceHidden, setComplianceHidden] = useState(() => localStorage.getItem("guardtec_compliance_hidden") === "true")
 
   function toggleRing() {
     const next = !ringHidden
     setRingHidden(next)
     localStorage.setItem("guardtec_ring_hidden", String(next))
+  }
+
+  function toggleComplianceHidden() {
+    const next = !complianceHidden
+    setComplianceHidden(next)
+    localStorage.setItem("guardtec_compliance_hidden", String(next))
   }
 
   useEffect(() => {
@@ -78,19 +90,67 @@ export default function DashboardLayout() {
 
   useEffect(() => {
     function fetchNotifs() {
-      fetch("/api/notifications/count", { credentials: "include" })
+      fetch("/api/notifications", { credentials: "include" })
         .then(r => r.ok ? r.json() : null)
-        .then(d => { if (d?.ok) setNotifCount({ messages: d.messages, incidents: d.incidents, total: d.total }) })
-        .catch(() => {})
-      fetch("/api/staff-messages/unread", { credentials: "include" })
-        .then(r => r.ok ? r.json() : null)
-        .then(d => { if (d?.ok) setUnreadStaff(d.staff ?? []) })
+        .then(d => { if (d?.ok) setNotifications(d.notifications ?? []) })
         .catch(() => {})
     }
     fetchNotifs()
     const id = setInterval(fetchNotifs, 30000)
     return () => clearInterval(id)
   }, [])
+
+  function goToNotification(n: { id: string; type: string; link_staff_id?: string; link_tab?: string; link_incident_id?: string }) {
+    setNotifications(prev => prev.filter(x => x.id !== n.id))
+    fetch(`/api/notifications/${n.id}/seen`, { method: "POST", credentials: "include" }).catch(() => {})
+    setShowAlerts(false)
+    if (n.type === "incident_report") navigate("/incident-reports")
+    else if (n.link_staff_id) navigate(`/staff/${n.link_staff_id}${n.link_tab ? `?tab=${n.link_tab}` : ""}`)
+  }
+
+  useEffect(() => {
+    if (reportType !== "staff" || reportSites.length > 0) return
+    fetch("/api/sites", { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.sites) setReportSites(d.sites) })
+      .catch(() => {})
+  }, [reportType, reportSites.length])
+
+  function closeReports() {
+    setShowReports(false)
+    setReportType(null)
+    setStaffFilters({ deployStatus: "", site: "", overall: "" })
+    setVehicleFilters({ status: "", type: "" })
+    setDriverFilters({ status: "" })
+  }
+
+  function buildReportUrl(): { url: string; filename: string } {
+    if (reportType === "staff") {
+      const p = new URLSearchParams()
+      if (staffFilters.deployStatus) p.set("deployStatus", staffFilters.deployStatus)
+      if (staffFilters.deployStatus === "onsite" && staffFilters.site) p.set("site", staffFilters.site)
+      if (staffFilters.overall) p.set("overall", staffFilters.overall)
+      const q = p.toString()
+      return { url: `/api/staff/export${q ? `?${q}` : ""}`, filename: "GuardTec-Staff-Report.xlsx" }
+    }
+    if (reportType === "fleet") {
+      const p = new URLSearchParams()
+      if (vehicleFilters.status) p.set("status", vehicleFilters.status)
+      if (vehicleFilters.type) p.set("type", vehicleFilters.type)
+      const q = p.toString()
+      return { url: `/api/vehicles/export${q ? `?${q}` : ""}`, filename: "GuardTec-Fleet-Report.xlsx" }
+    }
+    const p = new URLSearchParams()
+    if (driverFilters.status) p.set("status", driverFilters.status)
+    const q = p.toString()
+    return { url: `/api/drivers/export${q ? `?${q}` : ""}`, filename: "GuardTec-Drivers-Report.xlsx" }
+  }
+
+  function generateReport() {
+    const { url, filename } = buildReportUrl()
+    downloadExport(url, filename).catch(() => toast.error("Failed to generate report"))
+    closeReports()
+  }
 
   // Close alert dropdown when clicking outside
   useEffect(() => {
@@ -107,7 +167,7 @@ export default function DashboardLayout() {
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (reportsRef.current && !reportsRef.current.contains(e.target as Node)) {
-        setShowReports(false)
+        closeReports()
       }
     }
     if (showReports) document.addEventListener("mousedown", handleClick)
@@ -157,6 +217,8 @@ export default function DashboardLayout() {
     await logout()
     navigate("/login", { replace: true })
   }
+
+  const bellBadgeTotal = (complianceHidden ? 0 : alertCount) + notifications.length
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -273,37 +335,143 @@ export default function DashboardLayout() {
 
                 {/* Reports dropdown panel */}
                 {showReports && (
-                  <div className="absolute right-0 top-12 z-50 w-56 rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
+                  <div className="absolute right-0 top-12 z-50 w-72 rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
                     <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                      <p className="text-sm font-semibold">Generate Report</p>
-                      <button onClick={() => setShowReports(false)}
+                      <div className="flex items-center gap-2">
+                        {reportType && (
+                          <button onClick={() => setReportType(null)}
+                            className="rounded-md px-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                            ←
+                          </button>
+                        )}
+                        <p className="text-sm font-semibold">Generate Report</p>
+                      </div>
+                      <button onClick={closeReports}
                         className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
                         <X className="h-3.5 w-3.5" />
                       </button>
                     </div>
-                    <div className="p-2 space-y-0.5">
-                      <button
-                        onClick={() => { downloadExport("/api/staff/export"); setShowReports(false) }}
-                        className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
-                      >
-                        <FileSpreadsheet className="h-3.5 w-3.5 text-muted-foreground" />
-                        Staff Report
-                      </button>
-                      <button
-                        onClick={() => { downloadExport("/api/vehicles/export"); setShowReports(false) }}
-                        className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
-                      >
-                        <FileSpreadsheet className="h-3.5 w-3.5 text-muted-foreground" />
-                        Fleet Report
-                      </button>
-                      <button
-                        onClick={() => { downloadExport("/api/drivers/export"); setShowReports(false) }}
-                        className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
-                      >
-                        <FileSpreadsheet className="h-3.5 w-3.5 text-muted-foreground" />
-                        Driver Report
-                      </button>
-                    </div>
+
+                    {!reportType && (
+                      <div className="p-2 space-y-0.5">
+                        <button onClick={() => setReportType("staff")}
+                          className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted">
+                          <FileSpreadsheet className="h-3.5 w-3.5 text-muted-foreground" />
+                          Staff Report
+                        </button>
+                        <button onClick={() => setReportType("fleet")}
+                          className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted">
+                          <FileSpreadsheet className="h-3.5 w-3.5 text-muted-foreground" />
+                          Fleet Report
+                        </button>
+                        <button onClick={() => setReportType("drivers")}
+                          className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted">
+                          <FileSpreadsheet className="h-3.5 w-3.5 text-muted-foreground" />
+                          Driver Report
+                        </button>
+                      </div>
+                    )}
+
+                    {reportType === "staff" && (
+                      <div className="p-4 space-y-3">
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground">Deployment Status</label>
+                          <select
+                            value={staffFilters.deployStatus}
+                            onChange={(e) => setStaffFilters(p => ({ ...p, deployStatus: e.target.value, site: "" }))}
+                            className="mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                          >
+                            <option value="">All staff</option>
+                            <option value="onsite">Onsite</option>
+                            <option value="available">Available</option>
+                            <option value="offduty">Off Duty</option>
+                          </select>
+                        </div>
+                        {staffFilters.deployStatus === "onsite" && (
+                          <div>
+                            <label className="text-xs font-medium text-muted-foreground">Location</label>
+                            <select
+                              value={staffFilters.site}
+                              onChange={(e) => setStaffFilters(p => ({ ...p, site: e.target.value }))}
+                              className="mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                            >
+                              <option value="">All locations</option>
+                              {reportSites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                          </div>
+                        )}
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground">Compliance Status</label>
+                          <select
+                            value={staffFilters.overall}
+                            onChange={(e) => setStaffFilters(p => ({ ...p, overall: e.target.value }))}
+                            className="mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                          >
+                            <option value="">All</option>
+                            <option value="green">Compliant</option>
+                            <option value="amber">Action Required</option>
+                            <option value="red">Non-Compliant</option>
+                          </select>
+                        </div>
+                        <Button size="sm" className="w-full" onClick={generateReport}>Generate Report</Button>
+                      </div>
+                    )}
+
+                    {reportType === "fleet" && (
+                      <div className="p-4 space-y-3">
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground">Vehicle Status</label>
+                          <select
+                            value={vehicleFilters.status}
+                            onChange={(e) => setVehicleFilters(p => ({ ...p, status: e.target.value }))}
+                            className="mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                          >
+                            <option value="">All vehicles</option>
+                            <option value="active">Active</option>
+                            <option value="off_road">Off Road</option>
+                            <option value="maintenance">Maintenance</option>
+                            <option value="sold">Sold</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground">Vehicle Type</label>
+                          <select
+                            value={vehicleFilters.type}
+                            onChange={(e) => setVehicleFilters(p => ({ ...p, type: e.target.value }))}
+                            className="mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                          >
+                            <option value="">All types</option>
+                            <option value="patrol_car">Patrol Car</option>
+                            <option value="response_van">Response Van</option>
+                            <option value="supervisor_car">Supervisor Car</option>
+                            <option value="support_van">Support Van</option>
+                            <option value="minibus">Minibus</option>
+                            <option value="personal_use">Personal Use</option>
+                            <option value="official_use">Official Use</option>
+                          </select>
+                        </div>
+                        <Button size="sm" className="w-full" onClick={generateReport}>Generate Report</Button>
+                      </div>
+                    )}
+
+                    {reportType === "drivers" && (
+                      <div className="p-4 space-y-3">
+                        <div>
+                          <label className="text-xs font-medium text-muted-foreground">Driver Status</label>
+                          <select
+                            value={driverFilters.status}
+                            onChange={(e) => setDriverFilters({ status: e.target.value })}
+                            className="mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                          >
+                            <option value="">All drivers</option>
+                            <option value="active">Active</option>
+                            <option value="suspended">Suspended</option>
+                            <option value="on_leave">On Leave</option>
+                          </select>
+                        </div>
+                        <Button size="sm" className="w-full" onClick={generateReport}>Generate Report</Button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -317,9 +485,9 @@ export default function DashboardLayout() {
                 title="Notifications"
               >
                 <Bell className="h-4.5 w-4.5" />
-                {(alertCount + notifCount.total) > 0 && (
+                {bellBadgeTotal > 0 && (
                   <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-white ring-2 ring-background">
-                    {(alertCount + notifCount.total) > 9 ? "9+" : (alertCount + notifCount.total)}
+                    {bellBadgeTotal > 9 ? "9+" : bellBadgeTotal}
                   </span>
                 )}
               </button>
@@ -337,72 +505,56 @@ export default function DashboardLayout() {
 
                   <div className="p-3 space-y-2 max-h-[420px] overflow-y-auto">
 
-                    {/* ── Messages section ── */}
-                    {unreadStaff.length > 0 && (
-                      <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 overflow-hidden">
-                        <div className="flex items-center gap-2 px-3 pt-2.5">
-                          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-500/15">
-                            <Bell className="h-3.5 w-3.5 text-blue-500" />
+                    {/* ── Per-event notifications: messages, uploads, reports ── */}
+                    {notifications.map((n) => {
+                      const style = n.type === "incident_report"
+                        ? { border: "border-warning/20", bg: "bg-warning/5 hover:bg-warning/10", icon: <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />, text: "text-warning" }
+                        : { border: "border-blue-500/20", bg: "bg-blue-500/5 hover:bg-blue-500/10", icon: <Bell className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />, text: "text-blue-600 dark:text-blue-400" }
+                      return (
+                        <button key={n.id} onClick={() => goToNotification(n)}
+                          className={`flex w-full items-start gap-3 rounded-xl border ${style.border} ${style.bg} p-3 text-left transition-colors`}>
+                          {style.icon}
+                          <div className="min-w-0 flex-1">
+                            <p className={`text-sm font-medium ${style.text}`}>
+                              {n.actor_name} <span className="font-normal text-foreground">{n.summary}</span>
+                            </p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              {new Date(n.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                            </p>
                           </div>
-                          <p className="text-sm font-medium text-blue-600 dark:text-blue-400">
-                            Unread staff messages
-                          </p>
-                        </div>
-                        <div className="mt-1 mb-1">
-                          {unreadStaff.map((s) => (
-                            <button
-                              key={s.staff_id}
-                              onClick={() => { navigate(`/staff/${s.staff_id}?tab=messages`); setShowAlerts(false) }}
-                              className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-blue-500/10 transition-colors"
-                            >
-                              <span className="truncate">{s.staff_name}</span>
-                              <span className="shrink-0 text-xs text-muted-foreground">
-                                {s.unread_count} message{s.unread_count !== 1 ? "s" : ""}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
+                        </button>
+                      )
+                    })}
+
+                    {/* ── Compliance section — persists until the real issue is fixed, not a dismissible event ── */}
+                    {alertCount > 0 && (
+                      <div className="flex w-full items-start gap-2 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-left transition-colors">
+                        <button
+                          onClick={() => { if (complianceHidden) return; navigate("/compliance"); setShowAlerts(false) }}
+                          className={`flex flex-1 items-start gap-3 text-left ${complianceHidden ? "cursor-default" : "hover:opacity-80"}`}
+                        >
+                          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                          <div>
+                            <p className="text-sm font-medium text-destructive">
+                              {complianceHidden ? "Compliance attention hidden" : `${alertCount} officer${alertCount !== 1 ? "s" : ""} need compliance attention`}
+                            </p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              {complianceHidden ? "Tap the eye to reveal" : "Tap to open Compliance Dashboard"}
+                            </p>
+                          </div>
+                        </button>
+                        <button
+                          onClick={toggleComplianceHidden}
+                          title={complianceHidden ? "Show compliance count" : "Hide compliance count"}
+                          className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
+                        >
+                          {complianceHidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                        </button>
                       </div>
                     )}
 
-                    {/* ── Incident reports section ── */}
-                    {notifCount.incidents > 0 && (
-                      <button
-                        onClick={() => { navigate("/incident-reports"); setShowAlerts(false) }}
-                        className="flex w-full items-start gap-3 rounded-xl border border-warning/20 bg-warning/5 p-3 text-left hover:bg-warning/10 transition-colors"
-                      >
-                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-                        <div>
-                          <p className="text-sm font-medium text-warning">
-                            {notifCount.incidents} new incident report{notifCount.incidents !== 1 ? "s" : ""}
-                          </p>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            Tap to open Incident Reports and review
-                          </p>
-                        </div>
-                      </button>
-                    )}
-
-                    {/* ── Compliance section ── */}
-                    {alertCount > 0 && (
-                      <button
-                        onClick={() => { navigate("/compliance"); setShowAlerts(false) }}
-                        className="flex w-full items-start gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-left hover:bg-destructive/10 transition-colors"
-                      >
-                        <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-                        <div>
-                          <p className="text-sm font-medium text-destructive">
-                            {alertCount} officer{alertCount !== 1 ? "s" : ""} need compliance attention
-                          </p>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            Tap to open Compliance Dashboard
-                          </p>
-                        </div>
-                      </button>
-                    )}
-
                     {/* All clear */}
-                    {alertCount === 0 && notifCount.incidents === 0 && unreadStaff.length === 0 && (
+                    {alertCount === 0 && notifications.length === 0 && (
                       <div className="flex items-center gap-3 rounded-xl border border-success/20 bg-success/5 p-3">
                         <ShieldCheck className="h-4 w-4 shrink-0 text-success" />
                         <p className="text-sm font-medium text-success">All clear — no new notifications</p>

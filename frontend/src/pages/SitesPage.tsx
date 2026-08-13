@@ -4,6 +4,7 @@ import {
   MapPin, Plus, Pencil, Trash2, X, Building2, Car, Layers,
   Briefcase, Store, MoreHorizontal, Phone, Mail, Package,
   Monitor, Smartphone, Sofa, Utensils, ChevronRight, Users, Search,
+  FileText, Upload, Loader2, Eye, FolderUp,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -18,6 +19,26 @@ interface WelfareItem {
   condition: "good" | "fair" | "poor"
   serial_number: string
   notes: string
+}
+
+interface SiteDoc {
+  filename: string
+  originalName: string
+  category: string
+  size: number
+  uploadedAt: string
+}
+
+const DOC_CATEGORY_LABELS: Record<string, string> = {
+  documentation: "Documentation",
+  presentation:  "Presentation",
+  induction:     "Induction Pack",
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return bytes + " B"
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB"
 }
 
 interface AssignedStaff {
@@ -133,6 +154,16 @@ export default function SitesPage() {
   const [itemSaving, setItemSaving]         = useState(false)
   const [itemError, setItemError]           = useState("")
   const [deleteItemId, setDeleteItemId]     = useState<string | null>(null)
+
+  // Documents panel
+  const [docsSite, setDocsSite]             = useState<Site | null>(null)
+  const [docs, setDocs]                     = useState<SiteDoc[]>([])
+  const [docsLoading, setDocsLoading]       = useState(false)
+  const [uploadDocFiles, setUploadDocFiles] = useState<File[]>([])
+  const [uploadDocCategory, setUploadDocCategory] = useState("documentation")
+  const [uploadingDoc, setUploadingDoc]     = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null)
+  const [docError, setDocError]             = useState("")
 
   // Staff panel
   const [staffSite, setStaffSite]           = useState<Site | null>(null)
@@ -259,6 +290,77 @@ export default function SitesPage() {
     } catch {
       toast.error("Failed to remove item")
       setDeleteItemId(null)
+    }
+  }
+
+  // ── Documents CRUD ───────────────────────────────────────────────────────────
+
+  async function openDocsPanel(site: Site) {
+    setDocsSite(site); setDocsLoading(true); setDocError("")
+    setUploadDocFiles([]); setUploadDocCategory("documentation")
+    try {
+      const r = await fetch(`/api/sites/${site.id}/documents`, { credentials: "include" })
+      const d = await r.json()
+      setDocs(d.items ?? [])
+    } finally {
+      setDocsLoading(false)
+    }
+  }
+  function closeDocsPanel() { setDocsSite(null); setDocs([]); setUploadDocFiles([]); setDocError("") }
+
+  async function handleUploadDocs() {
+    if (!uploadDocFiles.length || !docsSite) return
+    setUploadingDoc(true); setDocError("")
+    setUploadProgress({ done: 0, total: uploadDocFiles.length })
+    const uploaded: SiteDoc[] = []
+    let failed = 0
+    try {
+      for (let i = 0; i < uploadDocFiles.length; i++) {
+        const file = uploadDocFiles[i]
+        try {
+          const res = await fetch(`/api/sites/${docsSite.id}/documents`, {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              "Content-Type": file.type || "application/octet-stream",
+              "X-Filename": encodeURIComponent(file.name),
+              "X-Doc-Category": uploadDocCategory,
+            },
+            body: file,
+          })
+          const d = await res.json()
+          if (d.ok) uploaded.push(d.doc); else failed++
+        } catch {
+          failed++
+        }
+        setUploadProgress({ done: i + 1, total: uploadDocFiles.length })
+      }
+      if (uploaded.length) setDocs(prev => [...prev, ...uploaded])
+      if (failed > 0) {
+        setDocError(`${uploaded.length} of ${uploadDocFiles.length} file(s) uploaded — ${failed} failed.`)
+      } else {
+        toast.success(uploaded.length > 1 ? `${uploaded.length} files uploaded` : "File uploaded")
+      }
+      setUploadDocFiles([])
+    } finally {
+      setUploadingDoc(false)
+      setUploadProgress(null)
+    }
+  }
+
+  async function handleDeleteDoc(filename: string) {
+    if (!docsSite) return
+    try {
+      const res = await fetch(`/api/sites/${docsSite.id}/documents/${filename}`, {
+        method: "DELETE",
+        credentials: "include",
+      })
+      if ((await res.json()).ok) {
+        setDocs(prev => prev.filter(d => d.filename !== filename))
+        toast.success("Document removed")
+      }
+    } catch {
+      toast.error("Failed to delete document")
     }
   }
 
@@ -481,6 +583,16 @@ export default function SitesPage() {
                         {welfareCount}
                       </span>
                     )}
+                  </span>
+                  <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                </button>
+
+                {/* Site documents button */}
+                <button onClick={() => openDocsPanel(site)}
+                  className="flex w-full items-center justify-between rounded-lg bg-muted/60 px-3 py-2 text-xs font-medium hover:bg-muted transition-colors">
+                  <span className="flex items-center gap-1.5">
+                    <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                    Site documentation
                   </span>
                   <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
                 </button>
@@ -810,6 +922,127 @@ export default function SitesPage() {
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════════
+          SITE DOCUMENTATION PANEL
+      ═════════════════════════════════════════════════════════════════════════ */}
+      {docsSite && (
+        <div className="fixed inset-0 z-40 flex">
+          <div className="flex-1 bg-black/40" onClick={closeDocsPanel} />
+          <div className="flex w-full max-w-lg flex-col bg-background shadow-xl">
+            <div className="border-b px-5 py-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-semibold">Site documentation</h3>
+                  <p className="text-xs text-muted-foreground">{docsSite.name}</p>
+                </div>
+                <button onClick={closeDocsPanel} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
+
+              {/* Upload section */}
+              <div>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Upload</p>
+                <div className="space-y-3">
+                  <div>
+                    <Label className="mb-1 block text-xs font-medium text-muted-foreground">Category</Label>
+                    <select value={uploadDocCategory} onChange={(e) => setUploadDocCategory(e.target.value)}
+                      className="h-9 w-full rounded-md border bg-background px-3 text-sm">
+                      {Object.entries(DOC_CATEGORY_LABELS).map(([val, label]) => (
+                        <option key={val} value={val}>{label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="flex cursor-pointer flex-col items-center gap-1.5 rounded-md border border-dashed bg-muted/20 px-3 py-4 text-center text-xs transition-colors hover:bg-muted/40">
+                      <Upload className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="text-muted-foreground">Choose file(s)</span>
+                      <input type="file" multiple className="hidden" accept=".pdf,.ppt,.pptx,.doc,.docx"
+                        onChange={(e) => { setUploadDocFiles(Array.from(e.target.files ?? [])); setDocError("") }} />
+                    </label>
+                    <label className="flex cursor-pointer flex-col items-center gap-1.5 rounded-md border border-dashed bg-muted/20 px-3 py-4 text-center text-xs transition-colors hover:bg-muted/40">
+                      <FolderUp className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="text-muted-foreground">Choose folder</span>
+                      <input type="file" multiple className="hidden"
+                        {...({ webkitdirectory: "true", directory: "true" } as Record<string, string>)}
+                        onChange={(e) => { setUploadDocFiles(Array.from(e.target.files ?? [])); setDocError("") }} />
+                    </label>
+                  </div>
+
+                  {uploadDocFiles.length > 0 && (
+                    <div className="rounded-md border bg-muted/20 px-3 py-2">
+                      <p className="text-xs font-medium">
+                        {uploadDocFiles.length} file{uploadDocFiles.length !== 1 ? "s" : ""} selected
+                      </p>
+                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                        {uploadDocFiles.slice(0, 3).map(f => f.name).join(", ")}
+                        {uploadDocFiles.length > 3 ? `, +${uploadDocFiles.length - 3} more` : ""}
+                      </p>
+                    </div>
+                  )}
+
+                  {docError && <p className="text-xs text-destructive">{docError}</p>}
+
+                  <Button onClick={handleUploadDocs} disabled={!uploadDocFiles.length || uploadingDoc} className="w-full gap-2">
+                    {uploadingDoc ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    {uploadingDoc
+                      ? `Uploading ${uploadProgress?.done ?? 0} of ${uploadProgress?.total ?? uploadDocFiles.length}…`
+                      : uploadDocFiles.length > 1 ? `Upload ${uploadDocFiles.length} files` : "Upload file"}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Stored docs list */}
+              <div>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Stored files {!docsLoading && `(${docs.length})`}
+                </p>
+                {docsLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading…</p>
+                ) : docs.length === 0 ? (
+                  <div className="rounded-xl border border-dashed p-8 text-center">
+                    <FileText className="mx-auto mb-2 h-6 w-6 text-muted-foreground/40" />
+                    <p className="text-sm text-muted-foreground">No files uploaded yet.</p>
+                    <p className="mt-1 text-xs text-muted-foreground/60">Site documentation, presentations, induction packs — upload above.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {docs.map((doc) => (
+                      <div key={doc.filename} className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5">
+                        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium">{doc.originalName}</div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {DOC_CATEGORY_LABELS[doc.category] ?? doc.category}
+                            {" · "}{formatBytes(doc.size)}
+                            {" · "}{new Date(doc.uploadedAt).toLocaleDateString("en-GB")}
+                          </div>
+                        </div>
+                        <a href={`/api/sites/${docsSite.id}/documents/${doc.filename}`}
+                          target="_blank" rel="noopener noreferrer"
+                          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          title="View">
+                          <Eye className="h-3.5 w-3.5" />
+                        </a>
+                        <button onClick={() => handleDeleteDoc(doc.filename)}
+                          className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                          title="Delete">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     ))}
                   </div>

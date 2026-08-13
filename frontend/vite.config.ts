@@ -39,6 +39,18 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        // Without this, the SPA navigation fallback intercepts top-level
+        // navigations to /api/* (e.g. window.open, <a href="/api/...">
+        // target="_blank") and serves the cached index.html instead of
+        // the real response — breaking file downloads and document viewing.
+        navigateFallbackDenylist: [/^\/api\//],
+        // A new service worker otherwise sits "waiting" until every open
+        // tab closes before it takes over, so a rebuild silently keeps
+        // serving the old JS bundle. These make the new version activate
+        // and take control of open tabs immediately after install.
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         runtimeCaching: [
           {
             urlPattern: /^\/api\//,

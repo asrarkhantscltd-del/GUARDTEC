@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
-import { daysUntil, fmtDate } from "@/lib/utils"
+import { daysUntil, fmtDate, downloadExport } from "@/lib/utils"
 import type { StaffMember } from "@/types/staff"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -15,9 +15,6 @@ import {
 } from "lucide-react"
 import { StatusBadge } from "@/components/ui/status-badge"
 
-function downloadExport(url: string) {
-  window.open(url, "_blank")
-}
 
 const stagger = {
   container: { animate: { transition: { staggerChildren: 0.05 } } },
@@ -55,9 +52,9 @@ function normDeploy(raw?: string): "onsite" | "available" | "offduty" | "unknown
 function DeployBadge({ raw }: { raw?: string }) {
   const key = normDeploy(raw)
   const map = {
-    onsite:    { label: "Onsite",    cls: "bg-blue-500/15 text-blue-500 border border-blue-500/30", Icon: MapPin },
-    available: { label: "Available", cls: "bg-success/15 text-success border border-success/30",    Icon: CircleCheck },
-    offduty:   { label: "Off Duty",  cls: "bg-muted text-muted-foreground border border-border",     Icon: Clock },
+    onsite:    { label: "Onsite",    cls: "bg-success/15 text-success border border-success/30",     Icon: MapPin },
+    available: { label: "Available", cls: "bg-warning/15 text-warning border border-warning/30",      Icon: CircleCheck },
+    offduty:   { label: "Off Duty",  cls: "bg-destructive/15 text-destructive border border-destructive/30", Icon: Clock },
     unknown:   { label: "—",         cls: "",                                                         Icon: Clock },
   } as const
   const { label, cls, Icon } = map[key]
@@ -132,9 +129,9 @@ function DeploySelect({
   }, [deployStatus])
 
   const statusCls: Record<string, string> = {
-    onsite:    "border-blue-500/40 bg-blue-500/5 text-blue-600",
-    available: "border-success/40 bg-success/5 text-success",
-    offduty:   "border-border bg-muted text-muted-foreground",
+    onsite:    "border-success/40 bg-success/5 text-success",
+    available: "border-warning/40 bg-warning/5 text-warning",
+    offduty:   "border-destructive/40 bg-destructive/5 text-destructive",
     "":        "border-border bg-background text-muted-foreground",
   }
 
@@ -160,7 +157,7 @@ function DeploySelect({
         <select
           value={currentSite ?? ""}
           onChange={(e) => onUpdate(staffId, "onsite", e.target.value)}
-          className="rounded border border-blue-500/30 bg-blue-500/5 text-blue-600 text-xs px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring max-w-[150px]"
+          className="rounded border border-success/30 bg-success/5 text-success text-xs px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring max-w-[150px]"
         >
           <option value="">— Location —</option>
           {sites.map((s) => (
@@ -402,13 +399,13 @@ export default function StaffPage() {
     if (compFilter !== "all" && s.overall !== compFilter) return false
     if (deployFilter !== "all" && normDeploy(s.deployStatus) !== deployFilter) return false
     if (siteFilter !== "all") {
-
-      if (siteFilter === "__none__") return normDeploy(s.deployStatus) === "onsite" && !s.currentSite
-      return s.currentSite === siteFilter
+      if (siteFilter === "__none__") {
+        if (!(normDeploy(s.deployStatus) === "onsite" && !s.currentSite)) return false
+      } else if (s.currentSite !== siteFilter) return false
     }
-    if (docFilter === "sia")  return docStatus(s.sia?.expiry) !== "ok"
-    if (docFilter === "cscs") return docStatus(s.cscs?.expiry) !== "ok"
-    if (docFilter === "rtw")  return docStatus(s.visa?.expiry) !== "ok"
+    if (docFilter === "sia"  && docStatus(s.sia?.expiry) === "ok")  return false
+    if (docFilter === "cscs" && docStatus(s.cscs?.expiry) === "ok") return false
+    if (docFilter === "rtw"  && docStatus(s.visa?.expiry) === "ok") return false
     return true
   }).sort((a, b) => {
     let cmp = 0
@@ -464,7 +461,8 @@ export default function StaffPage() {
 
   function exportStaffReport() {
     const ids = selectedIds.size > 0 ? [...selectedIds] : filtered.map((s) => s.id)
-    downloadExport(`/api/staff/export?ids=${ids.join(",")}`)
+    downloadExport(`/api/staff/export?ids=${ids.join(",")}`, "GuardTec-Staff-Report.xlsx")
+      .catch(() => toast.error("Failed to generate report"))
   }
 
   function goToStaff(id: string) { navigate(`/staff/${id}`) }
@@ -543,10 +541,10 @@ export default function StaffPage() {
             <div className="flex flex-wrap gap-2">
               {(["all", "onsite", "available", "offduty"] as const).map((f) => {
                 const cfg = {
-                  all:       { label: "All",       cls: "bg-secondary text-secondary-foreground",                 icon: null },
-                  onsite:    { label: "Onsite",    cls: "bg-blue-500/15 text-blue-500 border border-blue-500/30", icon: <MapPin className="h-3 w-3" /> },
-                  available: { label: "Available", cls: "bg-success/15 text-success border border-success/30",    icon: <CircleCheck className="h-3 w-3" /> },
-                  offduty:   { label: "Off Duty",  cls: "bg-muted text-muted-foreground",                          icon: <Clock className="h-3 w-3" /> },
+                  all:       { label: "All",       cls: "bg-secondary text-secondary-foreground",                       icon: null },
+                  onsite:    { label: "Onsite",    cls: "bg-success/15 text-success border border-success/30",         icon: <MapPin className="h-3 w-3" /> },
+                  available: { label: "Available", cls: "bg-warning/15 text-warning border border-warning/30",         icon: <CircleCheck className="h-3 w-3" /> },
+                  offduty:   { label: "Off Duty",  cls: "bg-destructive/15 text-destructive border border-destructive/30", icon: <Clock className="h-3 w-3" /> },
                 } as const
                 const { label, cls, icon } = cfg[f]
                 return (

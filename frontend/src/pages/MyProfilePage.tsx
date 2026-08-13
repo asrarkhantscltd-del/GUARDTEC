@@ -5,11 +5,12 @@ import {
   ShieldCheck, AlertTriangle, Clock, Camera, ImageOff,
   Loader2, Save, User as UserIcon, Upload, BadgeAlert, Flag, EyeOff, Eye,
   Paperclip, X, FileVideo, FileText, Image as ImageIcon,
-  MessageSquare, Package, Send, Pencil,
+  MessageSquare, Package, Send, Pencil, Download,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
+import type { TrainingRecord, BankDetails } from "@/types/staff"
 
 interface EmergencyContact { name?: string; phone?: string; relationship?: string }
 interface Ref { name?: string; company?: string; email?: string; phone?: string; status?: string }
@@ -24,12 +25,15 @@ interface Profile {
   phone?: string
   address?: string
   emergencyContact?: EmergencyContact
+  bankDetails?: BankDetails
   sia?:  { number?: string; expiry?: string; type?: string }
   cscs?: { number?: string; expiry?: string }
   visa?: { type?: string; expiry?: string }
   references?: { ref1?: Ref; ref2?: Ref }
   pending_submission?: { submitted_at?: string; photo_pending?: boolean }
   rejection_reason?: string
+  documents?: Record<string, { uploaded?: boolean; date?: string } | undefined>
+  training?: TrainingRecord
 }
 
 const BLANK: Profile = { id: "", name: "" }
@@ -65,10 +69,16 @@ export default function MyProfilePage() {
   const attachInputRef                        = useRef<HTMLInputElement>(null)
 
   // Messages
-  const [messages, setMessages]       = useState<{id:string;message:string;sender_name:string;sender_role:string;created_at:string;is_read:boolean}[]>([])
+  const [messages, setMessages]       = useState<{
+    id: string; message: string; sender_name: string; sender_role: string; created_at: string; is_read: boolean
+    attachment_id?: string; attachment_filename?: string; attachment_original_name?: string
+    attachment_mime_type?: string; attachment_size?: number
+  }[]>([])
   const [msgDraft, setMsgDraft]       = useState("")
   const [msgSending, setMsgSending]   = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
+  const [msgFile, setMsgFile]         = useState<File | null>(null)
+  const msgFileInputRef               = useRef<HTMLInputElement>(null)
   const msgEndRef                     = useRef<HTMLDivElement>(null)
 
   // Provisions
@@ -113,22 +123,41 @@ export default function MyProfilePage() {
   }
 
   async function sendMyMessage() {
-    if (!msgDraft.trim()) return
+    if (!msgDraft.trim() && !msgFile) return
     setMsgSending(true)
     try {
       const res = await fetch("/api/my-messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ message: msgDraft }),
+        body: JSON.stringify({ message: msgDraft.trim() || `📎 ${msgFile?.name}` }),
       })
       const d = await res.json()
       if (!d.ok) { toast.error(d.error ?? "Failed to send."); return }
-      setMsgDraft("")
+      if (msgFile) {
+        const buf = await msgFile.arrayBuffer()
+        const attRes = await fetch(`/api/messages/${d.message.id}/attachment`, {
+          method: "POST",
+          headers: { "Content-Type": msgFile.type || "application/octet-stream", "x-original-name": encodeURIComponent(msgFile.name) },
+          credentials: "include",
+          body: buf,
+        })
+        const attD = await attRes.json()
+        if (!attD.ok) toast.error(attD.error ?? "Message sent, but the attachment failed to upload.")
+      }
+      setMsgDraft(""); setMsgFile(null)
       await loadMyHR()
     } finally {
       setMsgSending(false)
     }
+  }
+
+  function pickMsgFile(file: File | null) {
+    if (!file) return
+    const allowed = ["image/jpeg","image/png","image/gif","image/webp","video/mp4","video/quicktime","video/webm","application/pdf","application/msword","application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
+    if (!allowed.includes(file.type)) { toast.error("Only images, videos, PDFs, and Word docs are allowed."); return }
+    if (file.size > 100 * 1024 * 1024) { toast.error("File too large (max 100 MB)."); return }
+    setMsgFile(file)
   }
 
   async function submitIncident(e: React.FormEvent) {
@@ -213,6 +242,7 @@ export default function MyProfilePage() {
         body: JSON.stringify({
           phone: profile.phone, address: profile.address,
           emergencyContact: profile.emergencyContact,
+          bankDetails: profile.bankDetails,
           sia: profile.sia, cscs: profile.cscs, visa: profile.visa,
           references: profile.references,
         }),
@@ -283,14 +313,16 @@ export default function MyProfilePage() {
 
       {/* ── Hero ── */}
       <div className="rounded-xl bg-gradient-to-br from-sidebar to-sidebar/90 text-sidebar-foreground p-5 mb-5 flex items-center gap-4 shadow-sm relative overflow-hidden">
-        {/* GuardTec shield watermark */}
-        <div className="pointer-events-none absolute -right-6 -top-6 opacity-[0.08]" aria-hidden>
-          <svg viewBox="0 0 200 230" xmlns="http://www.w3.org/2000/svg" className="w-36 h-36">
-            <path d="M100 5 L190 40 L190 110 C190 165 155 210 100 225 C45 210 10 165 10 110 L10 40 Z" fill="white" />
-            <text x="100" y="130" textAnchor="middle" fontSize="36" fontWeight="bold" fill="#b91c1c" fontFamily="sans-serif">GT</text>
-            <text x="100" y="158" textAnchor="middle" fontSize="12" fill="#b91c1c" fontFamily="sans-serif" letterSpacing="2">SECURITY</text>
-          </svg>
-        </div>
+        {/* GuardTec mark watermark — real brand mark (icon only, cropped from the master logo), faint in the corner */}
+        <svg
+          className="pointer-events-none absolute -right-3 -top-3 h-28 w-28 opacity-[0.16]"
+          viewBox="58 98 72 87" xmlns="http://www.w3.org/2000/svg" aria-hidden
+        >
+          <path
+            fill="var(--color-primary)"
+            d="M121.62,116.11l7.77-17.62-17.32,14.41s1.32-6.73,1.32-7.99-8.12,13.44-8.12,13.44l-15.09,12.08.92-3.85s-5.73,4.76-5.25,10.01c.49,5.25,7.38,6.12,7.38,6.12l-2.33-3.6,4.76,1.55v-4.37s9.77,0,9.77,0l-9.07,8.07h-1.96s-1.17,6.12,5.64,9.91c0,0-.78-4.37,2.82-7.19,3.6-2.82,9.91-9.23,10.4-10.01.49-.78.78-1.85.58-2.72-.1-.46-.34-1.35-.54-2.09,0,0-.22-.67-.28-1.02-.04-.2-.06-.4-.05-.61.02-1.65,1.36-3.04,3-3.11,1.81-.08,3.3,1.36,3.3,3.15-.04,3.65-.86,7.26-2.41,10.56-.18.39-.3.61-.3.61-9.04,19.53-22.16,25.75-22.16,25.75,0,0-17.59-8.64-18.22-28.28-.16-4.86,2.1-10.76,6.74-14.62,21.87-18.14,32.48-26.2,32.48-26.2h-55.98s0,9.92,2.17,23.35h0s-3.56,0-3.56,0c0,0-.02,9.33,7.38,23.28h-3.08s2.33,20.32,32.07,40.05c5.54-3.71,10.21-8.43,14.13-13.73h0s3.54,2.14,3.54,2.14c4.08-4.79,8.5-19.77,8.5-19.77l3.76,1.55c2.98-6.35,2.07-21.25,2.07-21.25h2.98c0-12.31-7.77-18.01-7.77-18.01ZM92.46,134.26c-1,.62-2.05-.09-2.05-.09l2.66-1.94s.31,1.47-.61,2.03ZM106.01,127.19c-3.41,2.4-5.05-.45-5.05-.45l7.77-6.28s-.97,5.51-2.72,6.74Z"
+          />
+        </svg>
         <div className="h-16 w-16 shrink-0 rounded-full overflow-hidden border-2 border-white/20 bg-white/10 flex items-center justify-center">
           {profile.id
             ? <img src={`/api/staff/${profile.id}/photo`} alt={profile.name}
@@ -465,6 +497,7 @@ export default function MyProfilePage() {
             {profile.sia?.number  && <div><span className="text-muted-foreground text-xs">SIA No.</span><p className="truncate">{profile.sia.number}</p></div>}
             {profile.cscs?.number && <div><span className="text-muted-foreground text-xs">CSCS No.</span><p className="truncate">{profile.cscs.number}</p></div>}
             {profile.emergencyContact?.name && <div><span className="text-muted-foreground text-xs">Emergency Contact</span><p className="truncate">{profile.emergencyContact.name}</p></div>}
+            {profile.bankDetails?.accountNumber && <div><span className="text-muted-foreground text-xs">Bank Details</span><p className="truncate">{profile.bankDetails.bankName || "On file"} •••• {profile.bankDetails.accountNumber.slice(-4)}</p></div>}
           </div>
         </div>
       )}
@@ -538,6 +571,33 @@ export default function MyProfilePage() {
                 onChange={e => set("emergencyContact", { ...profile.emergencyContact, relationship: e.target.value })} />
             </Field>
           </div>
+        </Section>
+
+        {/* Bank details */}
+        <Section title="Bank Details">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Account holder name">
+              <Input value={profile.bankDetails?.accountHolderName ?? ""}
+                onChange={e => set("bankDetails", { ...profile.bankDetails, accountHolderName: e.target.value })} />
+            </Field>
+            <Field label="Bank name">
+              <Input value={profile.bankDetails?.bankName ?? ""}
+                onChange={e => set("bankDetails", { ...profile.bankDetails, bankName: e.target.value })} />
+            </Field>
+            <Field label="Sort code">
+              <Input className="font-mono" inputMode="numeric" maxLength={8} placeholder="00-00-00"
+                value={profile.bankDetails?.sortCode ?? ""}
+                onChange={e => set("bankDetails", { ...profile.bankDetails, sortCode: e.target.value })} />
+            </Field>
+            <Field label="Account number">
+              <Input className="font-mono" inputMode="numeric" maxLength={8} placeholder="12345678"
+                value={profile.bankDetails?.accountNumber ?? ""}
+                onChange={e => set("bankDetails", { ...profile.bankDetails, accountNumber: e.target.value })} />
+            </Field>
+          </div>
+          <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+            <UserIcon className="h-3 w-3" />Used by Accounts to pay your wages — double-check before submitting.
+          </p>
         </Section>
 
         {/* SIA */}
@@ -627,6 +687,27 @@ export default function MyProfilePage() {
                   hint={doc.hint}
                   staffId={profile.id}
                   docKey={doc.key}
+                  initialUploaded={!!profile.documents?.[doc.key]?.uploaded}
+                />
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {/* Training certificates */}
+        {profile.id && (
+          <Section title="Training Certificates">
+            <p className="mb-4 text-xs text-muted-foreground">
+              Upload a copy of each certificate you hold. Your office manages the course dates — this is just the certificate file.
+            </p>
+            <div className="space-y-3">
+              {TRAINING_CERT_UPLOADS.map((course) => (
+                <TrainingCertRow
+                  key={course.key}
+                  label={course.label}
+                  staffId={profile.id}
+                  courseKey={course.key}
+                  item={profile.training?.[course.key]}
                 />
               ))}
             </div>
@@ -821,11 +902,27 @@ export default function MyProfilePage() {
             )}
             {messages.map(m => {
               const isMe = m.sender_role === "staff"
+              const isImage = m.attachment_mime_type?.startsWith("image/")
               return (
                 <div key={m.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
                   <div className={`max-w-sm rounded-2xl px-4 py-2.5 text-sm shadow-sm ${isMe ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-card border text-foreground rounded-tl-sm"}`}>
                     <p className="text-[11px] font-semibold mb-1 opacity-60">{m.sender_name}</p>
                     <p className="leading-snug">{m.message}</p>
+                    {m.attachment_filename && (
+                      isImage ? (
+                        <a href={`/api/message-attachments/${m.attachment_filename}`} target="_blank" rel="noopener noreferrer" className="mt-1.5 block">
+                          <img src={`/api/message-attachments/${m.attachment_filename}`} alt={m.attachment_original_name}
+                            className="max-h-48 w-full rounded-lg object-cover" />
+                        </a>
+                      ) : (
+                        <a href={`/api/message-attachments/${m.attachment_filename}`} target="_blank" rel="noopener noreferrer" download={m.attachment_original_name}
+                          className={`mt-1.5 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs ${isMe ? "bg-white/15" : "bg-muted"}`}>
+                          {attachIcon(m.attachment_mime_type ?? "")}
+                          <span className="flex-1 truncate">{m.attachment_original_name}</span>
+                          <Download className="h-3 w-3 shrink-0" />
+                        </a>
+                      )
+                    )}
                     <p className="text-[10px] mt-1.5 opacity-50 text-right">
                       {new Date(m.created_at).toLocaleDateString("en-GB", { day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit" })}
                     </p>
@@ -835,15 +932,34 @@ export default function MyProfilePage() {
             })}
             <div ref={msgEndRef} />
           </div>
-          <div className="border-t flex gap-2 p-4 bg-background">
-            <input value={msgDraft} onChange={e => setMsgDraft(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMyMessage() } }}
-              placeholder="Type a reply…"
-              className="flex-1 h-10 rounded-lg border border-input bg-muted/30 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-            <Button disabled={msgSending || !msgDraft.trim()} onClick={sendMyMessage} className="gap-1.5 h-10 px-5">
-              {msgSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              Send
-            </Button>
+          <div className="border-t p-4 bg-background space-y-2">
+            {msgFile && (
+              <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs">
+                {attachIcon(msgFile.type)}
+                <span className="flex-1 truncate">{msgFile.name}</span>
+                <span className="text-muted-foreground shrink-0">{(msgFile.size / 1024 / 1024).toFixed(1)} MB</span>
+                <button onClick={() => setMsgFile(null)} className="text-muted-foreground hover:text-destructive">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <input ref={msgFileInputRef} type="file" hidden
+                accept="image/*,video/mp4,video/quicktime,video/webm,application/pdf,.doc,.docx"
+                onChange={e => { pickMsgFile(e.target.files?.[0] ?? null); e.target.value = "" }} />
+              <button onClick={() => msgFileInputRef.current?.click()}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-input text-muted-foreground hover:bg-muted transition-colors" title="Attach file">
+                <Paperclip className="h-4 w-4" />
+              </button>
+              <input value={msgDraft} onChange={e => setMsgDraft(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMyMessage() } }}
+                placeholder="Type a reply…"
+                className="flex-1 h-10 rounded-lg border border-input bg-muted/30 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+              <Button disabled={msgSending || (!msgDraft.trim() && !msgFile)} onClick={sendMyMessage} className="gap-1.5 h-10 px-5">
+                {msgSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                Send
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -856,16 +972,17 @@ export default function MyProfilePage() {
 
 const DOC_UPLOADS = [
   { key: "siaPhysical",     label: "SIA Licence Copy",   hint: "Front of your SIA licence card — PDF, JPG or PNG" },
+  { key: "cscsCard",        label: "CSCS Card",           hint: "Front of your CSCS card — PDF, JPG or PNG" },
   { key: "passport",        label: "Passport / Photo ID", hint: "Photo page of your passport or national ID" },
   { key: "brpCard",         label: "BRP Card",            hint: "Biometric Residence Permit — if applicable" },
   { key: "proofOfAddress1", label: "Proof of Address",    hint: "Utility bill or bank statement (within 3 months)" },
 ]
 
-function DocUploadRow({ label, hint, staffId, docKey }: {
-  label: string; hint: string; staffId: string; docKey: string
+function DocUploadRow({ label, hint, staffId, docKey, initialUploaded }: {
+  label: string; hint: string; staffId: string; docKey: string; initialUploaded?: boolean
 }) {
   const [uploading, setUploading] = useState(false)
-  const [uploaded, setUploaded] = useState(false)
+  const [uploaded, setUploaded] = useState(!!initialUploaded)
   const inputRef = useRef<HTMLInputElement>(null)
 
   async function handleFile(file: File) {
@@ -907,6 +1024,86 @@ function DocUploadRow({ label, hint, staffId, docKey }: {
           <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted ${uploading ? "pointer-events-none opacity-50" : ""}`}>
             {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
             {uploading ? "Uploading…" : "Upload"}
+            <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
+          </label>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Training certificate uploads ────────────────────────────────────────────
+
+type StandardTrainingKey = "siaCertificate" | "firstAid" | "manualHandling" | "fireAwareness" | "conflictManagement" | "bwcTraining" | "cscsTest"
+
+const TRAINING_CERT_UPLOADS: { key: StandardTrainingKey; label: string }[] = [
+  { key: "siaCertificate",     label: "SIA Qualifying Certificate" },
+  { key: "firstAid",           label: "First Aid (Emergency)" },
+  { key: "manualHandling",     label: "Manual Handling" },
+  { key: "fireAwareness",      label: "Fire Awareness" },
+  { key: "conflictManagement", label: "Conflict Management" },
+  { key: "bwcTraining",        label: "Body Worn Camera (BWC)" },
+  { key: "cscsTest",           label: "CSCS Health & Safety Test" },
+]
+
+function TrainingCertRow({ label, staffId, courseKey, item }: {
+  label: string; staffId: string; courseKey: string
+  item?: { completed?: boolean; expiry?: string; certUploaded?: boolean }
+}) {
+  const [uploading, setUploading] = useState(false)
+  const [uploaded, setUploaded] = useState(!!item?.certUploaded)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  async function handleFile(file: File) {
+    setUploading(true)
+    try {
+      const res = await fetch(`/api/staff/${staffId}/training/${courseKey}/certificate`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      })
+      const data = await res.json()
+      if (data.ok) {
+        setUploaded(true)
+        toast.success(`${label} certificate uploaded`)
+      } else {
+        toast.error(data.error ?? `Failed to upload ${label} certificate`)
+      }
+    } catch {
+      toast.error("Network error — please try again")
+    } finally {
+      setUploading(false)
+      if (inputRef.current) inputRef.current.value = ""
+    }
+  }
+
+  return (
+    <div className="flex items-start gap-3 rounded-lg border bg-muted/20 px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium">{label}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">
+          {item?.completed ? "Marked complete by your office" : "Not yet marked complete"}
+          {item?.expiry ? ` · Expires ${item.expiry}` : ""}
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        {uploaded && (
+          <a href={`/api/staff/${staffId}/training/${courseKey}/certificate`} target="_blank" rel="noopener noreferrer"
+            className="text-xs text-primary hover:underline">View</a>
+        )}
+        {uploaded ? (
+          <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted ${uploading ? "pointer-events-none opacity-50" : ""}`}>
+            {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5 text-green-600" />}
+            {uploading ? "Uploading…" : "Replace"}
+            <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
+          </label>
+        ) : (
+          <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted ${uploading ? "pointer-events-none opacity-50" : ""}`}>
+            {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+            {uploading ? "Uploading…" : "Upload certificate"}
             <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
               onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
           </label>

@@ -5,6 +5,32 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+// Downloads a file via fetch+blob rather than window.open — a top-level
+// window.open navigation to /api/* gets intercepted by the PWA service
+// worker's navigation handling and served the cached SPA shell instead of
+// the real response. fetch() is not a "navigate" request, so it bypasses
+// that and reliably saves the file to the browser's Downloads folder.
+export async function downloadExport(url: string, fallbackFilename: string) {
+  try {
+    const res = await fetch(url, { credentials: "include" })
+    if (!res.ok) throw new Error("Export failed")
+    const blob = await res.blob()
+    const cd = res.headers.get("Content-Disposition") || ""
+    const match = cd.match(/filename="?([^"]+)"?/)
+    const filename = match ? match[1] : fallbackFilename
+    const blobUrl = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = blobUrl
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(blobUrl)
+  } catch {
+    throw new Error("Export failed")
+  }
+}
+
 export function daysUntil(iso: string | null | undefined): number | null {
   if (!iso) return null
   const d = new Date(iso)

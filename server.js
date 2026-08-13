@@ -27,6 +27,62 @@ const pgPool = new Pool({ connectionString: process.env.DATABASE_URL });
   }
 })();
 
+(async function ensureMessageAttachmentsSchema() {
+  try {
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS message_attachments (
+        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        message_id    UUID NOT NULL REFERENCES staff_messages(id) ON DELETE CASCADE,
+        filename      TEXT NOT NULL,
+        original_name TEXT NOT NULL,
+        mime_type     TEXT NOT NULL,
+        size_bytes    INTEGER NOT NULL,
+        uploaded_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pgPool.query("CREATE INDEX IF NOT EXISTS idx_msg_attach_message ON message_attachments(message_id)");
+  } catch (e) {
+    console.error('[DB] message_attachments schema migration failed:', e.message);
+  }
+})();
+
+// Per-event notification feed for the management bell — distinct from the
+// compliance-alerts card, which stays status-based (persists until the real
+// issue is fixed). These are dismissible: created on a staff action, cleared
+// once a manager clicks through to see it.
+(async function ensureNotificationsSchema() {
+  try {
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        type         TEXT NOT NULL,
+        actor_name   TEXT NOT NULL,
+        summary      TEXT NOT NULL,
+        link_staff_id     TEXT,
+        link_tab          TEXT,
+        link_incident_id  UUID,
+        created_at   TIMESTAMPTZ DEFAULT NOW(),
+        seen_at      TIMESTAMPTZ
+      )
+    `);
+    await pgPool.query("CREATE INDEX IF NOT EXISTS idx_notifications_unseen ON notifications(seen_at) WHERE seen_at IS NULL");
+  } catch (e) {
+    console.error('[DB] notifications schema migration failed:', e.message);
+  }
+})();
+
+async function createNotification(opts) {
+  try {
+    await pgPool.query(
+      `INSERT INTO notifications (type, actor_name, summary, link_staff_id, link_tab, link_incident_id)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [opts.type, opts.actorName, opts.summary, opts.linkStaffId || null, opts.linkTab || null, opts.linkIncidentId || null]
+    );
+  } catch (e) {
+    console.error('[NOTIFY] failed to create notification:', e.message);
+  }
+}
+
 // ── ROLES (configurable, module-level permissions) ────────────────────────────
 // Modules a role can be granted: staff, fleet, sites, compliance, pending_review.
 // Team Access + Manage Roles are deliberately NOT part of this system — they stay
@@ -145,6 +201,20 @@ function requireRole() {
   };
 }
 
+// Lets a staff user act on their OWN record (req.params.id must match their
+// staff_id), or falls back to the normal management permission check for
+// everyone else (director / any role granted moduleKey).
+function requireOwnStaffOrPermission(moduleKey) {
+  var permCheck = requirePermission(moduleKey);
+  return function(req, res, next) {
+    if (req.user && req.user.role === 'staff') {
+      if (req.user.staff_id && req.user.staff_id === req.params.id) return next();
+      return res.status(403).json({ ok: false, error: 'Forbidden' });
+    }
+    permCheck(req, res, next);
+  };
+}
+
 
 const HOME        = process.env.USERPROFILE || ('C:\\Users\\' + require('os').userInfo().username);
 const BASE        = process.env.DATA_PATH || path.join(HOME, "First Call Site Services", "FCSS - Managers", "HR and Legal", "Asrar", "GuardTec Compliance");
@@ -155,6 +225,8 @@ const COMPLIANCE_TRACKER   = path.join(BASE, "01 - Staff Compliance Tracker", "G
 const REFERENCE_TRACKER    = path.join(BASE, "05 - Reference Tracker", "GuardTec Security — Reference Check Tracker.xlsx");
 const SHAREPOINT_DASHBOARD = path.join(BASE, "! GuardTec Compliance Dashboard.html");
 const SITES_FILE           = path.join(BASE, "deployment-sites.json");
+const SITE_DOCS_DIR        = path.join(BASE, "site-documents");
+if (!fs.existsSync(SITE_DOCS_DIR)) fs.mkdirSync(SITE_DOCS_DIR, { recursive: true });
 
 const SUBFOLDERS = ['01 - SIA Licence','02 - CSCS Card','03 - Right to Work & Visa','04 - References','05 - Employment Contract','06 - Training & Induction'];
 function getTodayStr() { return new Date().toISOString().split('T')[0]; }
@@ -395,8 +467,26 @@ app.post('/api/staff/:id/photo', requireLogin, function(req, res) {
 // ── STAFF DOCUMENT FILES ──────────────────────────────────────────────────────
 var ALLOWED_DOC_KEYS = [
   'siaPhysical','passport','brpCard','proofOfAddress1','proofOfAddress2',
-  'p45','bankLetter','application','assignmentInstructions'
+  'p45','bankLetter','application','assignmentInstructions','cscsCard'
 ];
+
+var ALLOWED_TRAINING_KEYS = [
+  'siaCertificate','firstAid','manualHandling','fireAwareness',
+  'conflictManagement','bwcTraining','cscsTest'
+];
+
+var DOC_KEY_LABELS = {
+  siaPhysical: 'SIA Licence copy', passport: 'Passport / Photo ID', brpCard: 'BRP Card',
+  proofOfAddress1: 'Proof of Address', proofOfAddress2: 'Proof of Address',
+  p45: 'P45/P60', bankLetter: 'Bank Letter', application: 'Application Form',
+  assignmentInstructions: 'Assignment Instructions', cscsCard: 'CSCS Card',
+};
+var TRAINING_KEY_LABELS = {
+  siaCertificate: 'SIA Qualifying Certificate', firstAid: 'First Aid certificate',
+  manualHandling: 'Manual Handling certificate', fireAwareness: 'Fire Awareness certificate',
+  conflictManagement: 'Conflict Management certificate', bwcTraining: 'BWC Training certificate',
+  cscsTest: 'CSCS Health & Safety Test certificate',
+};
 
 function findDocFile(folderPath, docKey) {
   var exts = ['.pdf','.jpg','.jpeg','.png','.webp'];
@@ -407,7 +497,7 @@ function findDocFile(folderPath, docKey) {
   return null;
 }
 
-app.get('/api/staff/:id/documents/:docKey', requireLogin, function(req, res) {
+app.get('/api/staff/:id/documents/:docKey', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
   var docKey = req.params.docKey;
   if (!ALLOWED_DOC_KEYS.includes(docKey)) return res.status(400).end();
   try {
@@ -427,7 +517,7 @@ app.get('/api/staff/:id/documents/:docKey', requireLogin, function(req, res) {
   }
 });
 
-app.post('/api/staff/:id/documents/:docKey', requireLogin, function(req, res) {
+app.post('/api/staff/:id/documents/:docKey', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
   var docKey = req.params.docKey;
   if (!ALLOWED_DOC_KEYS.includes(docKey)) return res.status(400).json({ ok:false, error:'Invalid document key' });
   try {
@@ -456,8 +546,126 @@ app.post('/api/staff/:id/documents/:docKey', requireLogin, function(req, res) {
       data.documents[docKey] = { uploaded: true, date: today };
       fs.writeFileSync(jp, JSON.stringify(data, null, 2));
       console.log('[DOCS] Saved', docKey, 'for', emp.name);
+      if (req.user.role === 'staff') {
+        createNotification({
+          type: 'document', actorName: emp.name,
+          summary: 'uploaded ' + (DOC_KEY_LABELS[docKey] || docKey),
+          linkStaffId: req.params.id, linkTab: 'documents',
+        });
+      }
       res.json({ ok:true, date: today });
     });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// Management-only — deliberately requirePermission, not requireOwnStaffOrPermission,
+// so a staff member can never remove a document their manager has already reviewed.
+app.delete('/api/staff/:id/documents/:docKey', requireLogin, requirePermission('staff'), function(req, res) {
+  var docKey = req.params.docKey;
+  if (!ALLOWED_DOC_KEYS.includes(docKey)) return res.status(400).json({ ok:false, error:'Invalid document key' });
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp || !emp._folderPath) return res.status(404).json({ ok:false, error:'Staff not found' });
+    var fp = findDocFile(emp._folderPath, docKey);
+    if (fp) fs.unlinkSync(fp);
+    var jp = path.join(emp._folderPath, 'staff_data.json');
+    var data = JSON.parse(fs.readFileSync(jp, 'utf8'));
+    if (data.documents) delete data.documents[docKey];
+    fs.writeFileSync(jp, JSON.stringify(data, null, 2));
+    console.log('[DOCS] Deleted', docKey, 'for', emp.name);
+    res.json({ ok:true });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// ── TRAINING CERTIFICATE FILES ────────────────────────────────────────────────
+// Staff upload their own certificate for each standard course; management can
+// only view whether one is on file (no upload button on that side of the UI).
+app.get('/api/staff/:id/training/:key/certificate', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
+  var key = req.params.key;
+  if (!ALLOWED_TRAINING_KEYS.includes(key)) return res.status(400).end();
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp || !emp._folderPath) return res.status(404).end();
+    var fp = findDocFile(emp._folderPath, 'training_' + key);
+    if (!fp) return res.status(404).end();
+    var ext = path.extname(fp).toLowerCase();
+    var mime = ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', 'inline; filename="' + key + ext + '"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(fp));
+  } catch(e) {
+    res.status(500).end();
+  }
+});
+
+app.post('/api/staff/:id/training/:key/certificate', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
+  var key = req.params.key;
+  if (!ALLOWED_TRAINING_KEYS.includes(key)) return res.status(400).json({ ok:false, error:'Invalid training key' });
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp || !emp._folderPath) return res.status(404).json({ ok:false, error:'Staff not found' });
+    var chunks = [];
+    req.on('data', function(c){ chunks.push(c); });
+    req.on('end', function() {
+      var buf = Buffer.concat(chunks);
+      var ext = '.pdf';
+      if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
+      else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
+      ['.pdf','.jpg','.jpeg','.png','.webp'].forEach(function(e){
+        var old = path.join(emp._folderPath, 'doc_training_' + key + e);
+        if (fs.existsSync(old)) fs.unlinkSync(old);
+      });
+      fs.writeFileSync(path.join(emp._folderPath, 'doc_training_' + key + ext), buf);
+      var jp = path.join(emp._folderPath, 'staff_data.json');
+      var data = JSON.parse(fs.readFileSync(jp, 'utf8'));
+      if (!data.training) data.training = {};
+      if (!data.training[key]) data.training[key] = {};
+      var today = new Date().toISOString().split('T')[0];
+      data.training[key].certUploaded = true;
+      data.training[key].certDate = today;
+      fs.writeFileSync(jp, JSON.stringify(data, null, 2));
+      console.log('[TRAINING CERT] Saved', key, 'for', emp.name);
+      if (req.user.role === 'staff') {
+        createNotification({
+          type: 'training_cert', actorName: emp.name,
+          summary: 'uploaded ' + (TRAINING_KEY_LABELS[key] || key),
+          linkStaffId: req.params.id, linkTab: 'training',
+        });
+      }
+      res.json({ ok:true, date: today });
+    });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// Management-only, same reasoning as the documents delete route above.
+app.delete('/api/staff/:id/training/:key/certificate', requireLogin, requirePermission('staff'), function(req, res) {
+  var key = req.params.key;
+  if (!ALLOWED_TRAINING_KEYS.includes(key)) return res.status(400).json({ ok:false, error:'Invalid training key' });
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp || !emp._folderPath) return res.status(404).json({ ok:false, error:'Staff not found' });
+    var fp = findDocFile(emp._folderPath, 'training_' + key);
+    if (fp) fs.unlinkSync(fp);
+    var jp = path.join(emp._folderPath, 'staff_data.json');
+    var data = JSON.parse(fs.readFileSync(jp, 'utf8'));
+    if (data.training && data.training[key]) {
+      data.training[key].certUploaded = false;
+      delete data.training[key].certDate;
+    }
+    fs.writeFileSync(jp, JSON.stringify(data, null, 2));
+    console.log('[TRAINING CERT] Deleted', key, 'for', emp.name);
+    res.json({ ok:true });
   } catch(e) {
     res.status(500).json({ ok:false, error: e.message });
   }
@@ -981,11 +1189,36 @@ app.get('/api/staff', requireLogin, requirePermission('staff'), function(req, re
 });
 
 // ── STAFF EXCEL EXPORT ────────────────────────────────────────────────────────
+// Mirrors the frontend's normDeploy() so filters match what the UI shows.
+function normDeployStatus(raw) {
+  var v = String(raw || '').toLowerCase().replace(/[\s_-]/g, '');
+  if (v.indexOf('onsite') !== -1 || v.indexOf('site') !== -1 || v.indexOf('deployed') !== -1) return 'onsite';
+  if (v.indexOf('available') !== -1 || v.indexOf('standby') !== -1) return 'available';
+  if (v.indexOf('off') !== -1 || v.indexOf('leave') !== -1 || v.indexOf('rest') !== -1 || v.indexOf('inactive') !== -1) return 'offduty';
+  return 'unknown';
+}
+
 app.get('/api/staff/export', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var all = loadAllStaff();
+    var sites = loadSites();
+    var siteName = function(id) {
+      var s = sites.find(function(x) { return x.id === id; });
+      return s ? s.name : (id || '');
+    };
+
     var ids = req.query.ids ? String(req.query.ids).split(',') : null;
     var list = ids ? all.filter(function(s) { return ids.indexOf(s.id) !== -1; }) : all;
+
+    var deployFilter = req.query.deployStatus ? String(req.query.deployStatus) : null;
+    if (deployFilter) list = list.filter(function(s) { return normDeployStatus(s.deployStatus) === deployFilter; });
+
+    var siteFilter = req.query.site ? String(req.query.site) : null;
+    if (siteFilter) list = list.filter(function(s) { return s.currentSite === siteFilter; });
+
+    var overallFilter = req.query.overall ? String(req.query.overall) : null;
+    if (overallFilter) list = list.filter(function(s) { return s.overall === overallFilter; });
+
     var rows = list.map(function(s) {
       var missingItems = [];
       if (!(s.sia && s.sia.number)) missingItems.push('SIA');
@@ -1002,8 +1235,8 @@ app.get('/api/staff/export', requireLogin, requirePermission('staff'), function(
         'Date of Birth': s.dateOfBirth || s.dob || '',
         'NI Number': s.ni || '',
         'Address': s.address || '',
-        'Deploy Status': s.deployStatus || '',
-        'Current Site': s.currentSite || '',
+        'Deploy Status': normDeployStatus(s.deployStatus),
+        'Current Site': s.currentSite ? siteName(s.currentSite) : '',
         'SIA Number': (s.sia && s.sia.number) || 'Missing',
         'SIA Expiry': (s.sia && s.sia.expiry) || 'Missing',
         'CSCS Number': (s.cscs && s.cscs.number) || 'Missing',
@@ -1156,6 +1389,7 @@ app.post('/api/my-profile', requireLogin, requireRole('staff'), function(req, re
       phone: b.phone, address: b.address,
       emergencyContact: b.emergencyContact,
       sia: b.sia, cscs: b.cscs, visa: b.visa, references: b.references,
+      bankDetails: b.bankDetails,
       notes: b.notes,
     });
     emp.pending_submission = pending;
@@ -1240,7 +1474,7 @@ app.post('/api/staff/:id/approve', requireLogin, requirePermission('pending_revi
     var pending = emp.pending_submission;
     if (!pending) return res.status(400).json({ ok: false, error: 'No pending submission for this staff member' });
 
-    ['phone', 'address', 'emergencyContact', 'sia', 'cscs', 'visa', 'references', 'notes'].forEach(function(field) {
+    ['phone', 'address', 'emergencyContact', 'sia', 'cscs', 'visa', 'references', 'bankDetails', 'notes'].forEach(function(field) {
       if (pending[field] !== undefined) emp[field] = pending[field];
     });
 
@@ -1352,8 +1586,107 @@ app.delete('/api/sites/:id', requireLogin, requirePermission('sites'), function(
   try {
     var sites = loadSites().filter(function(s){ return s.id !== req.params.id; });
     saveSites(sites);
+    var docsDir = path.join(SITE_DOCS_DIR, req.params.id);
+    if (fs.existsSync(docsDir)) {
+      try { fs.rmSync(docsDir, { recursive: true, force: true }); } catch (e) {}
+    }
     res.json({ ok: true });
   } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── SITE DOCUMENTATION ─────────────────────────────────────────────────────────
+// Per-site file library: general documentation, presentations, induction packs.
+
+function ensureSiteDocsDir(siteId) {
+  var dir = path.join(SITE_DOCS_DIR, siteId);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function loadSiteDocs(siteId) {
+  return loadJsonFile(path.join(SITE_DOCS_DIR, siteId, 'index.json'));
+}
+
+function saveSiteDocs(siteId, docs) {
+  ensureSiteDocsDir(siteId);
+  fs.writeFileSync(path.join(SITE_DOCS_DIR, siteId, 'index.json'), JSON.stringify(docs, null, 2), 'utf8');
+}
+
+app.get('/api/sites/:id/documents', requireLogin, function(req, res) {
+  res.json({ ok: true, items: loadSiteDocs(req.params.id) });
+});
+
+app.post('/api/sites/:id/documents', requireLogin, requirePermission('sites'), function(req, res) {
+  try {
+    var site = loadSites().find(function(s) { return s.id === req.params.id; });
+    if (!site) return res.status(404).json({ ok: false, error: 'Site not found' });
+
+    ensureSiteDocsDir(req.params.id);
+    var originalName = 'document';
+    try { originalName = decodeURIComponent(req.headers['x-filename'] || 'document'); } catch (e) {}
+    var category = req.headers['x-doc-category'] || 'documentation';
+    var timestamp = Date.now().toString();
+    var ext = path.extname(originalName) || '';
+    var filename = timestamp + ext;
+    var filePath = path.join(SITE_DOCS_DIR, req.params.id, filename);
+
+    var chunks = [];
+    req.on('data', function(c) { chunks.push(c); });
+    req.on('end', function() {
+      try {
+        var buf = Buffer.concat(chunks);
+        fs.writeFileSync(filePath, buf);
+
+        var docs = loadSiteDocs(req.params.id);
+        var doc = { filename: filename, originalName: originalName, category: category, size: buf.length, uploadedAt: new Date().toISOString() };
+        docs.push(doc);
+        saveSiteDocs(req.params.id, docs);
+
+        res.json({ ok: true, doc: doc });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: e.message });
+      }
+    });
+    req.on('error', function(e) {
+      res.status(500).json({ ok: false, error: e.message });
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/sites/:id/documents/:filename', requireLogin, function(req, res) {
+  try {
+    var filename = path.basename(req.params.filename);
+    var filePath = path.join(SITE_DOCS_DIR, req.params.id, filename);
+    if (!fs.existsSync(filePath)) return res.status(404).end();
+
+    var docs = loadSiteDocs(req.params.id);
+    var doc = docs.find(function(d) { return d.filename === filename; });
+    var originalName = doc ? doc.originalName : filename;
+
+    res.setHeader('Content-Disposition', 'inline; filename="' + originalName.replace(/"/g, '\\"') + '"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(filePath));
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+app.delete('/api/sites/:id/documents/:filename', requireLogin, requirePermission('sites'), function(req, res) {
+  try {
+    var filename = path.basename(req.params.filename);
+    var filePath = path.join(SITE_DOCS_DIR, req.params.id, filename);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+    var docs = loadSiteDocs(req.params.id);
+    docs = docs.filter(function(d) { return d.filename !== filename; });
+    saveSiteDocs(req.params.id, docs);
+
+    res.json({ ok: true });
+  } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -2234,6 +2567,13 @@ app.get('/api/vehicles/export', requireLogin, requirePermission('fleet'), functi
     var drivers = loadFleetDrivers();
     var ids = req.query.ids ? String(req.query.ids).split(',') : null;
     var list = ids ? all.filter(function(v) { return ids.indexOf(v.id) !== -1; }) : all;
+
+    var statusFilter = req.query.status ? String(req.query.status) : null;
+    if (statusFilter) list = list.filter(function(v) { return v.status === statusFilter; });
+
+    var typeFilter = req.query.type ? String(req.query.type) : null;
+    if (typeFilter) list = list.filter(function(v) { return v.type === typeFilter; });
+
     var rows = list.map(function(v) {
       var driver = drivers.find(function(d) { return d.id === v.assignedDriverId; });
       return {
@@ -2262,6 +2602,10 @@ app.get('/api/drivers/export', requireLogin, requirePermission('fleet'), functio
     var vehicles = loadVehicles();
     var ids = req.query.ids ? String(req.query.ids).split(',') : null;
     var list = ids ? all.filter(function(d) { return ids.indexOf(d.id) !== -1; }) : all;
+
+    var statusFilter = req.query.status ? String(req.query.status) : null;
+    if (statusFilter) list = list.filter(function(d) { return d.status === statusFilter; });
+
     var rows = list.map(function(d) {
       var vehicle = vehicles.find(function(v) { return v.id === d.assignedVehicleId; });
       return {
@@ -2547,9 +2891,10 @@ app.post('/api/incident-reports', requireLogin, async function(req, res) {
       return res.status(400).json({ ok: false, error: 'incident_type and description are required.' });
     }
     var reporterId = null;
+    var reporterName = null;
     if (!b.is_anonymous && req.user.staff_id) {
-      var empResult = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
-      if (empResult.rows.length) reporterId = empResult.rows[0].id;
+      var empResult = await pgPool.query('SELECT id, name FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
+      if (empResult.rows.length) { reporterId = empResult.rows[0].id; reporterName = empResult.rows[0].name; }
     }
     var result = await pgPool.query(
       `INSERT INTO incident_reports
@@ -2565,6 +2910,12 @@ app.post('/api/incident-reports', requireLogin, async function(req, res) {
         b.description,
       ]
     );
+    createNotification({
+      type: 'incident_report',
+      actorName: b.is_anonymous ? 'Anonymous' : (reporterName || 'A staff member'),
+      summary: 'submitted an incident report',
+      linkIncidentId: result.rows[0].id,
+    });
     res.json({ ok: true, report: result.rows[0] });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -2720,20 +3071,25 @@ app.delete('/api/incident-attachments/:attachId', requireLogin, async function(r
 
 // ── Staff Messages ────────────────────────────────────────────────────────────
 
+var MESSAGES_SELECT = `
+  SELECT sm.id, sm.message, sm.is_read, sm.created_at,
+         u.full_name AS sender_name, u.role AS sender_role,
+         ma.id AS attachment_id, ma.filename AS attachment_filename,
+         ma.original_name AS attachment_original_name,
+         ma.mime_type AS attachment_mime_type, ma.size_bytes AS attachment_size
+  FROM staff_messages sm
+  JOIN users u ON u.id = sm.sender_id
+  LEFT JOIN message_attachments ma ON ma.message_id = sm.id
+  WHERE sm.employee_id = $1
+  ORDER BY sm.created_at ASC
+`;
+
 // Management: view full conversation for a staff member
 app.get('/api/staff/:id/messages', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
     var empId = await resolveEmpId(req.params.id);
     if (!empId) return res.json({ ok: true, messages: [] });
-    var result = await pgPool.query(
-      `SELECT sm.id, sm.message, sm.is_read, sm.created_at,
-              u.full_name AS sender_name, u.role AS sender_role
-       FROM staff_messages sm
-       JOIN users u ON u.id = sm.sender_id
-       WHERE sm.employee_id = $1
-       ORDER BY sm.created_at ASC`,
-      [empId]
-    );
+    var result = await pgPool.query(MESSAGES_SELECT, [empId]);
     // Mark all unread (sent by staff) as read when management opens
     await pgPool.query(
       `UPDATE staff_messages SET is_read = TRUE WHERE employee_id = $1 AND sender_id IN (SELECT id FROM users WHERE role = 'staff') AND is_read = FALSE`,
@@ -2768,15 +3124,7 @@ app.get('/api/my-messages', requireLogin, requireRole('staff'), async function(r
     if (!req.user.staff_id) return res.json({ ok: true, messages: [], unread: 0 });
     var empId = await resolveEmpId(req.user.staff_id);
     if (!empId) return res.json({ ok: true, messages: [], unread: 0 });
-    var result = await pgPool.query(
-      `SELECT sm.id, sm.message, sm.is_read, sm.created_at,
-              u.full_name AS sender_name, u.role AS sender_role
-       FROM staff_messages sm
-       JOIN users u ON u.id = sm.sender_id
-       WHERE sm.employee_id = $1
-       ORDER BY sm.created_at ASC`,
-      [empId]
-    );
+    var result = await pgPool.query(MESSAGES_SELECT, [empId]);
     var unread = result.rows.filter(function(m) { return !m.is_read && m.sender_role !== 'staff'; }).length;
     // Mark management messages as read
     await pgPool.query(
@@ -2793,15 +3141,87 @@ app.get('/api/my-messages', requireLogin, requireRole('staff'), async function(r
 app.post('/api/my-messages', requireLogin, requireRole('staff'), async function(req, res) {
   try {
     if (!req.user.staff_id) return res.status(400).json({ ok: false, error: 'No staff profile linked.' });
-    var empId = await resolveEmpId(req.user.staff_id);
-    if (!empId) return res.status(400).json({ ok: false, error: 'Staff profile not found.' });
+    var empRow = await pgPool.query('SELECT id, name FROM employees WHERE legacy_id = $1', [req.user.staff_id]);
+    if (!empRow.rows.length) return res.status(400).json({ ok: false, error: 'Staff profile not found.' });
+    var empId = empRow.rows[0].id;
     var msg = String((req.body && req.body.message) || '').trim();
     if (!msg) return res.status(400).json({ ok: false, error: 'Message cannot be empty.' });
     var r = await pgPool.query(
       'INSERT INTO staff_messages (employee_id, sender_id, message, is_read) VALUES ($1,$2,$3, FALSE) RETURNING id, message, created_at',
       [empId, req.user.id, msg]
     );
+    createNotification({
+      type: 'message', actorName: empRow.rows[0].name, summary: 'sent you a message',
+      linkStaffId: req.user.staff_id, linkTab: 'messages',
+    });
     res.json({ ok: true, message: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Message Attachments ───────────────────────────────────────────────────────
+var MESSAGE_ATTACH_DIR = path.join(BASE, 'message-attachments');
+if (!fs.existsSync(MESSAGE_ATTACH_DIR)) fs.mkdirSync(MESSAGE_ATTACH_DIR, { recursive: true });
+
+// Attach a file to a message either party just sent (reuses the same
+// image/video/doc whitelist and 100MB cap already defined for incident reports).
+app.post('/api/messages/:messageId/attachment', requireLogin, function(req, res) {
+  var mime = (req.headers['content-type'] || '').split(';')[0].trim();
+  var ext = ALLOWED_ATTACH_MIME[mime];
+  if (!ext) return res.status(400).json({ ok: false, error: 'File type not allowed.' });
+
+  var originalName = decodeURIComponent(req.headers['x-original-name'] || 'attachment' + ext);
+  var filename = crypto.randomUUID() + ext;
+  var dest = path.join(MESSAGE_ATTACH_DIR, filename);
+
+  var chunks = [];
+  var total = 0;
+  req.on('data', function(c) {
+    total += c.length;
+    if (total > MAX_ATTACH_SIZE) { req.destroy(); return res.status(413).json({ ok: false, error: 'File too large (max 100 MB).' }); }
+    chunks.push(c);
+  });
+  req.on('end', async function() {
+    try {
+      var buf = Buffer.concat(chunks);
+      fs.writeFileSync(dest, buf);
+      var r = await pgPool.query(
+        'INSERT INTO message_attachments (message_id, filename, original_name, mime_type, size_bytes) VALUES ($1,$2,$3,$4,$5) RETURNING id, filename, original_name, mime_type, size_bytes, uploaded_at',
+        [req.params.messageId, filename, originalName, mime, buf.length]
+      );
+      res.json({ ok: true, attachment: r.rows[0] });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+  req.on('error', function() { res.status(500).json({ ok: false, error: 'Upload failed.' }); });
+});
+
+app.get('/api/message-attachments/:filename', requireLogin, function(req, res) {
+  try {
+    var safe = path.basename(req.params.filename);
+    var filePath = path.join(MESSAGE_ATTACH_DIR, safe);
+    if (!fs.existsSync(filePath)) return res.status(404).end();
+    res.sendFile(filePath);
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+// Delete a message (and its attachment, if any). Management-only — deliberately
+// not exposed to staff, so a message can't be used to hide something and then
+// erased before a manager has a chance to review it.
+app.delete('/api/messages/:messageId', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var attRes = await pgPool.query('SELECT filename FROM message_attachments WHERE message_id = $1', [req.params.messageId]);
+    attRes.rows.forEach(function(row) {
+      var fp = path.join(MESSAGE_ATTACH_DIR, row.filename);
+      if (fs.existsSync(fp)) fs.unlinkSync(fp);
+    });
+    var r = await pgPool.query('DELETE FROM staff_messages WHERE id = $1', [req.params.messageId]);
+    if (!r.rowCount) return res.status(404).json({ ok: false, error: 'Message not found.' });
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -3014,37 +3434,24 @@ app.get('/api/internal/fleet', requireN8nToken, function(req, res) {
 // ── NOTIFICATIONS ─────────────────────────────────────────────────────────────
 
 // Management: which staff have unread messages (for bell notification list)
-app.get('/api/staff-messages/unread', requireLogin, requirePermission('staff'), async function(req, res) {
+// Management: unseen per-event notifications for the bell — each one clickable,
+// each disappears (seen_at set) once the manager has navigated to it.
+app.get('/api/notifications', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
     var result = await pgPool.query(
-      `SELECT e.legacy_id AS staff_id, e.name AS staff_name, COUNT(*) AS unread_count,
-              MAX(sm.created_at) AS latest_at
-       FROM staff_messages sm
-       JOIN employees e ON e.id = sm.employee_id
-       JOIN users u ON u.id = sm.sender_id
-       WHERE u.role = 'staff' AND sm.is_read = FALSE
-       GROUP BY e.legacy_id, e.name
-       ORDER BY latest_at DESC`
+      `SELECT id, type, actor_name, summary, link_staff_id, link_tab, link_incident_id, created_at
+       FROM notifications WHERE seen_at IS NULL ORDER BY created_at DESC LIMIT 50`
     );
-    res.json({ ok: true, staff: result.rows });
+    res.json({ ok: true, notifications: result.rows });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// Management: count of unread staff messages + open incident reports
-app.get('/api/notifications/count', requireLogin, requirePermission('staff'), async function(req, res) {
+app.post('/api/notifications/:id/seen', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
-    var msgResult = await pgPool.query(
-      `SELECT COUNT(*) AS cnt FROM staff_messages
-       WHERE sender_id IN (SELECT id FROM users WHERE role = 'staff') AND is_read = FALSE`
-    );
-    var incResult = await pgPool.query(
-      `SELECT COUNT(*) AS cnt FROM incident_reports WHERE status = 'open'`
-    );
-    var msgs = parseInt(msgResult.rows[0].cnt) || 0;
-    var incidents = parseInt(incResult.rows[0].cnt) || 0;
-    res.json({ ok: true, messages: msgs, incidents: incidents, total: msgs + incidents });
+    await pgPool.query('UPDATE notifications SET seen_at = NOW() WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

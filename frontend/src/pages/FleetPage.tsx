@@ -8,6 +8,7 @@ import {
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { downloadExport } from "@/lib/utils"
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -67,10 +68,6 @@ const BLANK_DRIVER: Omit<FleetDriver, "id"> = {
 }
 
 const LICENCE_CATS = ["B", "B+E", "C1", "C1+E", "C", "C+E", "D1", "D1+E", "D", "AM"]
-
-function downloadExport(url: string) {
-  window.open(url, "_blank")
-}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -162,6 +159,7 @@ export default function FleetPage() {
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
   const [typeFilter, setTypeFilter] = useState("all")
+  const [alertsOnly, setAlertsOnly] = useState(false)
 
   // Row selection for Excel export
   const [selectedVehicleIds, setSelectedVehicleIds] = useState<Set<string>>(new Set())
@@ -197,6 +195,16 @@ export default function FleetPage() {
     setSearch(""); setSearchParams({ tab })
   }
 
+  function goToAllVehicles() {
+    switchTab("vehicles"); setStatusFilter("all"); setAlertsOnly(false)
+  }
+  function goToActiveVehicles() {
+    switchTab("vehicles"); setStatusFilter("active"); setAlertsOnly(false)
+  }
+  function goToAlertVehicles() {
+    switchTab("vehicles"); setStatusFilter("all"); setAlertsOnly(true)
+  }
+
   function toggleSelected(id: string, setFn: React.Dispatch<React.SetStateAction<Set<string>>>) {
     setFn(prev => {
       const next = new Set(prev)
@@ -218,10 +226,12 @@ export default function FleetPage() {
   function exportFleetReport() {
     if (activeTab === "vehicles") {
       const ids = selectedVehicleIds.size > 0 ? [...selectedVehicleIds] : filteredVehicles.map(v => v.id)
-      downloadExport(`/api/vehicles/export?ids=${ids.join(",")}`)
+      downloadExport(`/api/vehicles/export?ids=${ids.join(",")}`, "GuardTec-Fleet-Report.xlsx")
+        .catch(() => toast.error("Failed to generate report"))
     } else {
       const ids = selectedDriverIds.size > 0 ? [...selectedDriverIds] : filteredDrivers.map(d => d.id)
-      downloadExport(`/api/drivers/export?ids=${ids.join(",")}`)
+      downloadExport(`/api/drivers/export?ids=${ids.join(",")}`, "GuardTec-Drivers-Report.xlsx")
+        .catch(() => toast.error("Failed to generate report"))
     }
   }
 
@@ -274,9 +284,13 @@ export default function FleetPage() {
         .some(s => s?.toLowerCase().includes(q))) return false
       if (statusFilter !== "all" && v.status !== statusFilter) return false
       if (typeFilter !== "all" && v.type !== typeFilter) return false
+      if (alertsOnly) {
+        const d = worstDays([v.mot_expiry, v.insurance_expiry, v.road_tax_expiry])
+        if (d === null || d > 30) return false
+      }
       return true
     })
-  }, [vehicles, search, statusFilter, typeFilter])
+  }, [vehicles, search, statusFilter, typeFilter, alertsOnly])
 
   const filteredDrivers = useMemo(() => {
     const q = search.toLowerCase()
@@ -567,15 +581,15 @@ export default function FleetPage() {
       {/* Stats */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard icon={<Truck className="h-5 w-5" />} label="Total Vehicles" value={stats.total}
-          colorClass="bg-blue-50 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400" />
+          colorClass="bg-blue-50 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400" onClick={goToAllVehicles} />
         <StatCard icon={<CheckCircle2 className="h-5 w-5" />} label="Active Vehicles" value={stats.active}
-          colorClass="bg-green-50 text-green-600 dark:bg-green-950/30 dark:text-green-400" />
+          colorClass="bg-green-50 text-green-600 dark:bg-green-950/30 dark:text-green-400" onClick={goToActiveVehicles} />
         <StatCard icon={<AlertTriangle className="h-5 w-5" />} label="Compliance Alerts" value={stats.alerts}
           colorClass={stats.alerts > 0
             ? "bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400"
-            : "bg-green-50 text-green-600 dark:bg-green-950/30 dark:text-green-400"} />
+            : "bg-green-50 text-green-600 dark:bg-green-950/30 dark:text-green-400"} onClick={goToAlertVehicles} />
         <StatCard icon={<Users className="h-5 w-5" />} label="Fleet Drivers" value={stats.driverCount}
-          colorClass="bg-purple-50 text-purple-600 dark:bg-purple-950/30 dark:text-purple-400" />
+          colorClass="bg-purple-50 text-purple-600 dark:bg-purple-950/30 dark:text-purple-400" onClick={() => switchTab("drivers")} />
       </div>
 
       {/* Tabs */}
@@ -591,6 +605,14 @@ export default function FleetPage() {
           </button>
         ))}
       </div>
+
+      {alertsOnly && (
+        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-400">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          Showing only vehicles needing attention (MOT/insurance/tax due within 30 days)
+          <button onClick={() => setAlertsOnly(false)} className="ml-auto text-xs underline hover:no-underline">Clear</button>
+        </div>
+      )}
 
       {/* Search + filters */}
       <div className="flex flex-wrap gap-3">
@@ -1341,11 +1363,12 @@ function Field({ label, children, className }: { label: string; children: React.
   )
 }
 
-function StatCard({ icon, label, value, colorClass }: {
-  icon: React.ReactNode; label: string; value: number; colorClass: string
+function StatCard({ icon, label, value, colorClass, onClick }: {
+  icon: React.ReactNode; label: string; value: number; colorClass: string; onClick?: () => void
 }) {
   return (
-    <div className="rounded-xl border bg-card p-4 shadow-sm">
+    <div onClick={onClick}
+      className={`rounded-xl border bg-card p-4 shadow-sm ${onClick ? "cursor-pointer transition-colors hover:bg-muted/40" : ""}`}>
       <div className={`inline-flex h-10 w-10 items-center justify-center rounded-lg ${colorClass}`}>{icon}</div>
       <div className="mt-3 text-2xl font-bold">{value}</div>
       <div className="mt-0.5 text-xs text-muted-foreground">{label}</div>
