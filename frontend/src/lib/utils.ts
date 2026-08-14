@@ -35,7 +35,7 @@ export function daysUntil(iso: string | null | undefined): number | null {
   if (!iso) return null
   const d = new Date(iso)
   if (isNaN(d.getTime())) return null
-  return Math.round((d.getTime() - Date.now()) / 86400000)
+  return Math.floor((d.getTime() - Date.now()) / 86400000)
 }
 
 export function fmtDate(iso: string | null | undefined): string {
@@ -43,6 +43,26 @@ export function fmtDate(iso: string | null | undefined): string {
   const parts = iso.slice(0, 10).split("-")
   if (parts.length !== 3) return "—"
   return `${parts[2]}/${parts[1]}/${parts[0]}`
+}
+
+export function initials(name: string) {
+  return name.split(" ").filter(Boolean).map(w => w[0].toUpperCase()).slice(0, 2).join("")
+}
+
+export const AV_COLORS = [
+  "bg-blue-100 text-blue-700",
+  "bg-purple-100 text-purple-700",
+  "bg-teal-100 text-teal-700",
+  "bg-pink-100 text-pink-700",
+  "bg-amber-100 text-amber-800",
+  "bg-orange-100 text-orange-800",
+]
+
+export function formatDate(dateStr?: string): string {
+  if (!dateStr) return "—"
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return dateStr
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
 }
 
 export const discTypeLabels: Record<string, string> = {

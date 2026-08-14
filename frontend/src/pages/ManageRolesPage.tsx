@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
+import { api } from "@/lib/api"
 import {
   Plus, Pencil, Trash2, X, Users, Truck, MapPin,
   ShieldCheck, ClipboardCheck, Lock, UserCog, UserX,
@@ -46,8 +47,7 @@ export default function ManageRolesPage() {
   async function load() {
     setLoading(true)
     try {
-      const r = await fetch("/api/roles", { credentials: "include" })
-      const d = await r.json()
+      const d = await api.get<{ roles: Role[] }>("/api/roles")
       setRoles((d.roles ?? []).filter((role: Role) => role.slug !== "staff"))
     } catch {
       setError("Failed to load roles.")
@@ -75,15 +75,9 @@ export default function ManageRolesPage() {
     if (!name.trim()) { setPanelError("Role name is required."); return }
     setSaving(true); setPanelError("")
     try {
-      const url    = editing ? `/api/roles/${editing.slug}` : "/api/roles"
-      const method = editing ? "PATCH" : "POST"
-      const r = await fetch(url, {
-        method, credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), permissions }),
-      })
-      const d = await r.json()
-      if (!d.ok) { setPanelError(d.error ?? "Failed to save."); setSaving(false); return }
+      const body = { name: name.trim(), permissions }
+      if (editing) await api.patch(`/api/roles/${editing.slug}`, body)
+      else await api.post("/api/roles", body)
       toast.success(editing ? "Role updated" : "Role created")
       await load(); closePanel()
     } catch {
@@ -97,9 +91,7 @@ export default function ManageRolesPage() {
     if (!deleteRole) return
     setDeleting(true); setDeleteError("")
     try {
-      const r = await fetch(`/api/roles/${deleteRole.slug}`, { method: "DELETE", credentials: "include" })
-      const d = await r.json()
-      if (!d.ok) { setDeleteError(d.error ?? "Failed to delete."); setDeleting(false); return }
+      await api.delete(`/api/roles/${deleteRole.slug}`)
       toast.success("Role deleted")
       setDeleteRole(null); await load()
     } catch {

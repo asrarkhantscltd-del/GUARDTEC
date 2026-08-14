@@ -4,6 +4,7 @@ import { useTheme } from "@/contexts/ThemeContext"
 import { Button } from "@/components/ui/button"
 import { LogOut, Camera, Loader2, Sun, Moon, Bell, MessageSquare } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
+import { api } from "@/lib/api"
 
 export default function StaffLayout() {
   const { user, logout } = useAuth()
@@ -16,16 +17,14 @@ export default function StaffLayout() {
   const bellRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    fetch("/api/me/photo", { credentials: "include" })
-      .then(r => r.ok ? r.blob() : null)
+    api.getBlob("/api/me/photo")
       .then(blob => { if (blob) setMyPhotoUrl(URL.createObjectURL(blob)) })
       .catch(() => {})
   }, [])
 
   useEffect(() => {
     function fetchUnread() {
-      fetch("/api/my-messages", { credentials: "include" })
-        .then(r => r.ok ? r.json() : null)
+      api.get<{ ok: boolean; unread: number }>("/api/my-messages")
         .then(d => { if (d?.ok) setUnreadMsgs(d.unread ?? 0) })
         .catch(() => {})
     }
@@ -46,15 +45,9 @@ export default function StaffLayout() {
     if (!file) return
     setUploadingPhoto(true)
     try {
-      await fetch("/api/me/photo", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      })
-      const res = await fetch("/api/me/photo", { credentials: "include" })
-      if (res.ok) {
-        const blob = await res.blob()
+      await api.post("/api/me/photo", file)
+      const blob = await api.getBlob("/api/me/photo")
+      if (blob) {
         if (myPhotoUrl) URL.revokeObjectURL(myPhotoUrl)
         setMyPhotoUrl(URL.createObjectURL(blob))
       }

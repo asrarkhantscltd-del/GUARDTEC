@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
+import { api } from "@/lib/api"
 import {
   ClipboardCheck, Check, X, Loader2, Clock, Camera,
 } from "lucide-react"
@@ -48,8 +49,7 @@ export default function PendingReviewPage() {
   async function load() {
     setLoading(true)
     try {
-      const r = await fetch("/api/staff/pending-review", { credentials: "include" })
-      const d = await r.json()
+      const d = await api.get<{ staff: PendingStaff[] }>("/api/staff/pending-review")
       setList(d.staff ?? [])
     } finally {
       setLoading(false)
@@ -61,8 +61,7 @@ export default function PendingReviewPage() {
   async function approve(id: string) {
     setBusyId(id)
     try {
-      const res = await fetch(`/api/staff/${id}/approve`, { method: "POST", credentials: "include" })
-      if (!res.ok) { toast.error("Failed to approve — please try again"); return }
+      await api.post(`/api/staff/${id}/approve`)
       toast.success("Submission approved")
       await load()
     } catch {
@@ -75,12 +74,7 @@ export default function PendingReviewPage() {
   async function reject(id: string) {
     setBusyId(id)
     try {
-      const res = await fetch(`/api/staff/${id}/reject`, {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason }),
-      })
-      if (!res.ok) { toast.error("Failed to reject — please try again"); return }
+      await api.post(`/api/staff/${id}/reject`, { reason })
       toast.success("Submission rejected")
       setRejectingId(null)
       setReason("")

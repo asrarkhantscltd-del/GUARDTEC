@@ -1,4 +1,6 @@
 import { useEffect, useState, useMemo } from "react"
+import { api, ApiError } from "@/lib/api"
+import { daysUntil, formatDate } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import {
   Search, ArrowUpDown, ArrowUp, ArrowDown,
@@ -21,13 +23,6 @@ type FilterMode = "all" | "expired" | "expiring" | "good"
 type SortKey = "name" | "sia" | "cscs" | "rtw"
 type ComplianceStatus = "expired" | "expiring" | "good" | "missing"
 
-function daysUntil(dateStr?: string): number | null {
-  if (!dateStr) return null
-  const d = new Date(dateStr)
-  if (isNaN(d.getTime())) return null
-  return Math.floor((d.getTime() - Date.now()) / 86400000)
-}
-
 function statusOf(days: number | null): ComplianceStatus {
   if (days === null) return "missing"
   if (days < 0) return "expired"
@@ -40,13 +35,6 @@ function worstStatus(...statuses: ComplianceStatus[]): ComplianceStatus {
   if (statuses.includes("expiring")) return "expiring"
   if (statuses.includes("missing")) return "missing"
   return "good"
-}
-
-function formatDate(dateStr?: string) {
-  if (!dateStr) return "—"
-  const d = new Date(dateStr)
-  if (isNaN(d.getTime())) return dateStr
-  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
 }
 
 function ExpiryCell({ number, expiry }: { number?: string; expiry?: string }) {
@@ -111,17 +99,11 @@ export default function CompliancePage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
 
   useEffect(() => {
-    fetch("/api/staff", { credentials: "include" })
-      .then(r => {
-        if (r.status === 401) throw new Error("unauthorized")
-        if (r.status === 403) throw new Error("forbidden")
-        if (!r.ok) throw new Error("error")
-        return r.json()
-      })
+    api.get<StaffMember[]>("/api/staff")
       .then(data => setStaff(Array.isArray(data) ? data : []))
       .catch(err => {
-        if (err.message === "unauthorized") setError("Your session has expired — please log out and back in.")
-        else if (err.message === "forbidden") setError("Access denied — contact your administrator.")
+        if (err instanceof ApiError && err.status === 401) setError("Your session has expired — please log out and back in.")
+        else if (err instanceof ApiError && err.status === 403) setError("Access denied — contact your administrator.")
         else setError("Could not load compliance data. Check your connection and try again.")
       })
       .finally(() => setLoading(false))

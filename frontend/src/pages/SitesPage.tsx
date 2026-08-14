@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
+import { api } from "@/lib/api"
+import { initials, AV_COLORS } from "@/lib/utils"
 import {
   MapPin, Plus, Pencil, Trash2, X, Building2, Car, Layers,
   Briefcase, Store, MoreHorizontal, Phone, Mail, Package,
@@ -122,14 +124,6 @@ const QUICK_ITEMS = [
 function typeInfo(type: string) {
   return SITE_TYPES.find((t) => t.value === type) ?? SITE_TYPES[SITE_TYPES.length - 1]
 }
-function initials(name: string) {
-  return name.split(" ").filter(Boolean).map((w) => w[0].toUpperCase()).slice(0, 2).join("")
-}
-const AV_COLORS = [
-  "bg-blue-100 text-blue-700", "bg-purple-100 text-purple-700",
-  "bg-teal-100 text-teal-700", "bg-pink-100 text-pink-700", "bg-amber-100 text-amber-800",
-]
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function SitesPage() {
@@ -181,8 +175,7 @@ export default function SitesPage() {
 
   async function loadSites() {
     try {
-      const r = await fetch("/api/sites", { credentials: "include" })
-      const d = await r.json()
+      const d = await api.get<{ sites: Site[] }>("/api/sites")
       setSites(d.sites ?? [])
     } catch {
       toast.error("Failed to load sites")
@@ -208,15 +201,11 @@ export default function SitesPage() {
     if (!siteDraft.name.trim()) { setSiteError("Site name is required"); return }
     setSiteSaving(true); setSiteError("")
     try {
-      const method = editingSite ? "PATCH" : "POST"
-      const url    = editingSite ? `/api/sites/${editingSite.id}` : "/api/sites"
-      const r = await fetch(url, {
-        method, credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(siteDraft),
-      })
-      const d = await r.json()
-      if (!d.ok) { setSiteError(d.error ?? "Failed to save"); setSiteSaving(false); return }
+      if (editingSite) {
+        await api.patch(`/api/sites/${editingSite.id}`, siteDraft)
+      } else {
+        await api.post("/api/sites", siteDraft)
+      }
       await loadSites(); closeSitePanel()
       toast.success(editingSite ? "Site updated" : "Site added")
     } catch { setSiteError("Network error") }
@@ -226,7 +215,7 @@ export default function SitesPage() {
   async function deleteSite() {
     if (!deleteId) return
     try {
-      await fetch(`/api/sites/${deleteId}`, { method: "DELETE", credentials: "include" })
+      await api.delete(`/api/sites/${deleteId}`)
       setDeleteId(null)
       await loadSites()
       toast.success("Site deleted")
@@ -240,15 +229,13 @@ export default function SitesPage() {
 
   async function openWelfare(site: Site) {
     setWelfareSite(site); setWelfareLoading(true)
-    const r = await fetch(`/api/sites/${site.id}/welfare`, { credentials: "include" })
-    const d = await r.json()
+    const d = await api.get<{ items: WelfareItem[] }>(`/api/sites/${site.id}/welfare`)
     setWelfareItems(d.items ?? []); setWelfareLoading(false)
   }
   function closeWelfare() { setWelfareSite(null); setWelfareItems([]) }
 
   async function refreshWelfare(siteId: string) {
-    const r = await fetch(`/api/sites/${siteId}/welfare`, { credentials: "include" })
-    const d = await r.json()
+    const d = await api.get<{ items: WelfareItem[] }>(`/api/sites/${siteId}/welfare`)
     setWelfareItems(d.items ?? [])
   }
 
@@ -278,25 +265,16 @@ export default function SitesPage() {
     if (!welfareSite) return
     setItemSaving(true); setItemError("")
     try {
-      const method = editingItem ? "PATCH" : "POST"
-      const url    = editingItem
-        ? `/api/sites/${welfareSite.id}/welfare/${editingItem.id}`
-        : `/api/sites/${welfareSite.id}/welfare`
-      const r = await fetch(url, {
-        method, credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(itemDraft),
-      })
-      const d = await r.json()
-      if (!d.ok) { setItemError(d.error ?? "Failed to save"); setItemSaving(false); return }
-      const savedId = editingItem ? editingItem.id : d.item?.id
+      let savedId = editingItem?.id
+      if (editingItem) {
+        await api.patch(`/api/sites/${welfareSite.id}/welfare/${editingItem.id}`, itemDraft)
+      } else {
+        const d = await api.post<{ item?: WelfareItem }>(`/api/sites/${welfareSite.id}/welfare`, itemDraft)
+        savedId = d.item?.id
+      }
       // Upload image if one was picked
       if (pendingImage && savedId) {
-        await fetch(`/api/sites/${welfareSite.id}/welfare/${savedId}/image`, {
-          method: "POST", credentials: "include",
-          headers: { "Content-Type": pendingImage.type },
-          body: pendingImage,
-        })
+        await api.post(`/api/sites/${welfareSite.id}/welfare/${savedId}/image`, pendingImage)
       }
       await refreshWelfare(welfareSite.id); closeItemPanel()
       toast.success(editingItem ? "Item updated" : "Item added")
@@ -306,9 +284,7 @@ export default function SitesPage() {
 
   async function removeItemImage(item: WelfareItem) {
     if (!welfareSite) return
-    await fetch(`/api/sites/${welfareSite.id}/welfare/${item.id}/image`, {
-      method: "DELETE", credentials: "include",
-    })
+    await api.delete(`/api/sites/${welfareSite.id}/welfare/${item.id}/image`)
     await refreshWelfare(welfareSite.id)
     toast.success("Image removed")
   }
@@ -316,7 +292,7 @@ export default function SitesPage() {
   async function confirmDeleteItem() {
     if (!deleteItemId || !welfareSite) return
     try {
-      await fetch(`/api/sites/${welfareSite.id}/welfare/${deleteItemId}`, { method: "DELETE", credentials: "include" })
+      await api.delete(`/api/sites/${welfareSite.id}/welfare/${deleteItemId}`)
       setDeleteItemId(null)
       await refreshWelfare(welfareSite.id)
       toast.success("Item removed")
@@ -332,8 +308,7 @@ export default function SitesPage() {
     setDocsSite(site); setDocsLoading(true); setDocError("")
     setUploadDocFiles([]); setUploadDocCategory("documentation")
     try {
-      const r = await fetch(`/api/sites/${site.id}/documents`, { credentials: "include" })
-      const d = await r.json()
+      const d = await api.get<{ items: SiteDoc[] }>(`/api/sites/${site.id}/documents`)
       setDocs(d.items ?? [])
     } finally {
       setDocsLoading(false)
@@ -384,14 +359,9 @@ export default function SitesPage() {
   async function handleDeleteDoc(filename: string) {
     if (!docsSite) return
     try {
-      const res = await fetch(`/api/sites/${docsSite.id}/documents/${filename}`, {
-        method: "DELETE",
-        credentials: "include",
-      })
-      if ((await res.json()).ok) {
-        setDocs(prev => prev.filter(d => d.filename !== filename))
-        toast.success("Document removed")
-      }
+      await api.delete(`/api/sites/${docsSite.id}/documents/${filename}`)
+      setDocs(prev => prev.filter(d => d.filename !== filename))
+      toast.success("Document removed")
     } catch {
       toast.error("Failed to delete document")
     }
@@ -401,12 +371,10 @@ export default function SitesPage() {
 
   async function openStaffPanel(site: Site) {
     setStaffSite(site); setStaffLoading(true); setStaffSearch("")
-    const [assignedRes, allRes] = await Promise.all([
-      fetch(`/api/sites/${site.id}/staff`, { credentials: "include" }),
-      fetch("/api/staff", { credentials: "include" }),
+    const [assignedData, allData] = await Promise.all([
+      api.get<{ staff: AssignedStaff[] }>(`/api/sites/${site.id}/staff`),
+      api.get<AllStaff[]>("/api/staff"),
     ])
-    const assignedData = await assignedRes.json()
-    const allData      = await allRes.json()
     setAssignedStaff(assignedData.staff ?? [])
     setAllStaff(Array.isArray(allData) ? allData : [])
     setStaffLoading(false)
@@ -415,8 +383,7 @@ export default function SitesPage() {
   function closeStaffPanel() { setStaffSite(null); setAssignedStaff([]); setAllStaff([]) }
 
   async function refreshSiteStaff(siteId: string) {
-    const r = await fetch(`/api/sites/${siteId}/staff`, { credentials: "include" })
-    const d = await r.json()
+    const d = await api.get<{ staff: AssignedStaff[] }>(`/api/sites/${siteId}/staff`)
     setAssignedStaff(d.staff ?? [])
     await loadSites()
   }
@@ -424,11 +391,7 @@ export default function SitesPage() {
   async function assignStaff(staffId: string) {
     if (!staffSite) return
     try {
-      await fetch(`/api/sites/${staffSite.id}/staff`, {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ staff_id: staffId }),
-      })
+      await api.post(`/api/sites/${staffSite.id}/staff`, { staff_id: staffId })
       await refreshSiteStaff(staffSite.id)
       toast.success("Staff assigned to site")
     } catch {
@@ -439,7 +402,7 @@ export default function SitesPage() {
   async function confirmRemoveStaff() {
     if (!deleteStaffId || !staffSite) return
     try {
-      await fetch(`/api/sites/${staffSite.id}/staff/${deleteStaffId}`, { method: "DELETE", credentials: "include" })
+      await api.delete(`/api/sites/${staffSite.id}/staff/${deleteStaffId}`)
       setDeleteStaffId(null)
       await refreshSiteStaff(staffSite.id)
       toast.success("Staff removed from site")
@@ -952,7 +915,7 @@ export default function SitesPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <p className="text-sm font-medium">{item.name}</p>
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium capitalize ${CONDITION_COLORS[item.condition] ?? CONDITION_COLORS.good}`}>
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium capitalize ${CONDITION_COLORS[item.condition]}`}>
                               {item.condition}
                             </span>
                           </div>

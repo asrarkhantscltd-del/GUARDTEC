@@ -15,47 +15,12 @@ import {
   BarChart3, FileWarning, UserX, RotateCcw, Archive, Briefcase, Trash2, Download,
 } from "lucide-react"
 import { StatusBadge } from "@/components/ui/status-badge"
+import { makeStagger } from "@/lib/motion"
+import { api } from "@/lib/api"
+import { runBulk, reportBulk } from "@/lib/bulk"
+import { RoleChipPicker, parseRoles } from "@/components/ui/role-picker"
 
-const JOB_ROLES = [
-  "Security Officer", "Door Supervisor", "CCTV Operator", "Patrol Officer",
-  "Mobile Patrol", "Supervisor", "Team Leader", "Key Holder",
-  "Receptionist / Concierge", "Gatesman / Banksman",
-]
-
-function parseRoles(str?: string): string[] {
-  return str ? str.split(",").map(r => r.trim()).filter(Boolean) : []
-}
-function joinRoles(arr: string[]): string { return arr.join(", ") }
-
-function RoleChipPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const selected = parseRoles(value)
-  function toggle(role: string) {
-    const next = selected.includes(role) ? selected.filter(r => r !== role) : [...selected, role]
-    onChange(joinRoles(next))
-  }
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {JOB_ROLES.map(role => (
-        <button key={role} type="button" onClick={() => toggle(role)}
-          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
-            selected.includes(role)
-              ? "border-primary bg-primary text-primary-foreground"
-              : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
-          }`}>
-          {role}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-const stagger = {
-  container: { animate: { transition: { staggerChildren: 0.05 } } },
-  item: {
-    initial: { opacity: 0, y: 16, scale: 0.97 },
-    animate: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.35, ease: [0.16, 1, 0.3, 1] } },
-  },
-}
+const stagger = makeStagger(0.05, 0.35)
 
 interface Site {
   id: string
@@ -80,23 +45,6 @@ function normDeploy(raw?: string): "onsite" | "available" | "offduty" | "unknown
   if (v.includes("available") || v.includes("standby")) return "available"
   if (v.includes("off") || v.includes("leave") || v.includes("rest") || v.includes("inactive")) return "offduty"
   return "unknown"
-}
-
-function DeployBadge({ raw }: { raw?: string }) {
-  const key = normDeploy(raw)
-  const map = {
-    onsite:    { label: "Onsite",    cls: "bg-success/15 text-success border border-success/30",     Icon: MapPin },
-    available: { label: "Available", cls: "bg-warning/15 text-warning border border-warning/30",      Icon: CircleCheck },
-    offduty:   { label: "Off Duty",  cls: "bg-destructive/15 text-destructive border border-destructive/30", Icon: Clock },
-    unknown:   { label: "—",         cls: "",                                                         Icon: Clock },
-  } as const
-  const { label, cls, Icon } = map[key]
-  if (key === "unknown") return <span className="text-xs text-muted-foreground">—</span>
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}>
-      <Icon className="h-3 w-3" />{label}
-    </span>
-  )
 }
 
 function docStatus(iso?: string): "missing" | "expired" | "expiring" | "ok" {
@@ -286,6 +234,13 @@ export default function StaffPage() {
   const [exBulkConfirm, setExBulkConfirm]   = useState<"restore" | "delete" | null>(null)
   const [exBulkWorking, setExBulkWorking]   = useState(false)
 
+  async function reloadStaff() {
+    try {
+      const data = await api.get<StaffMember[]>("/api/staff")
+      setStaff(Array.isArray(data) ? data : [])
+    } catch {}
+  }
+
   function toggleExSelect(id: string) {
     setExSelectedIds(prev => {
       const next = new Set(prev)
@@ -301,46 +256,25 @@ export default function StaffPage() {
 
   async function bulkRestoreEx() {
     setExBulkWorking(true)
-    const ids = [...exSelectedIds]
-    let ok = 0, fail = 0
-    for (const folderId of ids) {
-      try {
-        const r = await fetch("/api/exstaff/restore", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          credentials: "include", body: JSON.stringify({ folderId }),
-        })
-        const d = await r.json()
-        if (d.ok) { ok++; setExStaff(prev => prev.filter(e => e.folderId !== folderId)) }
-        else fail++
-      } catch { fail++ }
-    }
-    if (ok > 0) {
-      fetch("/api/staff", { credentials: "include" })
-        .then(r => r.json()).then(data => setStaff(Array.isArray(data) ? data : [])).catch(() => {})
-    }
+    const result = await runBulk([...exSelectedIds], (folderId) =>
+      api.post("/api/exstaff/restore", { folderId }).then(() => undefined)
+    )
+    const done = new Set(result.succeeded)
+    setExStaff(prev => prev.filter(e => !done.has(e.folderId)))
+    if (result.succeeded.length > 0) await reloadStaff()
     setExBulkWorking(false); setExBulkConfirm(null); setExSelectedIds(new Set())
-    if (ok > 0)   toast.success(`${ok} staff member${ok > 1 ? "s" : ""} restored`)
-    if (fail > 0) toast.error(`${fail} could not be restored`)
+    reportBulk(result, "restored")
   }
 
   async function bulkDeleteEx() {
     setExBulkWorking(true)
-    const ids = [...exSelectedIds]
-    let ok = 0, fail = 0
-    for (const folderId of ids) {
-      try {
-        const r = await fetch("/api/exstaff/permanent", {
-          method: "DELETE", headers: { "Content-Type": "application/json" },
-          credentials: "include", body: JSON.stringify({ folderId }),
-        })
-        const d = await r.json()
-        if (d.ok) { ok++; setExStaff(prev => prev.filter(e => e.folderId !== folderId)) }
-        else fail++
-      } catch { fail++ }
-    }
+    const result = await runBulk([...exSelectedIds], (folderId) =>
+      api.delete("/api/exstaff/permanent", { folderId }).then(() => undefined)
+    )
+    const done = new Set(result.succeeded)
+    setExStaff(prev => prev.filter(e => !done.has(e.folderId)))
     setExBulkWorking(false); setExBulkConfirm(null); setExSelectedIds(new Set())
-    if (ok > 0)   toast.success(`${ok} record${ok > 1 ? "s" : ""} permanently deleted`)
-    if (fail > 0) toast.error(`${fail} could not be deleted`)
+    reportBulk(result, "permanently deleted", "record")
   }
 
   // Quick edit/delete from the Overview rows
@@ -357,9 +291,7 @@ export default function StaffPage() {
   async function quickDelete(staffId: string) {
     setQuickDeleting(true)
     try {
-      const res = await fetch(`/api/staff/${staffId}`, { method: "DELETE", credentials: "include" })
-      const d = await res.json()
-      if (!d.ok) { toast.error(d.error ?? "Failed to move to Ex-Staff"); return }
+      await api.delete(`/api/staff/${staffId}`)
       setStaff((prev) => prev.filter((s) => s.id !== staffId))
       setQuickDeleteId(null)
       toast.success("Moved to Ex-Staff")
@@ -398,13 +330,9 @@ export default function StaffPage() {
   }
 
   useEffect(() => {
-    fetch("/api/staff", { credentials: "include" })
-      .then((r) => r.json())
-      .then((data) => setStaff(Array.isArray(data) ? data : []))
-      .catch(() => {})
+    reloadStaff()
       .finally(() => setLoading(false))
-    fetch("/api/sites", { credentials: "include" })
-      .then((r) => r.json())
+    api.get<{ sites: { id: string; name: string }[] }>("/api/sites")
       .then((d) => setSites(d.sites ?? []))
       .catch(() => {})
   }, [])
@@ -412,8 +340,7 @@ export default function StaffPage() {
   async function openExStaff() {
     setExPanel(true); setExLoading(true); setExError("")
     try {
-      const r = await fetch("/api/exstaff", { credentials: "include" })
-      const d = await r.json()
+      const d = await api.get<ExStaffMember[]>("/api/exstaff")
       setExStaff(Array.isArray(d) ? d : [])
     } catch {
       setExError("Failed to load ex-staff.")
@@ -425,14 +352,7 @@ export default function StaffPage() {
   async function permanentDelete(folderId: string) {
     setPermDeleting(true); setExError("")
     try {
-      const r = await fetch("/api/exstaff/permanent", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ folderId }),
-      })
-      const d = await r.json()
-      if (!d.ok) { setExError(d.error ?? "Delete failed."); return }
+      await api.delete("/api/exstaff/permanent", { folderId })
       setExStaff(prev => prev.filter(e => e.folderId !== folderId))
       setConfirmDeleteId(null)
     } catch {
@@ -445,19 +365,9 @@ export default function StaffPage() {
   async function restoreExStaff(folderId: string) {
     setRestoringId(folderId); setExError("")
     try {
-      const r = await fetch("/api/exstaff/restore", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ folderId }),
-      })
-      const d = await r.json()
-      if (!d.ok) { setExError(d.error ?? "Failed to restore."); return }
+      await api.post("/api/exstaff/restore", { folderId })
       setExStaff((prev) => prev.filter((e) => e.folderId !== folderId))
-      fetch("/api/staff", { credentials: "include" })
-        .then((r2) => r2.json())
-        .then((data) => setStaff(Array.isArray(data) ? data : []))
-        .catch(() => {})
+      await reloadStaff()
     } catch {
       setExError("Network error.")
     } finally {
@@ -475,25 +385,15 @@ export default function StaffPage() {
     if (!addForm.name.trim()) { setAddError("Full name is required."); return }
     setAddSaving(true); setAddError("")
     try {
-      const r = await fetch("/api/staff", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          name:        addForm.name.trim(),
-          jobRole:     addForm.jobRole || undefined,
-          email:       addForm.email.trim() || undefined,
-          phone:       addForm.phone.trim() || undefined,
-          nationality: addForm.nationality.trim() || undefined,
-          overall:     "unknown",
-        }),
+      await api.post("/api/staff", {
+        name:        addForm.name.trim(),
+        jobRole:     addForm.jobRole || undefined,
+        email:       addForm.email.trim() || undefined,
+        phone:       addForm.phone.trim() || undefined,
+        nationality: addForm.nationality.trim() || undefined,
+        overall:     "unknown",
       })
-      const d = await r.json()
-      if (!d.ok) { setAddError(d.error ?? "Failed to add staff."); setAddSaving(false); return }
-      fetch("/api/staff", { credentials: "include" })
-        .then((r2) => r2.json())
-        .then((data) => setStaff(Array.isArray(data) ? data : []))
-        .catch(() => {})
+      await reloadStaff()
       setAddPanel(false)
       toast.success("Staff member added successfully")
     } catch {
@@ -505,13 +405,7 @@ export default function StaffPage() {
 
   async function updateDeploy(staffId: string, deployStatus: string, currentSite?: string) {
     try {
-      const res = await fetch(`/api/staff/${staffId}/deploy`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ deployStatus, currentSite }),
-      })
-      if (!res.ok) { toast.error("Failed to update deployment status"); return }
+      await api.patch(`/api/staff/${staffId}/deploy`, { deployStatus, currentSite })
       setStaff((prev) =>
         prev.map((s) =>
           s.id === staffId
@@ -529,20 +423,10 @@ export default function StaffPage() {
     if (!name) return
     setAddingSite(true)
     try {
-      const r = await fetch("/api/sites", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ name }),
-      })
-      const d = await r.json()
-      if (d.ok) {
-        setSites((prev) => [...prev, d.site])
-        setNewSiteName("")
-        toast.success("Site added")
-      } else {
-        toast.error("Failed to add site")
-      }
+      const d = await api.post<{ site: { id: string; name: string } }>("/api/sites", { name })
+      setSites((prev) => [...prev, d.site])
+      setNewSiteName("")
+      toast.success("Site added")
     } finally {
       setAddingSite(false)
     }
@@ -550,8 +434,7 @@ export default function StaffPage() {
 
   async function removeSite(id: string) {
     try {
-      const res = await fetch(`/api/sites/${id}`, { method: "DELETE", credentials: "include" })
-      if (!res.ok) { toast.error("Failed to remove site"); return }
+      await api.delete(`/api/sites/${id}`)
       setSites((prev) => prev.filter((s) => s.id !== id))
       if (siteFilter === id) setSiteFilter("all")
       toast.success("Site removed")
@@ -560,10 +443,6 @@ export default function StaffPage() {
     }
   }
 
-  function getSiteName(id?: string) {
-    if (!id) return null
-    return sites.find((s) => s.id === id)?.name ?? null
-  }
 
   const filtered = staff.filter((s) => {
     if (!s.name.toLowerCase().includes(search.toLowerCase())) return false
@@ -639,21 +518,14 @@ export default function StaffPage() {
   async function bulkMoveToExStaff() {
     setBulkMoving(true)
     const ids = [...selectedIds]
-    let success = 0
-    let failed = 0
-    for (const id of ids) {
-      try {
-        const res = await fetch(`/api/staff/${id}`, { method: "DELETE", credentials: "include" })
-        const d = await res.json()
-        if (d.ok) { success++; setStaff((prev) => prev.filter((s) => s.id !== id)) }
-        else failed++
-      } catch { failed++ }
-    }
+    const result = await runBulk(ids, async (id) => {
+      await api.delete(`/api/staff/${id}`)
+      setStaff((prev) => prev.filter((s) => s.id !== id))
+    })
+    reportBulk(result, "moved to Ex-Staff")
     setBulkMoving(false)
     setBulkConfirm(false)
     setSelectedIds(new Set())
-    if (success > 0) toast.success(`${success} staff member${success > 1 ? "s" : ""} moved to Ex-Staff`)
-    if (failed > 0)  toast.error(`${failed} could not be moved — check permissions`)
   }
 
   function goToStaff(id: string) { navigate(`/staff/${id}`) }

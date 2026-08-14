@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react"
 import { toast } from "sonner"
 import { discTypeLabels, discTypeCls } from "@/lib/utils"
+import { api, ApiError } from "@/lib/api"
 import {
   ShieldCheck, AlertTriangle, Clock, Camera, ImageOff,
   Loader2, Save, User as UserIcon, Upload, BadgeAlert, Flag, EyeOff, Eye,
@@ -16,8 +17,6 @@ interface EmergencyContact { name?: string; phone?: string; relationship?: strin
 interface Ref { name?: string; company?: string; email?: string; phone?: string; status?: string }
 interface DiscRecord { id: string; incident_date: string; type: string; description: string; action_taken?: string }
 interface IncidentReport { id: string; report_date: string; incident_type: string; status: string; description: string; resolution_notes?: string; attachment_count?: number }
-interface IncidentAttachment { id: string; filename: string; original_name: string; mime_type: string; size_bytes: number }
-
 interface Profile {
   id: string
   name: string
@@ -93,47 +92,37 @@ export default function MyProfilePage() {
   async function load() {
     setLoading(true)
     try {
-      const r = await fetch("/api/my-profile", { credentials: "include" })
-      const d = await r.json()
-      if (d.ok) setProfile(d.profile)
+      const d = await api.get<{ profile: Profile }>("/api/my-profile")
+      setProfile(d.profile)
+    } catch {
     } finally {
       setLoading(false)
     }
   }
 
   async function loadMyHR() {
-    const [discRes, repRes, msgRes, provRes, contractRes] = await Promise.all([
-      fetch("/api/my-disciplinary",      { credentials: "include" }),
-      fetch("/api/my-incident-reports",  { credentials: "include" }),
-      fetch("/api/my-messages",          { credentials: "include" }),
-      fetch("/api/my-provisions",        { credentials: "include" }),
-      fetch("/api/my-contract/info",     { credentials: "include" }),
-    ])
-    const discData     = await discRes.json()
-    const repData      = await repRes.json()
-    const msgData      = await msgRes.json()
-    const provData     = await provRes.json()
-    const contractData = await contractRes.json()
-    if (discData.ok)     setDiscRecords(discData.records)
-    if (repData.ok)      setMyReports(repData.reports)
-    if (msgData.ok)      { setMessages(msgData.messages); setUnreadCount(msgData.unread) }
-    if (provData.ok)     setProvisions(provData.provisions)
-    if (contractData.ok) setContractExists(contractData.exists)
-    setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: "smooth" }), 150)
+    try {
+      const [discData, repData, msgData, provData, contractData] = await Promise.all([
+        api.get<{ records: DiscRecord[] }>("/api/my-disciplinary"),
+        api.get<{ reports: IncidentReport[] }>("/api/my-incident-reports"),
+        api.get<{ messages: typeof messages; unread: number }>("/api/my-messages"),
+        api.get<{ provisions: typeof provisions }>("/api/my-provisions"),
+        api.get<{ exists: boolean }>("/api/my-contract/info"),
+      ])
+      setDiscRecords(discData.records)
+      setMyReports(repData.reports)
+      setMessages(msgData.messages); setUnreadCount(msgData.unread)
+      setProvisions(provData.provisions)
+      setContractExists(contractData.exists)
+      setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: "smooth" }), 150)
+    } catch {}
   }
 
   async function sendMyMessage() {
     if (!msgDraft.trim() && !msgFile) return
     setMsgSending(true)
     try {
-      const res = await fetch("/api/my-messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ message: msgDraft.trim() || `📎 ${msgFile?.name}` }),
-      })
-      const d = await res.json()
-      if (!d.ok) { toast.error(d.error ?? "Failed to send."); return }
+      const d = await api.post<{ message: { id: string } }>("/api/my-messages", { message: msgDraft.trim() || `📎 ${msgFile?.name}` })
       if (msgFile) {
         const buf = await msgFile.arrayBuffer()
         const attRes = await fetch(`/api/messages/${d.message.id}/attachment`, {
@@ -147,6 +136,8 @@ export default function MyProfilePage() {
       }
       setMsgDraft(""); setMsgFile(null)
       await loadMyHR()
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Failed to send.")
     } finally {
       setMsgSending(false)
     }
@@ -165,14 +156,7 @@ export default function MyProfilePage() {
     if (!incidentDraft.description.trim()) { setIncidentError("Description is required."); return }
     setIncidentSaving(true); setIncidentError("")
     try {
-      const res = await fetch("/api/incident-reports", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(incidentDraft),
-      })
-      const d = await res.json()
-      if (!d.ok) { setIncidentError(d.error ?? "Failed to submit."); return }
+      const d = await api.post<{ report: { id: string } }>("/api/incident-reports", incidentDraft)
 
       // Upload attachments one by one
       if (attachFiles.length > 0) {
@@ -194,6 +178,8 @@ export default function MyProfilePage() {
       setAttachFiles([])
       setIncidentDraft({ incident_type: "harassment", report_date: new Date().toISOString().slice(0, 10), site_location: "", against_person: "", description: "", is_anonymous: false })
       await loadMyHR()
+    } catch (err) {
+      setIncidentError(err instanceof ApiError ? err.message : "Failed to submit.")
     } finally {
       setIncidentSaving(false)
     }
@@ -235,29 +221,20 @@ export default function MyProfilePage() {
     setError("")
     setSuccess(false)
     try {
-      const res = await fetch("/api/my-profile", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          phone: profile.phone, address: profile.address,
-          emergencyContact: profile.emergencyContact,
-          bankDetails: profile.bankDetails,
-          sia: profile.sia, cscs: profile.cscs, visa: profile.visa,
-          references: profile.references,
-        }),
+      await api.post("/api/my-profile", {
+        phone: profile.phone, address: profile.address,
+        emergencyContact: profile.emergencyContact,
+        bankDetails: profile.bankDetails,
+        sia: profile.sia, cscs: profile.cscs, visa: profile.visa,
+        references: profile.references,
       })
-      const data = await res.json()
-      if (!data.ok) { setError(data.error || "Failed to submit"); setSaving(false); return }
 
       if (photo) {
-        const photoRes = await fetch("/api/my-profile/photo", {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": photo.type || "application/octet-stream" },
-          body: photo,
-        })
-        if (!photoRes.ok) toast.error("Profile saved but photo upload failed — please try again.")
+        try {
+          await api.post("/api/my-profile/photo", photo)
+        } catch {
+          toast.error("Profile saved but photo upload failed — please try again.")
+        }
       }
 
       await load()
@@ -266,8 +243,8 @@ export default function MyProfilePage() {
       setPhotoPreview(null)
       setSuccess(true)
       setFormExpanded(false)
-    } catch {
-      setError("Network error — please try again.")
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Network error — please try again.")
     } finally {
       setSaving(false)
     }
@@ -988,21 +965,11 @@ function DocUploadRow({ label, hint, staffId, docKey, initialUploaded }: {
   async function handleFile(file: File) {
     setUploading(true)
     try {
-      const res = await fetch(`/api/staff/${staffId}/documents/${docKey}`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      })
-      const data = await res.json()
-      if (data.ok) {
-        setUploaded(true)
-        toast.success(`${label} uploaded`)
-      } else {
-        toast.error(data.error ?? `Failed to upload ${label}`)
-      }
-    } catch {
-      toast.error("Network error — please try again")
+      await api.post(`/api/staff/${staffId}/documents/${docKey}`, file)
+      setUploaded(true)
+      toast.success(`${label} uploaded`)
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Network error — please try again")
     } finally {
       setUploading(false)
       if (inputRef.current) inputRef.current.value = ""
@@ -1058,21 +1025,11 @@ function TrainingCertRow({ label, staffId, courseKey, item }: {
   async function handleFile(file: File) {
     setUploading(true)
     try {
-      const res = await fetch(`/api/staff/${staffId}/training/${courseKey}/certificate`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      })
-      const data = await res.json()
-      if (data.ok) {
-        setUploaded(true)
-        toast.success(`${label} certificate uploaded`)
-      } else {
-        toast.error(data.error ?? `Failed to upload ${label} certificate`)
-      }
-    } catch {
-      toast.error("Network error — please try again")
+      await api.post(`/api/staff/${staffId}/training/${courseKey}/certificate`, file)
+      setUploaded(true)
+      toast.success(`${label} certificate uploaded`)
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Network error — please try again")
     } finally {
       setUploading(false)
       if (inputRef.current) inputRef.current.value = ""

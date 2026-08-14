@@ -4,11 +4,12 @@ import { toast } from "sonner"
 import {
   Truck, Users, AlertTriangle, CheckCircle2, Search, Plus,
   Car, UserCheck, Trash2, X, Save, Loader2, Camera, ImageOff,
-  FileText, Download, Upload, Pencil,
+  FileText, Download, Upload, Pencil, MapPin, CircleParking, KeyRound, Route,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { downloadExport } from "@/lib/utils"
+import { downloadExport, daysUntil, formatDate } from "@/lib/utils"
+import { api } from "@/lib/api"
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,9 @@ interface Vehicle {
   service_due?: string
   mileage?: number
   has_photo?: boolean
+  current_route?: string
+  parking_location?: string
+  key_location?: string
 }
 
 const BLANK_VEHICLE: Omit<Vehicle, "id"> = {
@@ -35,6 +39,7 @@ const BLANK_VEHICLE: Omit<Vehicle, "id"> = {
   colour: "", type: "patrol_car", status: "active", assignedDriverId: "",
   mot_expiry: "", insurance_expiry: "", road_tax_expiry: "", service_due: "",
   mileage: undefined,
+  current_route: "", parking_location: "", key_location: "",
 }
 
 interface FleetDriver {
@@ -70,20 +75,6 @@ const BLANK_DRIVER: Omit<FleetDriver, "id"> = {
 const LICENCE_CATS = ["B", "B+E", "C1", "C1+E", "C", "C+E", "D1", "D1+E", "D", "AM"]
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-
-function daysUntil(dateStr?: string): number | null {
-  if (!dateStr) return null
-  const d = new Date(dateStr)
-  if (isNaN(d.getTime())) return null
-  return Math.floor((d.getTime() - Date.now()) / 86400000)
-}
-
-function formatDate(dateStr?: string): string {
-  if (!dateStr) return "—"
-  const d = new Date(dateStr)
-  if (isNaN(d.getTime())) return dateStr
-  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
-}
 
 function ComplianceChip({ label, dateStr }: { label: string; dateStr?: string }) {
   const days = daysUntil(dateStr)
@@ -148,9 +139,8 @@ const VEHICLE_STATUS_STYLE: Record<string, string> = {
 
 export default function FleetPage() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const tabParam = searchParams.get("tab") as "vehicles" | "drivers" | null
-  // Derived straight from the URL — no separate useState to fall out of sync with it
-  const activeTab: "vehicles" | "drivers" = tabParam ?? "vehicles"
+  const tabParam = searchParams.get("tab") as "vehicles" | "drivers" | "operations" | null
+  const activeTab: "vehicles" | "drivers" | "operations" = tabParam ?? "vehicles"
 
   const [vehicles, setVehicles] = useState<Vehicle[]>([])
   const [drivers, setDrivers] = useState<FleetDriver[]>([])
@@ -191,7 +181,11 @@ export default function FleetPage() {
   const [uploadingDoc, setUploadingDoc] = useState(false)
   const [docError, setDocError] = useState("")
 
-  function switchTab(tab: "vehicles" | "drivers") {
+  // Operations tab state
+  const [opsEditing, setOpsEditing] = useState<Record<string, { current_route: string; parking_location: string; key_location: string }>>({})
+  const [opsSaving, setOpsSaving] = useState<Set<string>>(new Set())
+
+  function switchTab(tab: "vehicles" | "drivers" | "operations") {
     setSearch(""); setSearchParams({ tab })
   }
 
@@ -239,20 +233,19 @@ export default function FleetPage() {
     let cancelled = false
     async function load() {
       try {
-        const [vRes, dRes] = await Promise.all([
-          fetch("/api/vehicles", { credentials: "include" }),
-          fetch("/api/fleet-drivers", { credentials: "include" }),
+        const [vRes, dRes] = await Promise.allSettled([
+          api.get<Vehicle[] | { vehicles?: Vehicle[] }>("/api/vehicles"),
+          api.get<FleetDriver[]>("/api/fleet-drivers"),
         ])
         if (cancelled) return
-        if (vRes.ok) {
-          const data = await vRes.json()
+        if (vRes.status === "fulfilled") {
+          const data = vRes.value
           setVehicles(Array.isArray(data) ? data : (data.vehicles ?? []))
         }
-        if (dRes.ok) {
-          const data = await dRes.json()
-          setDrivers(Array.isArray(data) ? data : [])
+        if (dRes.status === "fulfilled") {
+          setDrivers(Array.isArray(dRes.value) ? dRes.value : [])
         }
-        if (!vRes.ok && !dRes.ok) setApiError(true)
+        if (vRes.status === "rejected" && dRes.status === "rejected") setApiError(true)
       } catch {
         if (!cancelled) setApiError(true)
       } finally {
@@ -307,21 +300,13 @@ export default function FleetPage() {
     e.preventDefault()
     setSaving(true)
     try {
-      const res = await fetch("/api/fleet-drivers", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editDriver),
-      })
-      if (res.ok) {
-        const { driver } = await res.json()
-        setDrivers(prev => [...prev, driver])
-        setShowPanel(false)
-        setEditDriver(BLANK_DRIVER)
-        toast.success("Driver added successfully")
-      } else {
-        toast.error("Failed to add driver")
-      }
+      const { driver } = await api.post<{ driver: FleetDriver }>("/api/fleet-drivers", editDriver)
+      setDrivers(prev => [...prev, driver])
+      setShowPanel(false)
+      setEditDriver(BLANK_DRIVER)
+      toast.success("Driver added successfully")
+    } catch {
+      toast.error("Failed to add driver")
     } finally {
       setSaving(false)
     }
@@ -333,14 +318,12 @@ export default function FleetPage() {
     if (!deleteId) return
     setDeleting(true)
     try {
-      const res = await fetch(`/api/fleet-drivers/${deleteId}`, { method: "DELETE", credentials: "include" })
-      if (res.ok) {
-        setDrivers(prev => prev.filter(d => d.id !== deleteId))
-        setDeleteId(null)
-        toast.success("Driver removed")
-      } else {
-        toast.error("Failed to remove driver")
-      }
+      await api.delete(`/api/fleet-drivers/${deleteId}`)
+      setDrivers(prev => prev.filter(d => d.id !== deleteId))
+      setDeleteId(null)
+      toast.success("Driver removed")
+    } catch {
+      toast.error("Failed to remove driver")
     } finally {
       setDeleting(false)
     }
@@ -365,6 +348,8 @@ export default function FleetPage() {
       mot_expiry: v.mot_expiry ?? "", insurance_expiry: v.insurance_expiry ?? "",
       road_tax_expiry: v.road_tax_expiry ?? "", service_due: v.service_due ?? "",
       mileage: v.mileage,
+      current_route: v.current_route ?? "", parking_location: v.parking_location ?? "",
+      key_location: v.key_location ?? "",
     })
     setVehiclePhoto(null)
     if (vehiclePhotoPreview) URL.revokeObjectURL(vehiclePhotoPreview)
@@ -392,22 +377,10 @@ export default function FleetPage() {
     try {
       if (editingVehicleId) {
         // ── Edit mode ──
-        const res = await fetch(`/api/vehicles/${editingVehicleId}`, {
-          method: "PATCH",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(editVehicle),
-        })
-        if (!res.ok) { toast.error("Failed to update vehicle"); return }
-        const { vehicle } = await res.json()
+        const { vehicle } = await api.patch<{ vehicle: Vehicle }>(`/api/vehicles/${editingVehicleId}`, editVehicle)
 
         if (vehiclePhoto) {
-          await fetch(`/api/vehicles/${editingVehicleId}/photo`, {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": vehiclePhoto.type || "application/octet-stream" },
-            body: vehiclePhoto,
-          })
+          await api.post(`/api/vehicles/${editingVehicleId}/photo`, vehiclePhoto)
           vehicle.has_photo = true
         }
 
@@ -416,22 +389,10 @@ export default function FleetPage() {
         toast.success("Vehicle updated")
       } else {
         // ── Add mode ──
-        const res = await fetch("/api/vehicles", {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(editVehicle),
-        })
-        if (!res.ok) { toast.error("Failed to add vehicle"); return }
-        const { vehicle } = await res.json()
+        const { vehicle } = await api.post<{ vehicle: Vehicle }>("/api/vehicles", editVehicle)
 
         if (vehiclePhoto) {
-          await fetch(`/api/vehicles/${vehicle.id}/photo`, {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": vehiclePhoto.type || "application/octet-stream" },
-            body: vehiclePhoto,
-          })
+          await api.post(`/api/vehicles/${vehicle.id}/photo`, vehiclePhoto)
           vehicle.has_photo = true
         }
 
@@ -439,6 +400,8 @@ export default function FleetPage() {
         closeVehiclePanel()
         toast.success("Vehicle added successfully")
       }
+    } catch {
+      toast.error(editingVehicleId ? "Failed to update vehicle" : "Failed to add vehicle")
     } finally {
       setSavingVehicle(false)
     }
@@ -450,14 +413,12 @@ export default function FleetPage() {
     if (!deleteVehicleId) return
     setDeletingVehicle(true)
     try {
-      const res = await fetch(`/api/vehicles/${deleteVehicleId}`, { method: "DELETE", credentials: "include" })
-      if (res.ok) {
-        setVehicles(prev => prev.filter(v => v.id !== deleteVehicleId))
-        setDeleteVehicleId(null)
-        toast.success("Vehicle removed")
-      } else {
-        toast.error("Failed to remove vehicle")
-      }
+      await api.delete(`/api/vehicles/${deleteVehicleId}`)
+      setVehicles(prev => prev.filter(v => v.id !== deleteVehicleId))
+      setDeleteVehicleId(null)
+      toast.success("Vehicle removed")
+    } catch {
+      toast.error("Failed to remove vehicle")
     } finally {
       setDeletingVehicle(false)
     }
@@ -473,8 +434,8 @@ export default function FleetPage() {
     setDocs([])
     setDocsLoading(true)
     try {
-      const res = await fetch(`/api/vehicles/${vehicleId}/docs`, { credentials: "include" })
-      if (res.ok) setDocs(await res.json())
+      setDocs(await api.get<VehicleDoc[]>(`/api/vehicles/${vehicleId}/docs`))
+    } catch {
     } finally {
       setDocsLoading(false)
     }
@@ -517,11 +478,8 @@ export default function FleetPage() {
   async function handleDeleteDoc(filename: string) {
     if (!docsVehicleId) return
     try {
-      const res = await fetch(`/api/vehicles/${docsVehicleId}/docs/${filename}`, {
-        method: "DELETE",
-        credentials: "include",
-      })
-      if ((await res.json()).ok) {
+      const data = await api.delete<{ ok: boolean }>(`/api/vehicles/${docsVehicleId}/docs/${filename}`)
+      if (data.ok) {
         setDocs(prev => prev.filter(d => d.filename !== filename))
       }
     } catch {
@@ -541,6 +499,39 @@ export default function FleetPage() {
     })
   }
 
+  // ── Operations helpers ────────────────────────────────────────────────────────
+
+  function startOpsEdit(v: Vehicle) {
+    setOpsEditing(prev => ({
+      ...prev,
+      [v.id]: {
+        current_route: v.current_route ?? "",
+        parking_location: v.parking_location ?? "",
+        key_location: v.key_location ?? "",
+      },
+    }))
+  }
+
+  function cancelOpsEdit(id: string) {
+    setOpsEditing(prev => { const next = { ...prev }; delete next[id]; return next })
+  }
+
+  async function saveOps(id: string) {
+    const draft = opsEditing[id]
+    if (!draft) return
+    setOpsSaving(prev => new Set(prev).add(id))
+    try {
+      const { vehicle } = await api.patch<{ vehicle: Vehicle }>(`/api/vehicles/${id}`, draft)
+      setVehicles(prev => prev.map(v => v.id === id ? vehicle : v))
+      cancelOpsEdit(id)
+      toast.success("Operations updated")
+    } catch {
+      toast.error("Failed to update")
+    } finally {
+      setOpsSaving(prev => { const n = new Set(prev); n.delete(id); return n })
+    }
+  }
+
   if (loading) return (
     <div className="flex h-64 items-center justify-center">
       <div className="text-center text-muted-foreground">
@@ -549,6 +540,8 @@ export default function FleetPage() {
       </div>
     </div>
   )
+
+  const docsVehicle = vehicles.find(v => v.id === docsVehicleId)
 
   return (
     <div className="space-y-6">
@@ -594,14 +587,14 @@ export default function FleetPage() {
 
       {/* Tabs */}
       <div className="flex w-fit gap-0 rounded-lg border bg-muted/40 p-1">
-        {(["vehicles", "drivers"] as const).map(tab => (
+        {(["vehicles", "drivers", "operations"] as const).map(tab => (
           <button key={tab} onClick={() => switchTab(tab)}
             className={`flex items-center gap-1.5 rounded-md px-5 py-1.5 text-sm font-medium transition-all ${
               activeTab === tab ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
             }`}>
-            {tab === "vehicles"
-              ? <><Car className="h-3.5 w-3.5" />Vehicles ({vehicles.length})</>
-              : <><UserCheck className="h-3.5 w-3.5" />Drivers ({drivers.length})</>}
+            {tab === "vehicles" && <><Car className="h-3.5 w-3.5" />Vehicles ({vehicles.length})</>}
+            {tab === "drivers" && <><UserCheck className="h-3.5 w-3.5" />Drivers ({drivers.length})</>}
+            {tab === "operations" && <><Route className="h-3.5 w-3.5" />Operations</>}
           </button>
         ))}
       </div>
@@ -614,8 +607,8 @@ export default function FleetPage() {
         </div>
       )}
 
-      {/* Search + filters */}
-      <div className="flex flex-wrap gap-3">
+      {/* Search + filters (hidden on Operations tab) */}
+      {activeTab !== "operations" && <div className="flex flex-wrap gap-3">
         <div className="relative min-w-48 flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder={activeTab === "vehicles" ? "Search reg, make, model…" : "Search by name or licence number…"}
@@ -651,7 +644,7 @@ export default function FleetPage() {
             ? (selectedVehicleIds.size > 0 ? `Export Selected (${selectedVehicleIds.size})` : "Export Report")
             : (selectedDriverIds.size > 0 ? `Export Selected (${selectedDriverIds.size})` : "Export Report")}
         </button>
-      </div>
+      </div>}
 
       {/* Vehicles tab */}
       {activeTab === "vehicles" && (
@@ -716,6 +709,137 @@ export default function FleetPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+      )}
+
+      {/* Operations tab */}
+      {activeTab === "operations" && (
+        vehicles.length === 0
+          ? <EmptyState icon={<Route className="h-12 w-12" />}
+              title="No vehicles on record"
+              description="Add vehicles first to track their operations." />
+          : <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Track where each vehicle is operating, where it is parked, and where the keys are stored. Click Edit to update.
+              </p>
+              <div className="overflow-x-auto rounded-xl border">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">Vehicle</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">Status</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">Operator / Driver</th>
+                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">
+                        <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-blue-500" />Current Route</span>
+                      </th>
+                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">
+                        <span className="inline-flex items-center gap-1"><CircleParking className="h-3.5 w-3.5 text-amber-500" />Parked At</span>
+                      </th>
+                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">
+                        <span className="inline-flex items-center gap-1"><KeyRound className="h-3.5 w-3.5 text-green-500" />Key Location</span>
+                      </th>
+                      <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {vehicles.map(v => {
+                      const driver = v.assignedDriverId ? drivers.find(d => d.id === v.assignedDriverId) : null
+                      const draft = opsEditing[v.id]
+                      const isSaving = opsSaving.has(v.id)
+
+                      return (
+                        <tr key={v.id} className={`border-b transition-colors hover:bg-muted/30 ${draft ? "bg-blue-50/40 dark:bg-blue-950/10" : ""}`}>
+                          {/* Vehicle */}
+                          <td className="px-4 py-3">
+                            <div className="font-bold tracking-wider">{v.registration}</div>
+                            <div className="text-[11px] text-muted-foreground">{v.make} {v.model}</div>
+                            <div className="text-[10px] text-muted-foreground">{VEHICLE_TYPE_LABELS[v.type] ?? v.type}</div>
+                          </td>
+
+                          {/* Status */}
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${VEHICLE_STATUS_STYLE[v.status] ?? VEHICLE_STATUS_STYLE.active}`}>
+                              {v.status.replace("_", " ")}
+                            </span>
+                          </td>
+
+                          {/* Driver */}
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            {driver ? (
+                              <div className="flex items-center gap-2">
+                                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
+                                  {driver.first_name?.[0] ?? "?"}{driver.last_name?.[0] ?? ""}
+                                </div>
+                                <div>
+                                  <div className="text-xs font-medium">{driver.first_name} {driver.last_name}</div>
+                                  {driver.phone && <div className="text-[10px] text-muted-foreground">{driver.phone}</div>}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">Unassigned</span>
+                            )}
+                          </td>
+
+                          {/* Route */}
+                          <td className="px-4 py-3">
+                            {draft ? (
+                              <Input value={draft.current_route} placeholder="e.g. Canary Wharf shuttle"
+                                className="h-8 text-xs"
+                                onChange={e => setOpsEditing(p => ({ ...p, [v.id]: { ...p[v.id], current_route: e.target.value } }))} />
+                            ) : (
+                              <span className="text-xs">{v.current_route || <span className="text-muted-foreground">—</span>}</span>
+                            )}
+                          </td>
+
+                          {/* Parking */}
+                          <td className="px-4 py-3">
+                            {draft ? (
+                              <Input value={draft.parking_location} placeholder="e.g. Bay 3, SE1 depot"
+                                className="h-8 text-xs"
+                                onChange={e => setOpsEditing(p => ({ ...p, [v.id]: { ...p[v.id], parking_location: e.target.value } }))} />
+                            ) : (
+                              <span className="text-xs">{v.parking_location || <span className="text-muted-foreground">—</span>}</span>
+                            )}
+                          </td>
+
+                          {/* Keys */}
+                          <td className="px-4 py-3">
+                            {draft ? (
+                              <Input value={draft.key_location} placeholder="e.g. Key safe #2"
+                                className="h-8 text-xs"
+                                onChange={e => setOpsEditing(p => ({ ...p, [v.id]: { ...p[v.id], key_location: e.target.value } }))} />
+                            ) : (
+                              <span className="text-xs">{v.key_location || <span className="text-muted-foreground">—</span>}</span>
+                            )}
+                          </td>
+
+                          {/* Actions */}
+                          <td className="px-4 py-3 text-right whitespace-nowrap">
+                            {draft ? (
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button onClick={() => saveOps(v.id)} disabled={isSaving}
+                                  className="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50">
+                                  {isSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                                  Save
+                                </button>
+                                <button onClick={() => cancelOpsEdit(v.id)}
+                                  className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted transition-colors">
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button onClick={() => startOpsEdit(v)}
+                                className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+                                <Pencil className="h-3 w-3" />Edit
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
       )}
 
@@ -1038,6 +1162,7 @@ export default function FleetPage() {
                     </Field>
                   </div>
                 </Section>
+
               </div>
 
               {/* Footer */}
@@ -1062,11 +1187,11 @@ export default function FleetPage() {
               <div>
                 <h2 className="text-lg font-semibold">Vehicle Documents</h2>
                 <p className="text-xs text-muted-foreground">
-                  {vehicles.find(v => v.id === docsVehicleId)?.registration ?? ""}
+                  {docsVehicle?.registration ?? ""}
                   {" · "}
-                  {vehicles.find(v => v.id === docsVehicleId)?.make ?? ""}
+                  {docsVehicle?.make ?? ""}
                   {" "}
-                  {vehicles.find(v => v.id === docsVehicleId)?.model ?? ""}
+                  {docsVehicle?.model ?? ""}
                 </p>
               </div>
               <button onClick={closeDocsPanel} className="rounded-md p-1.5 hover:bg-muted transition-colors">
@@ -1252,6 +1377,29 @@ function VehicleCard({ v, drivers, selected, onToggleSelect, onEdit, onDelete, o
           <ComplianceCell label="Road Tax" dateStr={v.road_tax_expiry} />
           <ComplianceCell label="Service Due" dateStr={v.service_due} />
         </div>
+
+        {(v.current_route || v.parking_location || v.key_location) && (
+          <div className="mb-3 space-y-1.5 border-t pt-3">
+            {v.current_route && (
+              <div className="flex items-start gap-2 text-xs">
+                <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-500" />
+                <div><span className="font-medium text-muted-foreground">Route:</span> {v.current_route}</div>
+              </div>
+            )}
+            {v.parking_location && (
+              <div className="flex items-start gap-2 text-xs">
+                <CircleParking className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                <div><span className="font-medium text-muted-foreground">Parked:</span> {v.parking_location}</div>
+              </div>
+            )}
+            {v.key_location && (
+              <div className="flex items-start gap-2 text-xs">
+                <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-500" />
+                <div><span className="font-medium text-muted-foreground">Keys:</span> {v.key_location}</div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center gap-2 border-t pt-3">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">
