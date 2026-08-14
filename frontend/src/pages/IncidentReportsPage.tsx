@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
+import { api } from "@/lib/api"
+import { fmtDate } from "@/lib/utils"
 import {
   Flag, Loader2, ChevronDown, ChevronUp, Paperclip,
   FileVideo, FileText, Image as ImageIcon, Download,
@@ -29,10 +31,6 @@ interface Report {
   created_at: string
   attachment_count: number
   attachments?: Attachment[]
-}
-
-function fmtDate(iso: string) {
-  return iso.slice(0, 10).split("-").reverse().join("/")
 }
 
 function fmtBytes(n: number) {
@@ -72,8 +70,7 @@ export default function IncidentReportsPage() {
   async function load() {
     setLoading(true)
     try {
-      const r = await fetch("/api/incident-reports", { credentials: "include" })
-      const d = await r.json()
+      const d = await api.get<{ ok: boolean; reports: Report[] }>("/api/incident-reports")
       if (d.ok) setReports(d.reports)
     } finally {
       setLoading(false)
@@ -86,8 +83,7 @@ export default function IncidentReportsPage() {
     if (next) {
       const rep = reports.find(r => r.id === id)
       if (rep && !rep.attachments) {
-        const r = await fetch(`/api/incident-reports/${id}/attachments`, { credentials: "include" })
-        const d = await r.json()
+        const d = await api.get<{ ok: boolean; attachments: Attachment[] }>(`/api/incident-reports/${id}/attachments`)
         if (d.ok) setReports(p => p.map(x => x.id === id ? { ...x, attachments: d.attachments } : x))
       }
     }
@@ -96,16 +92,11 @@ export default function IncidentReportsPage() {
   async function updateStatus(id: string, status: string, notes: string) {
     setUpdating(id)
     try {
-      const r = await fetch(`/api/incident-reports/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ status, resolution_notes: notes }),
-      })
-      const d = await r.json()
-      if (!d.ok) { toast.error(d.error ?? "Failed to update."); return }
+      await api.patch(`/api/incident-reports/${id}`, { status, resolution_notes: notes })
       toast.success("Report updated.")
       await load()
+    } catch {
+      toast.error("Failed to update.")
     } finally {
       setUpdating(null)
     }

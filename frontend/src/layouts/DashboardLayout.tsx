@@ -5,6 +5,7 @@ import { useAuth, type Permissions } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 import { Button } from "@/components/ui/button"
 import { downloadExport } from "@/lib/utils"
+import { api } from "@/lib/api"
 import {
   LayoutDashboard, Users, Truck, ShieldCheck, LogOut,
   Menu, X, MapPin,
@@ -84,23 +85,20 @@ export default function DashboardLayout() {
   }
 
   useEffect(() => {
-    fetch("/api/me/photo", { credentials: "include" })
-      .then(r => r.ok ? r.blob() : null)
+    api.getBlob("/api/me/photo")
       .then(blob => { if (blob) setMyPhotoUrl(URL.createObjectURL(blob)) })
       .catch(() => {})
   }, [])
 
   useEffect(() => {
-    fetch("/api/compliance/alerts", { credentials: "include" })
-      .then(r => r.ok ? r.json() : null)
+    api.get<{ total: number }>("/api/compliance/alerts")
       .then(d => { if (d) setAlertCount(d.total ?? 0) })
       .catch(() => {})
   }, [])
 
   useEffect(() => {
     function fetchNotifs() {
-      fetch("/api/notifications", { credentials: "include" })
-        .then(r => r.ok ? r.json() : null)
+      api.get<{ ok: boolean; notifications: typeof notifications }>("/api/notifications")
         .then(d => { if (d?.ok) setNotifications(d.notifications ?? []) })
         .catch(() => {})
     }
@@ -111,7 +109,7 @@ export default function DashboardLayout() {
 
   function goToNotification(n: { id: string; type: string; link_staff_id?: string; link_tab?: string; link_incident_id?: string }) {
     setNotifications(prev => prev.filter(x => x.id !== n.id))
-    fetch(`/api/notifications/${n.id}/seen`, { method: "POST", credentials: "include" }).catch(() => {})
+    api.post(`/api/notifications/${n.id}/seen`).catch(() => {})
     setShowAlerts(false)
     if (n.type === "incident_report") navigate("/incident-reports")
     else if (n.link_staff_id) navigate(`/staff/${n.link_staff_id}${n.link_tab ? `?tab=${n.link_tab}` : ""}`)
@@ -119,8 +117,7 @@ export default function DashboardLayout() {
 
   useEffect(() => {
     if (reportType !== "staff" || reportSites.length > 0) return
-    fetch("/api/sites", { credentials: "include" })
-      .then(r => r.ok ? r.json() : null)
+    api.get<{ sites: { id: string; name: string }[] }>("/api/sites")
       .then(d => { if (d?.sites) setReportSites(d.sites) })
       .catch(() => {})
   }, [reportType, reportSites.length])
@@ -198,15 +195,9 @@ export default function DashboardLayout() {
     if (!file) return
     setUploadingPhoto(true)
     try {
-      await fetch("/api/me/photo", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      })
-      const res = await fetch("/api/me/photo", { credentials: "include" })
-      if (res.ok) {
-        const blob = await res.blob()
+      await api.post("/api/me/photo", file)
+      const blob = await api.getBlob("/api/me/photo")
+      if (blob) {
         if (myPhotoUrl) URL.revokeObjectURL(myPhotoUrl)
         setMyPhotoUrl(URL.createObjectURL(blob))
       }

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react"
 import { Link, useNavigate } from "react-router-dom"
+import { api } from "@/lib/api"
 import { useAuth } from "@/contexts/AuthContext"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -28,14 +29,7 @@ export default function RegisterPage() {
 
     setSubmitting(true)
     try {
-      const res = await fetch("/api/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ registration_code: code, username, password }),
-      })
-      const data = await res.json()
-      if (!res.ok || !data.ok) throw new Error(data.error || "Registration failed")
+      await api.post("/api/register", { registration_code: code, username, password })
 
       await refreshUser()
       navigate("/", { replace: true })

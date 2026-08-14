@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
 import { toast } from "sonner"
+import { api } from "@/lib/api"
+import { initials, AV_COLORS } from "@/lib/utils"
 import { useAuth } from "@/contexts/AuthContext"
 import {
   Plus, Pencil, Trash2, X, KeyRound, ShieldCheck,
@@ -54,23 +56,12 @@ function roleColor(slug: string) {
   return FALLBACK_ROLE_COLORS[hash % FALLBACK_ROLE_COLORS.length]
 }
 
-function initials(name: string) {
-  return name.split(" ").filter(Boolean).map((w) => w[0].toUpperCase()).slice(0, 2).join("")
-}
-
-const AV_COLORS = [
-  "bg-blue-100 text-blue-700", "bg-purple-100 text-purple-700",
-  "bg-teal-100 text-teal-700", "bg-pink-100 text-pink-700",
-  "bg-amber-100 text-amber-800", "bg-orange-100 text-orange-800",
-]
-
 function UserPhotoCircle({ userId, name, colorClass, onClick }: {
   userId: string; name: string; colorClass: string; onClick: () => void
 }) {
   const [src, setSrc] = useState<string | null>(null)
   useEffect(() => {
-    fetch(`/api/users/${userId}/photo`, { credentials: "include" })
-      .then(r => r.ok ? r.blob() : null)
+    api.getBlob(`/api/users/${userId}/photo`)
       .then(blob => { if (blob) setSrc(URL.createObjectURL(blob)) })
       .catch(() => {})
   }, [userId])
@@ -130,8 +121,8 @@ export default function UsersPage() {
   async function openViewPhoto(u: PortalUser) {
     setViewUser(u); setViewPhotoUrl(null); setViewPhotoLoading(true)
     try {
-      const res = await fetch(`/api/users/${u.id}/photo`, { credentials: "include" })
-      if (res.ok) setViewPhotoUrl(URL.createObjectURL(await res.blob()))
+      const blob = await api.getBlob(`/api/users/${u.id}/photo`)
+      if (blob) setViewPhotoUrl(URL.createObjectURL(blob))
     } finally { setViewPhotoLoading(false) }
   }
 
@@ -145,12 +136,10 @@ export default function UsersPage() {
   async function loadUsers() {
     setLoading(true)
     try {
-      const [uRes, rRes] = await Promise.all([
-        fetch("/api/users", { credentials: "include" }),
-        fetch("/api/roles", { credentials: "include" }),
+      const [uData, rData] = await Promise.all([
+        api.get<{ users: PortalUser[] }>("/api/users"),
+        api.get<{ roles: RoleOption[] }>("/api/roles"),
       ])
-      const uData = await uRes.json()
-      const rData = await rRes.json()
       setUsers(uData.users ?? [])
       setRoleOptions(rData.roles ?? [])
     } catch {
@@ -180,8 +169,6 @@ export default function UsersPage() {
     if (!editing && draft.password.length < 6) { setPanelError("Password must be at least 6 characters."); return }
     setSaving(true); setPanelError("")
     try {
-      const method = editing ? "PATCH" : "POST"
-      const url    = editing ? `/api/users/${editing.id}` : "/api/users"
       const body: Record<string, unknown> = {
         full_name: draft.full_name.trim(),
         username:  draft.username.trim(),
@@ -190,13 +177,8 @@ export default function UsersPage() {
         is_active: draft.is_active,
       }
       if (!editing) body.password = draft.password
-      const r = await fetch(url, {
-        method, credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      })
-      const d = await r.json()
-      if (!d.ok) { setPanelError(d.error ?? "Failed to save."); setSaving(false); return }
+      if (editing) await api.patch(`/api/users/${editing.id}`, body)
+      else await api.post("/api/users", body)
       toast.success(editing ? "User updated" : "User created")
       await loadUsers(); closePanel()
     } catch { setPanelError("Network error.") }
@@ -212,13 +194,7 @@ export default function UsersPage() {
     if (newPassword.length < 6) { setResetError("Password must be at least 6 characters."); return }
     setResetting(true); setResetError("")
     try {
-      const r = await fetch(`/api/users/${resetUser!.id}/reset-password`, {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: newPassword }),
-      })
-      const d = await r.json()
-      if (!d.ok) { setResetError(d.error ?? "Failed to reset password."); setResetting(false); return }
+      await api.post(`/api/users/${resetUser!.id}/reset-password`, { password: newPassword })
       toast.success("Password reset successfully")
       closeReset()
     } catch { setResetError("Network error.") }
@@ -230,8 +206,7 @@ export default function UsersPage() {
   async function confirmDelete() {
     if (!deleteUser) return
     try {
-      const res = await fetch(`/api/users/${deleteUser.id}`, { method: "DELETE", credentials: "include" })
-      if (!res.ok) { toast.error("Failed to delete user — please try again"); return }
+      await api.delete(`/api/users/${deleteUser.id}`)
       toast.success("User account deleted")
       setDeleteUser(null); await loadUsers()
     } catch {

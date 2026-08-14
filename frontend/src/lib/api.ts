@@ -59,7 +59,9 @@ export const api = {
   post:   <T = unknown>(url: string, body?: unknown) => request<T>("POST", url, body),
   put:    <T = unknown>(url: string, body?: unknown) => request<T>("PUT", url, body),
   patch:  <T = unknown>(url: string, body?: unknown) => request<T>("PATCH", url, body),
-  delete: <T = unknown>(url: string) => request<T>("DELETE", url),
+  // Some DELETE routes identify the target in the body rather than the path
+  // (e.g. /api/exstaff/permanent takes { folderId }), so a body is allowed.
+  delete: <T = unknown>(url: string, body?: unknown) => request<T>("DELETE", url, body),
 
   // Binary downloads (profile photos, document scans) never carry a JSON
   // body, so they get their own path — same 401 handling, no JSON parsing.

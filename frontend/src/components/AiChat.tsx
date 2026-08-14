@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react"
 import { Bot, X, Send, Sparkles, RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { api } from "@/lib/api"
 
 interface Message {
   id: string
@@ -40,13 +41,7 @@ export default function AiChat() {
     setMessages(prev => [...prev, { id: Date.now().toString(), role: "user", content: msg }])
     setLoading(true)
     try {
-      const res = await fetch("/api/ai-chat", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg }),
-      })
-      const data = await res.json()
+      const data = await api.post<{ answer?: string }>("/api/ai-chat", { message: msg })
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         role: "assistant",

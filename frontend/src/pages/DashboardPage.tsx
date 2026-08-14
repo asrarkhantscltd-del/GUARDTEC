@@ -3,20 +3,16 @@ import { useTheme } from "@/contexts/ThemeContext"
 import { useNavigate, useOutletContext } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { api } from "@/lib/api"
+import { initials, AV_COLORS } from "@/lib/utils"
 import {
   Users, ShieldCheck, AlertTriangle, Truck, XCircle, MapPin, UserCheck,
   ArrowUpRight, Sparkles, ChevronRight,
 } from "lucide-react"
 import { ShaderGradientCanvas, ShaderGradient } from "@shadergradient/react"
 import { motion } from "framer-motion"
+import { makeStagger } from "@/lib/motion"
 
-const stagger = {
-  container: { animate: { transition: { staggerChildren: 0.07 } } },
-  item: {
-    initial: { opacity: 0, y: 20, scale: 0.96 },
-    animate: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.4, ease: [0.16, 1, 0.3, 1] } },
-  },
-}
+const stagger = makeStagger(0.07, 0.4)
 
 interface DashboardStats {
   totalStaff: number
@@ -64,23 +60,6 @@ const TYPE_COLORS: Record<string, string> = {
   corporate: "bg-gray-100 text-gray-700",
   other: "bg-gray-100 text-gray-700",
 }
-
-function initials(name: string) {
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .map((w) => w[0].toUpperCase())
-    .slice(0, 2)
-    .join("")
-}
-
-const AV_COLORS = [
-  "bg-blue-100 text-blue-700",
-  "bg-purple-100 text-purple-700",
-  "bg-teal-100 text-teal-700",
-  "bg-pink-100 text-pink-700",
-  "bg-amber-100 text-amber-800",
-]
 
 function greeting() {
   const h = new Date().getHours()
