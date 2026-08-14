@@ -47,6 +47,15 @@ const TYPE_LABELS: Record<string, string> = {
   other: "Other",
 }
 
+const TYPE_STRIP: Record<string, string> = {
+  construction: "#f59e0b",
+  parking:      "#3b82f6",
+  events:       "#a855f7",
+  retail:       "#14b8a6",
+  corporate:    "#64748b",
+  other:        "#6b7280",
+}
+
 const TYPE_COLORS: Record<string, string> = {
   construction: "bg-amber-100 text-amber-800",
   parking: "bg-blue-100 text-blue-800",
@@ -179,6 +188,24 @@ export default function DashboardPage() {
             <p className={`mt-2 max-w-md text-sm leading-relaxed ${isDark ? "text-white/60" : "text-black/55"}`}>
               Here's your live operations overview — officers, sites and fleet, all in one place.
             </p>
+            {stats && (
+              <div className={`mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs ${isDark ? "text-white/50" : "text-black/45"}`}>
+                <span className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-success shadow-[0_0_4px_rgba(34,197,94,0.8)]" />
+                  {stats.totalStaff} officers
+                </span>
+                <span className={`h-3 w-px ${isDark ? "bg-white/15" : "bg-black/15"}`} />
+                <span className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-success shadow-[0_0_4px_rgba(34,197,94,0.8)]" />
+                  {stats.activeSites} active sites
+                </span>
+                <span className={`h-3 w-px ${isDark ? "bg-white/15" : "bg-black/15"}`} />
+                <span className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-success shadow-[0_0_4px_rgba(34,197,94,0.8)]" />
+                  {stats.vehicles} vehicles
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Right: compliance ring — toggleable */}
@@ -258,6 +285,42 @@ export default function DashboardPage() {
         </motion.div>
       </motion.div>
 
+      {/* Compliance snapshot bar */}
+      {stats && stats.totalStaff > 0 && (
+        <div className="surface p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-sm font-semibold">Compliance snapshot</p>
+            <button
+              onClick={() => navigate("/compliance")}
+              className="group flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+            >
+              Full report <ArrowUpRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            </button>
+          </div>
+          <div className="space-y-2.5">
+            {([
+              { label: "Compliant",     value: stats.compliant,    color: "#22c55e" },
+              { label: "Expiring soon", value: stats.expiringSoon, color: "#f59e0b" },
+              { label: "Expired",       value: stats.expired,      color: "#ef4444" },
+            ] as const).map(({ label, value, color }) => (
+              <div key={label} className="flex items-center gap-3">
+                <p className="w-24 shrink-0 text-xs text-muted-foreground">{label}</p>
+                <div className="flex-1 overflow-hidden rounded-full bg-muted" style={{ height: "6px" }}>
+                  <div
+                    className="h-full rounded-full transition-[width] duration-700"
+                    style={{
+                      width: `${Math.min(100, Math.round((value / stats.totalStaff) * 100))}%`,
+                      background: color,
+                    }}
+                  />
+                </div>
+                <p className="w-7 shrink-0 text-right text-xs font-bold tabular-nums" style={{ color }}>{value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Sites overview */}
       <div>
         <div className="mb-3 flex items-center justify-between">
@@ -289,50 +352,59 @@ export default function DashboardPage() {
                 key={site.id}
                 variants={stagger.item}
                 onClick={() => navigate("/sites")}
-                className="surface surface-hover cursor-pointer p-4"
+                className="surface surface-hover cursor-pointer overflow-hidden"
               >
-                <div className="mb-3 flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate font-medium text-sm">{site.name}</p>
-                    {site.client_name && (
-                      <p className="text-xs text-muted-foreground truncate">{site.client_name}</p>
-                    )}
-                  </div>
-                  <span
-                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                      TYPE_COLORS[site.type] ?? TYPE_COLORS.other
-                    }`}
-                  >
-                    {TYPE_LABELS[site.type] ?? "Other"}
-                  </span>
-                </div>
+                {/* Type colour bar */}
+                <div className="h-[3px] w-full" style={{ background: TYPE_STRIP[site.type] ?? TYPE_STRIP.other }} />
 
-                <div className="flex items-center gap-2">
-                  {site.supervisor_name ? (
-                    <>
-                      <div
-                        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${
-                          AV_COLORS[i % AV_COLORS.length]
-                        }`}
-                      >
-                        {initials(site.supervisor_name)}
+                <div className="p-4">
+                  <div className="mb-3 flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold text-sm">{site.name}</p>
+                      {site.client_name && (
+                        <p className="text-xs text-muted-foreground truncate">{site.client_name}</p>
+                      )}
+                    </div>
+                    <span
+                      className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                        TYPE_COLORS[site.type] ?? TYPE_COLORS.other
+                      }`}
+                    >
+                      {TYPE_LABELS[site.type] ?? "Other"}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between border-t border-border/40 pt-3">
+                    {site.supervisor_name ? (
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div
+                          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${
+                            AV_COLORS[i % AV_COLORS.length]
+                          }`}
+                        >
+                          {initials(site.supervisor_name)}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-medium leading-tight">{site.supervisor_name}</p>
+                          <p className="text-[10px] leading-tight text-muted-foreground">Supervisor</p>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium truncate">{site.supervisor_name}</p>
-                        <p className="text-[10px] text-muted-foreground">Supervisor</p>
-                      </div>
-                    </>
-                  ) : (
-                    <p className="text-xs text-muted-foreground italic">No supervisor assigned</p>
+                    ) : (
+                      <p className="text-xs italic text-muted-foreground">No supervisor assigned</p>
+                    )}
+                    <div className="flex shrink-0 items-center gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-success shadow-[0_0_4px_rgba(34,197,94,0.8)]" />
+                      <span className="text-[10px] text-muted-foreground">Active</span>
+                    </div>
+                  </div>
+
+                  {site.address && (
+                    <p className="mt-2 flex items-center gap-1 truncate text-[10px] text-muted-foreground">
+                      <MapPin className="h-3 w-3 shrink-0" />
+                      {site.address}
+                    </p>
                   )}
                 </div>
-
-                {site.address && (
-                  <p className="mt-2 text-[10px] text-muted-foreground flex items-center gap-1 truncate">
-                    <MapPin className="h-3 w-3 shrink-0" />
-                    {site.address}
-                  </p>
-                )}
               </motion.div>
             ))}
           </motion.div>
@@ -372,8 +444,11 @@ function StatCard({ label, value, sub, icon, tint, highlight, clickable, onClick
       onClick={onClick}
       className={`surface relative overflow-hidden p-4 pl-5 ${highlight ? "border-[#ef4444]/40" : ""} ${clickable ? "surface-hover cursor-pointer" : ""}`}
     >
-      {/* Status strip — left border, Trust & Authority pattern */}
+      {/* Status strip */}
       <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl" style={{ background: t.strip }} />
+      {/* Gradient bleed from strip */}
+      <div className="pointer-events-none absolute left-0 top-0 h-full w-20 opacity-[0.06]"
+        style={{ background: `linear-gradient(90deg, ${t.strip}, transparent)` }} />
 
       <div className="mb-3 flex items-center justify-between">
         <div className={`icon-badge ${t.bg} ${t.text}`}>{icon}</div>

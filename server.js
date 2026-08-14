@@ -1752,6 +1752,7 @@ app.post('/api/sites/:id/welfare', requireLogin, requirePermission('sites'), fun
       condition: String(req.body.condition || 'good').trim(),
       serial_number: String(req.body.serial_number || '').trim(),
       notes: String(req.body.notes || '').trim(),
+      image_ext: '',
     };
     if (!item.name) return res.status(400).json({ ok: false, error: 'Item name required' });
     sites[idx].welfare_items.push(item);
@@ -1778,6 +1779,7 @@ app.patch('/api/sites/:id/welfare/:itemId', requireLogin, requirePermission('sit
       condition:     String(b.condition      !== undefined ? b.condition     : o.condition     || 'good').trim(),
       serial_number: String(b.serial_number  !== undefined ? b.serial_number : o.serial_number || '').trim(),
       notes:         String(b.notes          !== undefined ? b.notes         : o.notes         || '').trim(),
+      image_ext:     o.image_ext || '',
     };
     sites[sIdx].welfare_items = items;
     saveSites(sites);
@@ -1792,11 +1794,95 @@ app.delete('/api/sites/:id/welfare/:itemId', requireLogin, requirePermission('si
     var sites = loadSites();
     var sIdx = sites.findIndex(function(s){ return s.id === req.params.id; });
     if (sIdx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    var item = (sites[sIdx].welfare_items || []).find(function(i){ return i.id === req.params.itemId; });
+    if (item && item.image_ext) {
+      var imgPath = path.join(BASE, 'site-welfare-images', req.params.id, req.params.itemId + '.' + item.image_ext);
+      try { fs.unlinkSync(imgPath); } catch(e2) {}
+    }
     sites[sIdx].welfare_items = (sites[sIdx].welfare_items || []).filter(function(i){ return i.id !== req.params.itemId; });
     saveSites(sites);
     res.json({ ok: true });
   } catch(e) {
     res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Welfare item image upload
+app.post('/api/sites/:id/welfare/:itemId/image', requireLogin, requirePermission('sites'), function(req, res) {
+  try {
+    var sites = loadSites();
+    var sIdx = sites.findIndex(function(s){ return s.id === req.params.id; });
+    if (sIdx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    var items = sites[sIdx].welfare_items || [];
+    var iIdx = items.findIndex(function(i){ return i.id === req.params.itemId; });
+    if (iIdx === -1) return res.status(404).json({ ok: false, error: 'Item not found' });
+    var chunks = [];
+    req.on('data', function(c){ chunks.push(c); });
+    req.on('end', function() {
+      try {
+        var buf = Buffer.concat(chunks);
+        var ext = 'jpg';
+        if (buf[0] === 0x89 && buf[1] === 0x50) ext = 'png';
+        var dir = path.join(BASE, 'site-welfare-images', req.params.id);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        // remove old image if different ext
+        var oldExt = items[iIdx].image_ext;
+        if (oldExt && oldExt !== ext) {
+          try { fs.unlinkSync(path.join(dir, req.params.itemId + '.' + oldExt)); } catch(e2) {}
+        }
+        fs.writeFileSync(path.join(dir, req.params.itemId + '.' + ext), buf);
+        items[iIdx].image_ext = ext;
+        sites[sIdx].welfare_items = items;
+        saveSites(sites);
+        res.json({ ok: true, image_ext: ext });
+      } catch(e) {
+        res.status(500).json({ ok: false, error: e.message });
+      }
+    });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Welfare item image delete
+app.delete('/api/sites/:id/welfare/:itemId/image', requireLogin, requirePermission('sites'), function(req, res) {
+  try {
+    var sites = loadSites();
+    var sIdx = sites.findIndex(function(s){ return s.id === req.params.id; });
+    if (sIdx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    var items = sites[sIdx].welfare_items || [];
+    var iIdx = items.findIndex(function(i){ return i.id === req.params.itemId; });
+    if (iIdx === -1) return res.status(404).json({ ok: false, error: 'Item not found' });
+    var ext = items[iIdx].image_ext;
+    if (ext) {
+      var imgPath = path.join(BASE, 'site-welfare-images', req.params.id, req.params.itemId + '.' + ext);
+      try { fs.unlinkSync(imgPath); } catch(e2) {}
+      items[iIdx].image_ext = '';
+      sites[sIdx].welfare_items = items;
+      saveSites(sites);
+    }
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Welfare item image serve
+app.get('/api/sites/:id/welfare/:itemId/image', requireLogin, function(req, res) {
+  try {
+    var sites = loadSites();
+    var site = sites.find(function(s){ return s.id === req.params.id; });
+    if (!site) return res.status(404).end();
+    var item = (site.welfare_items || []).find(function(i){ return i.id === req.params.itemId; });
+    if (!item || !item.image_ext) return res.status(404).end();
+    var imgPath = path.join(BASE, 'site-welfare-images', req.params.id, req.params.itemId + '.' + item.image_ext);
+    if (!fs.existsSync(imgPath)) return res.status(404).end();
+    var mime = item.image_ext === 'png' ? 'image/png' : 'image/jpeg';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(imgPath));
+  } catch(e) {
+    res.status(500).end();
   }
 });
 

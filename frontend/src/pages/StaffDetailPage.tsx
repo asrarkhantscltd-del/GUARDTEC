@@ -20,6 +20,40 @@ import {
   Paperclip, FileVideo, Image as ImageIcon, Download, Landmark,
 } from "lucide-react"
 
+// ── Job role multi-select ─────────────────────────────────────────────────────
+
+const JOB_ROLES = [
+  "Security Officer", "Door Supervisor", "CCTV Operator", "Patrol Officer",
+  "Mobile Patrol", "Supervisor", "Team Leader", "Key Holder",
+  "Receptionist / Concierge", "Gatesman / Banksman",
+]
+function parseRoles(str?: string): string[] {
+  return str ? str.split(",").map(r => r.trim()).filter(Boolean) : []
+}
+function joinRoles(arr: string[]): string { return arr.join(", ") }
+
+function RoleChipPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const selected = parseRoles(value)
+  function toggle(role: string) {
+    const next = selected.includes(role) ? selected.filter(r => r !== role) : [...selected, role]
+    onChange(joinRoles(next))
+  }
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {JOB_ROLES.map(role => (
+        <button key={role} type="button" onClick={() => toggle(role)}
+          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+            selected.includes(role)
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
+          }`}>
+          {role}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // ── Shared UI pieces ──────────────────────────────────────────────────────────
 
 type DocStatus = "uploaded" | "missing" | "expired" | "expiring"
@@ -990,9 +1024,12 @@ export default function StaffDetailPage() {
             <div className="flex-1 min-w-0">
               <h2 className="text-xl font-bold truncate">{staff.name}</h2>
               {staff.jobRole && (
-                <p className="flex items-center gap-1 text-sm text-muted-foreground mt-0.5">
-                  <Briefcase className="h-3.5 w-3.5 shrink-0" />{staff.jobRole}
-                </p>
+                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                  <Briefcase className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  {parseRoles(staff.jobRole).map(r => (
+                    <span key={r} className="rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs font-medium text-muted-foreground">{r}</span>
+                  ))}
+                </div>
               )}
               <div className="flex flex-wrap items-center gap-2 mt-1">
                 <StatusBadge status={staff.overall} />
@@ -2309,9 +2346,15 @@ export default function StaffDetailPage() {
                 </div>
                 <div className="space-y-1.5">
                   <Label>Job role / title</Label>
-                  <Input value={profileDraft.jobRole}
-                    onChange={e => setProfileDraft(d => ({ ...d, jobRole: e.target.value }))}
-                    placeholder="e.g. Security Officer" />
+                  <RoleChipPicker
+                    value={profileDraft.jobRole ?? ""}
+                    onChange={v => setProfileDraft(d => ({ ...d, jobRole: v }))}
+                  />
+                  {profileDraft.jobRole && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Selected: <span className="font-medium text-foreground">{profileDraft.jobRole}</span>
+                    </p>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
