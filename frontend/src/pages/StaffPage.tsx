@@ -16,6 +16,38 @@ import {
 } from "lucide-react"
 import { StatusBadge } from "@/components/ui/status-badge"
 
+const JOB_ROLES = [
+  "Security Officer", "Door Supervisor", "CCTV Operator", "Patrol Officer",
+  "Mobile Patrol", "Supervisor", "Team Leader", "Key Holder",
+  "Receptionist / Concierge", "Gatesman / Banksman",
+]
+
+function parseRoles(str?: string): string[] {
+  return str ? str.split(",").map(r => r.trim()).filter(Boolean) : []
+}
+function joinRoles(arr: string[]): string { return arr.join(", ") }
+
+function RoleChipPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const selected = parseRoles(value)
+  function toggle(role: string) {
+    const next = selected.includes(role) ? selected.filter(r => r !== role) : [...selected, role]
+    onChange(joinRoles(next))
+  }
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {JOB_ROLES.map(role => (
+        <button key={role} type="button" onClick={() => toggle(role)}
+          className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+            selected.includes(role)
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground"
+          }`}>
+          {role}
+        </button>
+      ))}
+    </div>
+  )
+}
 
 const stagger = {
   container: { animate: { transition: { staggerChildren: 0.05 } } },
@@ -249,6 +281,68 @@ export default function StaffPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [permDeleting, setPermDeleting]       = useState(false)
 
+  // Ex-Staff multi-select
+  const [exSelectedIds, setExSelectedIds]   = useState<Set<string>>(new Set())
+  const [exBulkConfirm, setExBulkConfirm]   = useState<"restore" | "delete" | null>(null)
+  const [exBulkWorking, setExBulkWorking]   = useState(false)
+
+  function toggleExSelect(id: string) {
+    setExSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  function toggleExSelectAll() {
+    const allSelected = exStaff.length > 0 && exStaff.every(e => exSelectedIds.has(e.folderId))
+    setExSelectedIds(allSelected ? new Set() : new Set(exStaff.map(e => e.folderId)))
+  }
+
+  async function bulkRestoreEx() {
+    setExBulkWorking(true)
+    const ids = [...exSelectedIds]
+    let ok = 0, fail = 0
+    for (const folderId of ids) {
+      try {
+        const r = await fetch("/api/exstaff/restore", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          credentials: "include", body: JSON.stringify({ folderId }),
+        })
+        const d = await r.json()
+        if (d.ok) { ok++; setExStaff(prev => prev.filter(e => e.folderId !== folderId)) }
+        else fail++
+      } catch { fail++ }
+    }
+    if (ok > 0) {
+      fetch("/api/staff", { credentials: "include" })
+        .then(r => r.json()).then(data => setStaff(Array.isArray(data) ? data : [])).catch(() => {})
+    }
+    setExBulkWorking(false); setExBulkConfirm(null); setExSelectedIds(new Set())
+    if (ok > 0)   toast.success(`${ok} staff member${ok > 1 ? "s" : ""} restored`)
+    if (fail > 0) toast.error(`${fail} could not be restored`)
+  }
+
+  async function bulkDeleteEx() {
+    setExBulkWorking(true)
+    const ids = [...exSelectedIds]
+    let ok = 0, fail = 0
+    for (const folderId of ids) {
+      try {
+        const r = await fetch("/api/exstaff/permanent", {
+          method: "DELETE", headers: { "Content-Type": "application/json" },
+          credentials: "include", body: JSON.stringify({ folderId }),
+        })
+        const d = await r.json()
+        if (d.ok) { ok++; setExStaff(prev => prev.filter(e => e.folderId !== folderId)) }
+        else fail++
+      } catch { fail++ }
+    }
+    setExBulkWorking(false); setExBulkConfirm(null); setExSelectedIds(new Set())
+    if (ok > 0)   toast.success(`${ok} record${ok > 1 ? "s" : ""} permanently deleted`)
+    if (fail > 0) toast.error(`${fail} could not be deleted`)
+  }
+
   // Quick edit/delete from the Overview rows
   const { user: me } = useAuth()
   const canEdit   = me?.role === "director" || !!me?.permissions?.edit_staff
@@ -282,8 +376,10 @@ export default function StaffPage() {
   const [addSaving, setAddSaving] = useState(false)
   const [addError, setAddError]   = useState("")
 
-  // Row selection for Excel export
+  // Row selection for Excel export + bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkMoving, setBulkMoving]   = useState(false)
+  const [bulkConfirm, setBulkConfirm] = useState(false)
 
   // Which section tab is active — defaults to Compliance Status if the URL
   // doesn't specify one (e.g. clicking the parent "Staff" nav item)
@@ -540,6 +636,26 @@ export default function StaffPage() {
       .catch(() => toast.error("Failed to generate report"))
   }
 
+  async function bulkMoveToExStaff() {
+    setBulkMoving(true)
+    const ids = [...selectedIds]
+    let success = 0
+    let failed = 0
+    for (const id of ids) {
+      try {
+        const res = await fetch(`/api/staff/${id}`, { method: "DELETE", credentials: "include" })
+        const d = await res.json()
+        if (d.ok) { success++; setStaff((prev) => prev.filter((s) => s.id !== id)) }
+        else failed++
+      } catch { failed++ }
+    }
+    setBulkMoving(false)
+    setBulkConfirm(false)
+    setSelectedIds(new Set())
+    if (success > 0) toast.success(`${success} staff member${success > 1 ? "s" : ""} moved to Ex-Staff`)
+    if (failed > 0)  toast.error(`${failed} could not be moved — check permissions`)
+  }
+
   function goToStaff(id: string) { navigate(`/staff/${id}`) }
 
   function changeView(v: ViewMode) { setView(v); localStorage.setItem("staff-view", v) }
@@ -735,6 +851,63 @@ export default function StaffPage() {
         </button>
       </div>
 
+      {/* ── Bulk action bar ── */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5 flex-wrap">
+          <span className="text-sm font-medium text-primary">
+            {selectedIds.size} staff selected
+          </span>
+          <div className="h-4 w-px bg-border" />
+
+          {!bulkConfirm ? (
+            <>
+              {canDelete && (
+                <button
+                  onClick={() => setBulkConfirm(true)}
+                  className="flex items-center gap-1.5 rounded-md bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
+                >
+                  <UserX className="h-3.5 w-3.5" />
+                  Move to Ex-Staff
+                </button>
+              )}
+              <button
+                onClick={exportStaffReport}
+                className="flex items-center gap-1.5 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/80"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Export Selected
+              </button>
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="ml-auto flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X className="h-3.5 w-3.5" /> Clear selection
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="text-xs font-medium text-destructive">
+                Move {selectedIds.size} staff member{selectedIds.size > 1 ? "s" : ""} to Ex-Staff?
+              </span>
+              <button
+                onClick={bulkMoveToExStaff}
+                disabled={bulkMoving}
+                className="flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-destructive/90 disabled:opacity-50"
+              >
+                {bulkMoving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserX className="h-3.5 w-3.5" />}
+                {bulkMoving ? "Moving…" : "Yes, move all"}
+              </button>
+              <button
+                onClick={() => setBulkConfirm(false)}
+                className="rounded-md border px-3 py-1.5 text-xs transition-colors hover:bg-muted"
+              >
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center gap-2 text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -843,9 +1016,12 @@ export default function StaffPage() {
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-sm truncate">{s.name}</p>
                   {s.jobRole && (
-                    <p className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5 truncate">
-                      <Briefcase className="h-3 w-3 shrink-0" />{s.jobRole}
-                    </p>
+                    <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                      <Briefcase className="h-3 w-3 shrink-0 text-muted-foreground" />
+                      {parseRoles(s.jobRole).map(r => (
+                        <span key={r} className="rounded-full border border-border bg-muted/50 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{r}</span>
+                      ))}
+                    </div>
                   )}
                   <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                     <StatusBadge status={s.overall} />
@@ -918,23 +1094,15 @@ export default function StaffPage() {
                   <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
                   Job role
                 </Label>
-                <select
+                <RoleChipPicker
                   value={addForm.jobRole}
-                  onChange={(e) => setAddForm((p) => ({ ...p, jobRole: e.target.value }))}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="">— Select role —</option>
-                  <option value="Security Officer">Security Officer</option>
-                  <option value="Door Supervisor">Door Supervisor</option>
-                  <option value="CCTV Operator">CCTV Operator</option>
-                  <option value="Patrol Officer">Patrol Officer</option>
-                  <option value="Mobile Patrol">Mobile Patrol</option>
-                  <option value="Supervisor">Supervisor</option>
-                  <option value="Team Leader">Team Leader</option>
-                  <option value="Key Holder">Key Holder</option>
-                  <option value="Receptionist / Concierge">Receptionist / Concierge</option>
-                  <option value="Other">Other</option>
-                </select>
+                  onChange={v => setAddForm(p => ({ ...p, jobRole: v }))}
+                />
+                {addForm.jobRole && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Selected: <span className="font-medium text-foreground">{addForm.jobRole}</span>
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -1019,51 +1187,131 @@ export default function StaffPage() {
                   </p>
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {exStaff.map((e) => (
-                    <div key={e.folderId} className="rounded-lg border bg-card px-4 py-3 space-y-2">
-                      <div className="flex items-center gap-3">
-                        <InitialsAvatar name={e.name} status={e.overall} size="sm" />
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium">{e.name}</p>
-                          <p className="truncate text-xs text-muted-foreground">
-                            {[e.nationality, e.gender].filter(Boolean).join(" · ") || "No details on file"}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button onClick={() => restoreExStaff(e.folderId)} disabled={restoringId === e.folderId}
-                            className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50">
-                            {restoringId === e.folderId
-                              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              : <RotateCcw className="h-3.5 w-3.5" />}
-                            Restore
-                          </button>
-                          <button onClick={() => setConfirmDeleteId(e.folderId)}
-                            className="flex items-center gap-1.5 rounded-md bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20">
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Delete
-                          </button>
-                        </div>
-                      </div>
+                <>
+                  {/* Select-all + bulk action bar */}
+                  <div className="mb-3 flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={exStaff.length > 0 && exStaff.every(e => exSelectedIds.has(e.folderId))}
+                      onChange={toggleExSelectAll}
+                      className="h-4 w-4 rounded border-border"
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      {exSelectedIds.size > 0 ? `${exSelectedIds.size} selected` : "Select all"}
+                    </span>
+                  </div>
 
-                      {/* Inline confirmation */}
-                      {confirmDeleteId === e.folderId && (
-                        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 flex items-center justify-between gap-3">
-                          <p className="text-xs text-destructive font-medium">Permanently delete {e.name.split(" ")[0]}'s record? This cannot be undone.</p>
-                          <div className="flex gap-2 shrink-0">
-                            <button onClick={() => setConfirmDeleteId(null)}
-                              className="rounded px-2.5 py-1 text-xs border hover:bg-muted transition-colors">Cancel</button>
-                            <button onClick={() => permanentDelete(e.folderId)} disabled={permDeleting}
-                              className="rounded px-2.5 py-1 text-xs bg-destructive text-white hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1">
-                              {permDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                              Yes, Delete
+                  {/* Bulk action bar */}
+                  {exSelectedIds.size > 0 && (
+                    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2">
+                      {exBulkConfirm === null ? (
+                        <>
+                          <span className="text-xs font-medium text-primary mr-1">{exSelectedIds.size} selected</span>
+                          <button
+                            onClick={() => setExBulkConfirm("restore")}
+                            className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" /> Restore Selected
+                          </button>
+                          <button
+                            onClick={() => setExBulkConfirm("delete")}
+                            className="flex items-center gap-1.5 rounded-md bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/20 transition-colors"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" /> Delete Selected
+                          </button>
+                          <button
+                            onClick={() => setExSelectedIds(new Set())}
+                            className="ml-auto flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            <X className="h-3.5 w-3.5" /> Clear
+                          </button>
+                        </>
+                      ) : exBulkConfirm === "restore" ? (
+                        <>
+                          <span className="text-xs font-medium text-primary">
+                            Restore {exSelectedIds.size} staff member{exSelectedIds.size > 1 ? "s" : ""} to Active?
+                          </span>
+                          <button
+                            onClick={bulkRestoreEx}
+                            disabled={exBulkWorking}
+                            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                          >
+                            {exBulkWorking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                            {exBulkWorking ? "Restoring…" : "Yes, restore all"}
+                          </button>
+                          <button onClick={() => setExBulkConfirm(null)} className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted transition-colors">Cancel</button>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-xs font-medium text-destructive">
+                            Permanently delete {exSelectedIds.size} record{exSelectedIds.size > 1 ? "s" : ""}? Cannot be undone.
+                          </span>
+                          <button
+                            onClick={bulkDeleteEx}
+                            disabled={exBulkWorking}
+                            className="flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1.5 text-xs font-semibold text-white hover:bg-destructive/90 disabled:opacity-50 transition-colors"
+                          >
+                            {exBulkWorking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                            {exBulkWorking ? "Deleting…" : "Yes, delete all"}
+                          </button>
+                          <button onClick={() => setExBulkConfirm(null)} className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted transition-colors">Cancel</button>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    {exStaff.map((e) => (
+                      <div key={e.folderId} className={`rounded-lg border bg-card px-4 py-3 space-y-2 transition-colors ${exSelectedIds.has(e.folderId) ? "border-primary/40 bg-primary/5" : ""}`}>
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={exSelectedIds.has(e.folderId)}
+                            onChange={() => toggleExSelect(e.folderId)}
+                            onClick={(ev) => ev.stopPropagation()}
+                            className="h-4 w-4 rounded border-border shrink-0"
+                          />
+                          <InitialsAvatar name={e.name} status={e.overall} size="sm" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium">{e.name}</p>
+                            <p className="truncate text-xs text-muted-foreground">
+                              {[e.nationality, e.gender].filter(Boolean).join(" · ") || "No details on file"}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button onClick={() => restoreExStaff(e.folderId)} disabled={restoringId === e.folderId}
+                              className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50">
+                              {restoringId === e.folderId
+                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                : <RotateCcw className="h-3.5 w-3.5" />}
+                              Restore
+                            </button>
+                            <button onClick={() => setConfirmDeleteId(e.folderId)}
+                              className="flex items-center gap-1.5 rounded-md bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20">
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Delete
                             </button>
                           </div>
                         </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
+
+                        {confirmDeleteId === e.folderId && (
+                          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 flex items-center justify-between gap-3">
+                            <p className="text-xs text-destructive font-medium">Permanently delete {e.name.split(" ")[0]}'s record? This cannot be undone.</p>
+                            <div className="flex gap-2 shrink-0">
+                              <button onClick={() => setConfirmDeleteId(null)}
+                                className="rounded px-2.5 py-1 text-xs border hover:bg-muted transition-colors">Cancel</button>
+                              <button onClick={() => permanentDelete(e.folderId)} disabled={permDeleting}
+                                className="rounded px-2.5 py-1 text-xs bg-destructive text-white hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1">
+                                {permDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                                Yes, Delete
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
               )}
             </div>
           </div>

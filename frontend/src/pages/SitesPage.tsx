@@ -19,6 +19,7 @@ interface WelfareItem {
   condition: "good" | "fair" | "poor"
   serial_number: string
   notes: string
+  image_ext?: string
 }
 
 interface SiteDoc {
@@ -78,7 +79,7 @@ const BLANK_SITE: Site = {
 }
 
 const BLANK_ITEM: WelfareItem = {
-  id: "", name: "", quantity: 1, condition: "good", serial_number: "", notes: "",
+  id: "", name: "", quantity: 1, condition: "good", serial_number: "", notes: "", image_ext: "",
 }
 
 // ── Static data ───────────────────────────────────────────────────────────────
@@ -154,6 +155,9 @@ export default function SitesPage() {
   const [itemSaving, setItemSaving]         = useState(false)
   const [itemError, setItemError]           = useState("")
   const [deleteItemId, setDeleteItemId]     = useState<string | null>(null)
+  const [pendingImage, setPendingImage]     = useState<File | null>(null)
+  const [imagePreview, setImagePreview]     = useState<string | null>(null)
+  const [viewImageUrl, setViewImageUrl]     = useState<string | null>(null)
 
   // Documents panel
   const [docsSite, setDocsSite]             = useState<Site | null>(null)
@@ -250,13 +254,24 @@ export default function SitesPage() {
 
   function openAddItem(quickName?: string) {
     setEditingItem(null); setItemDraft({ ...BLANK_ITEM, name: quickName ?? "" })
-    setItemError(""); setItemPanel(true)
+    setItemError(""); setPendingImage(null); setImagePreview(null); setItemPanel(true)
   }
   function openEditItem(item: WelfareItem) {
-    setEditingItem(item); setItemDraft({ ...item }); setItemError(""); setItemPanel(true)
+    setEditingItem(item); setItemDraft({ ...item })
+    setItemError(""); setPendingImage(null); setImagePreview(null); setItemPanel(true)
   }
-  function closeItemPanel() { setItemPanel(false); setEditingItem(null); setItemError("") }
+  function closeItemPanel() {
+    setItemPanel(false); setEditingItem(null); setItemError("")
+    setPendingImage(null); setImagePreview(null)
+  }
   function setIF(f: keyof WelfareItem, v: string | number) { setItemDraft((d) => ({ ...d, [f]: v })) }
+
+  function handleImagePick(file: File) {
+    setPendingImage(file)
+    const reader = new FileReader()
+    reader.onload = (e) => setImagePreview(e.target?.result as string)
+    reader.readAsDataURL(file)
+  }
 
   async function saveItem() {
     if (!itemDraft.name.trim()) { setItemError("Item name is required"); return }
@@ -274,10 +289,28 @@ export default function SitesPage() {
       })
       const d = await r.json()
       if (!d.ok) { setItemError(d.error ?? "Failed to save"); setItemSaving(false); return }
+      const savedId = editingItem ? editingItem.id : d.item?.id
+      // Upload image if one was picked
+      if (pendingImage && savedId) {
+        await fetch(`/api/sites/${welfareSite.id}/welfare/${savedId}/image`, {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": pendingImage.type },
+          body: pendingImage,
+        })
+      }
       await refreshWelfare(welfareSite.id); closeItemPanel()
       toast.success(editingItem ? "Item updated" : "Item added")
     } catch { setItemError("Network error") }
     setItemSaving(false)
+  }
+
+  async function removeItemImage(item: WelfareItem) {
+    if (!welfareSite) return
+    await fetch(`/api/sites/${welfareSite.id}/welfare/${item.id}/image`, {
+      method: "DELETE", credentials: "include",
+    })
+    await refreshWelfare(welfareSite.id)
+    toast.success("Image removed")
   }
 
   async function confirmDeleteItem() {
@@ -898,7 +931,24 @@ export default function SitesPage() {
                 ) : (
                   <div className="space-y-2">
                     {welfareItems.map((item) => (
-                      <div key={item.id} className="flex items-center gap-3 rounded-lg border bg-card px-4 py-3">
+                      <div key={item.id} className="flex items-center gap-3 rounded-lg border bg-card px-3 py-3">
+                        {/* Thumbnail */}
+                        {item.image_ext ? (
+                          <button
+                            onClick={() => setViewImageUrl(`/api/sites/${welfareSite!.id}/welfare/${item.id}/image`)}
+                            className="shrink-0 h-14 w-14 rounded-md overflow-hidden border hover:opacity-80 transition-opacity"
+                          >
+                            <img
+                              src={`/api/sites/${welfareSite!.id}/welfare/${item.id}/image`}
+                              alt={item.name}
+                              className="h-full w-full object-cover"
+                            />
+                          </button>
+                        ) : (
+                          <div className="shrink-0 h-14 w-14 rounded-md border border-dashed bg-muted/40 flex items-center justify-center">
+                            <Package className="h-5 w-5 text-muted-foreground/30" />
+                          </div>
+                        )}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <p className="text-sm font-medium">{item.name}</p>
@@ -1106,6 +1156,54 @@ export default function SitesPage() {
                   placeholder="Any extra details…" rows={2}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-none" />
               </div>
+
+              {/* Image upload */}
+              <div className="space-y-1.5">
+                <Label>Photo <span className="font-normal text-muted-foreground">(optional)</span></Label>
+                {/* Show existing saved image when editing */}
+                {editingItem?.image_ext && !imagePreview && (
+                  <div className="relative w-full rounded-lg overflow-hidden border">
+                    <img
+                      src={`/api/sites/${welfareSite!.id}/welfare/${editingItem.id}/image`}
+                      alt={editingItem.name}
+                      className="w-full max-h-48 object-contain bg-muted/30"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeItemImage(editingItem)}
+                      className="absolute top-2 right-2 rounded-full bg-destructive/90 p-1 text-white hover:bg-destructive transition-colors"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+                {/* Preview of newly picked image */}
+                {imagePreview && (
+                  <div className="relative w-full rounded-lg overflow-hidden border">
+                    <img src={imagePreview} alt="Preview" className="w-full max-h-48 object-contain bg-muted/30" />
+                    <button
+                      type="button"
+                      onClick={() => { setPendingImage(null); setImagePreview(null) }}
+                      className="absolute top-2 right-2 rounded-full bg-destructive/90 p-1 text-white hover:bg-destructive transition-colors"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+                {!imagePreview && (
+                  <label className="flex cursor-pointer flex-col items-center gap-2 rounded-lg border border-dashed border-border px-4 py-5 text-center hover:border-primary hover:bg-primary/5 transition-colors">
+                    <Upload className="h-6 w-6 text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">
+                      Click to upload a photo of this item<br />
+                      <span className="text-[10px]">JPG or PNG</span>
+                    </span>
+                    <input
+                      type="file" accept="image/jpeg,image/png" className="hidden"
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImagePick(f) }}
+                    />
+                  </label>
+                )}
+              </div>
             </div>
             <div className="flex gap-2 border-t px-5 py-4">
               <Button variant="outline" className="flex-1" onClick={closeItemPanel}>Cancel</Button>
@@ -1114,6 +1212,27 @@ export default function SitesPage() {
               </Button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Image lightbox */}
+      {viewImageUrl && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80"
+          onClick={() => setViewImageUrl(null)}
+        >
+          <button
+            className="absolute top-4 right-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20 transition-colors"
+            onClick={() => setViewImageUrl(null)}
+          >
+            <X className="h-5 w-5" />
+          </button>
+          <img
+            src={viewImageUrl}
+            alt="Item photo"
+            className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
 

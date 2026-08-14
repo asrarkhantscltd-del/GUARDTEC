@@ -21,18 +21,26 @@ interface NavItem {
   icon: React.ReactNode
   permission?: keyof Permissions
   directorOnly?: boolean
+  group?: "core" | "operations" | "compliance" | "admin"
 }
 
+const navGroups = [
+  { key: "core",       label: null },
+  { key: "operations", label: "Operations" },
+  { key: "compliance", label: "Compliance" },
+  { key: "admin",      label: "Administration" },
+] as const
+
 const navItems: NavItem[] = [
-  { label: "Dashboard",      to: "/",               icon: <LayoutDashboard className="h-4 w-4" /> },
-  { label: "Staff",          to: "/staff",           icon: <Users className="h-4 w-4" />,         permission: "staff" },
-  { label: "Fleet",          to: "/fleet",           icon: <Truck className="h-4 w-4" />,          permission: "fleet" },
-  { label: "Sites",          to: "/sites",           icon: <MapPin className="h-4 w-4" />,         permission: "sites" },
-  { label: "Compliance",     to: "/compliance",      icon: <ShieldCheck className="h-4 w-4" />,    permission: "compliance" },
-  { label: "Pending Review", to: "/pending-review",  icon: <ClipboardCheck className="h-4 w-4" />, permission: "pending_review" },
-  { label: "Incident Reports", to: "/incident-reports", icon: <AlertTriangle className="h-4 w-4" />, permission: "staff" },
-  { label: "Team Access",    to: "/users",           icon: <KeyRound className="h-4 w-4" />,       directorOnly: true },
-  { label: "Manage Roles",   to: "/roles",           icon: <Shield className="h-4 w-4" />,         directorOnly: true },
+  { label: "Dashboard",        to: "/",                icon: <LayoutDashboard className="h-4 w-4" />,  group: "core" },
+  { label: "Staff",            to: "/staff",           icon: <Users className="h-4 w-4" />,            permission: "staff",          group: "operations" },
+  { label: "Fleet",            to: "/fleet",           icon: <Truck className="h-4 w-4" />,            permission: "fleet",          group: "operations" },
+  { label: "Sites",            to: "/sites",           icon: <MapPin className="h-4 w-4" />,           permission: "sites",          group: "operations" },
+  { label: "Compliance",       to: "/compliance",      icon: <ShieldCheck className="h-4 w-4" />,      permission: "compliance",     group: "compliance" },
+  { label: "Pending Review",   to: "/pending-review",  icon: <ClipboardCheck className="h-4 w-4" />,  permission: "pending_review", group: "compliance" },
+  { label: "Incident Reports", to: "/incident-reports",icon: <AlertTriangle className="h-4 w-4" />,    permission: "staff",          group: "compliance" },
+  { label: "Team Access",      to: "/users",           icon: <KeyRound className="h-4 w-4" />,         directorOnly: true,           group: "admin" },
+  { label: "Manage Roles",     to: "/roles",           icon: <Shield className="h-4 w-4" />,           directorOnly: true,           group: "admin" },
 ]
 
 export default function DashboardLayout() {
@@ -232,41 +240,57 @@ export default function DashboardLayout() {
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
       }`}>
 
-        {/* Logo area — brand zone, generous space */}
+        {/* Logo area — full-width brand zone */}
         <button
           onClick={() => { navigate("/"); setSidebarOpen(false) }}
-          className="relative flex h-28 w-full shrink-0 flex-col items-center justify-center overflow-hidden border-b border-sidebar-border px-6 transition-colors hover:bg-sidebar-accent"
+          className="relative flex h-32 w-full shrink-0 items-center justify-center overflow-hidden border-b border-sidebar-border transition-colors hover:bg-sidebar-accent"
         >
           {/* Red glow behind logo */}
-          <div className="glow-blob absolute left-1/2 top-1/2 h-32 w-32 -translate-x-1/2 -translate-y-1/2 opacity-60" />
+          <div className="glow-blob absolute left-1/2 top-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 opacity-50" />
+          {/* The logo SVGs carry their own background — clip to the container */}
           <img
             src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
             alt="GuardTec Security"
-            className="relative z-10 h-20 w-auto drop-shadow-lg"
+            className="relative z-10 w-[200px] h-auto"
           />
         </button>
 
-        {/* Nav */}
-        <nav className="flex-1 space-y-0.5 overflow-y-auto p-3">
-          {visibleNav.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.to === "/"}
-              onClick={() => setSidebarOpen(false)}
-              className={({ isActive }) =>
-                `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ${
-                  isActive
-                    ? "bg-gradient-to-r from-primary to-primary/80 text-white shadow-[0_4px_14px_-2px_rgba(228,6,19,0.4)]"
-                    : "hover:translate-x-0.5 hover:bg-sidebar-accent"
-                }`
-              }>
-              {({ isActive }) => (
-                <>
-                  {isActive && <span className="absolute -left-3 h-5 w-1 rounded-r-full bg-primary" />}
-                  <span className={`transition-transform duration-200 ${!isActive ? "group-hover:scale-110" : ""}`}>{item.icon}</span>
-                  {item.label}
-                </>
-              )}
-            </NavLink>
-          ))}
+        {/* Nav — grouped by area */}
+        <nav className="flex-1 overflow-y-auto p-3">
+          {navGroups.map(({ key, label }) => {
+            const items = visibleNav.filter(item => (item.group ?? "core") === key)
+            if (items.length === 0) return null
+            return (
+              <div key={key} className="mb-1">
+                {label && (
+                  <p className="px-3 pb-1 pt-3 text-[9px] font-bold uppercase tracking-[0.18em] text-sidebar-foreground/30">
+                    {label}
+                  </p>
+                )}
+                <div className="space-y-0.5">
+                  {items.map((item) => (
+                    <NavLink key={item.to} to={item.to} end={item.to === "/"}
+                      onClick={() => setSidebarOpen(false)}
+                      className={({ isActive }) =>
+                        `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ${
+                          isActive
+                            ? "bg-gradient-to-r from-primary to-primary/80 text-white shadow-[0_4px_14px_-2px_rgba(228,6,19,0.4)]"
+                            : "hover:translate-x-0.5 hover:bg-sidebar-accent"
+                        }`
+                      }>
+                      {({ isActive }) => (
+                        <>
+                          {isActive && <span className="absolute -left-3 h-5 w-1 rounded-r-full bg-primary" />}
+                          <span className={`transition-transform duration-200 ${!isActive ? "group-hover:scale-110" : ""}`}>{item.icon}</span>
+                          {item.label}
+                        </>
+                      )}
+                    </NavLink>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
         </nav>
 
         {/* Footer — user info + actions */}
@@ -313,9 +337,18 @@ export default function DashboardLayout() {
           <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setSidebarOpen(!sidebarOpen)}>
             {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </Button>
-          <div className="flex items-center gap-2">
-            <div className="hidden h-2 w-2 rounded-full bg-success shadow-[0_0_6px_rgba(34,197,94,0.8)] sm:block" />
-            <h1 className="text-lg font-semibold tracking-tight">GuardTec Compliance</h1>
+          {/* Brand — logo on mobile (sidebar hidden), dot + name on desktop */}
+          <div className="flex items-center gap-3">
+            <img
+              src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
+              alt="GuardTec"
+              className="h-9 w-auto md:hidden rounded-sm"
+            />
+            <div className="hidden md:flex items-center gap-2.5">
+              <div className="h-2 w-2 rounded-full bg-success shadow-[0_0_6px_rgba(34,197,94,0.8)]" />
+              <h1 className="text-base font-bold tracking-tight">GuardTec</h1>
+              <span className="text-xs font-medium text-muted-foreground">Compliance Platform</span>
+            </div>
           </div>
 
           <div className="ml-auto flex items-center gap-3">

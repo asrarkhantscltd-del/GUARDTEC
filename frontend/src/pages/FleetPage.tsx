@@ -853,11 +853,35 @@ export default function FleetPage() {
                       </select>
                     </Field>
                   </div>
-                  <Field label="Notes" className="mt-3">
-                    <textarea rows={2} value={editDriver.notes ?? ""}
+                  <div className="mt-3 space-y-1.5">
+                    <label className="text-sm font-medium">Notes</label>
+
+                    {/* Guidance box */}
+                    <div className="rounded-md border border-amber-400/30 bg-amber-400/8 px-3 py-2.5 space-y-1.5">
+                      <p className="text-xs font-semibold text-amber-600 dark:text-amber-400">
+                        Important — you must disclose the following if applicable:
+                      </p>
+                      <ul className="space-y-0.5 text-xs text-amber-700 dark:text-amber-300/80 list-none">
+                        <li className="flex items-start gap-1.5"><span className="mt-0.5 shrink-0">•</span>Penalty points on driving licence (e.g. "3 points — SP30, expires Jan 2026")</li>
+                        <li className="flex items-start gap-1.5"><span className="mt-0.5 shrink-0">•</span>Any driving convictions or bans (past or current)</li>
+                        <li className="flex items-start gap-1.5"><span className="mt-0.5 shrink-0">•</span>Medical conditions that may affect driving (e.g. epilepsy, vision impairment, diabetes)</li>
+                      </ul>
+                      <p className="text-[10px] text-amber-600/70 dark:text-amber-400/60 pt-0.5 border-t border-amber-400/20">
+                        If no points, convictions or medical issues apply — leave this blank. Do not leave blank to hide information.
+                      </p>
+                    </div>
+
+                    <textarea rows={3} value={editDriver.notes ?? ""}
                       onChange={e => setEditDriver(p => ({ ...p, notes: e.target.value }))}
+                      placeholder="e.g. 3 penalty points (SP30) — expires March 2026. No medical conditions."
                       className="w-full rounded-md border bg-background px-3 py-2 text-sm resize-none" />
-                  </Field>
+
+                    {/* Fraud warning */}
+                    <p className="rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-[11px] leading-relaxed text-destructive/80">
+                      <span className="font-semibold text-destructive">Fraud Act 2006 warning:</span>{" "}
+                      Providing false or misleading information — including failing to disclose penalty points, convictions, or medical conditions — is a criminal offence under the Fraud Act 2006 and may result in disciplinary action, dismissal, and prosecution.
+                    </p>
+                  </div>
                 </Section>
               </div>
 
