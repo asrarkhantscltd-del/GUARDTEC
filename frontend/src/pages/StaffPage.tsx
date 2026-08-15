@@ -229,6 +229,9 @@ export default function StaffPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [permDeleting, setPermDeleting]       = useState(false)
 
+  // Ex-Staff search
+  const [exSearch, setExSearch] = useState("")
+
   // Ex-Staff multi-select
   const [exSelectedIds, setExSelectedIds]   = useState<Set<string>>(new Set())
   const [exBulkConfirm, setExBulkConfirm]   = useState<"restore" | "delete" | null>(null)
@@ -338,7 +341,7 @@ export default function StaffPage() {
   }, [])
 
   async function openExStaff() {
-    setExPanel(true); setExLoading(true); setExError("")
+    setExPanel(true); setExLoading(true); setExError(""); setExSearch("")
     try {
       const d = await api.get<ExStaffMember[]>("/api/exstaff")
       setExStaff(Array.isArray(d) ? d : [])
@@ -1029,16 +1032,34 @@ export default function StaffPage() {
         <div className="fixed inset-0 z-50 flex">
           <div className="flex-1 bg-black/40" onClick={() => setExPanel(false)} />
           <div className="flex h-full w-full max-w-lg flex-col bg-background shadow-2xl">
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <div>
-                <h2 className="flex items-center gap-2 text-lg font-semibold">
-                  <Archive className="h-4 w-4 text-muted-foreground" />Ex-Staff
-                </h2>
-                <p className="text-xs text-muted-foreground">Restore a returning employee back to Active Staff</p>
+            <div className="border-b px-6 py-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="flex items-center gap-2 text-lg font-semibold">
+                    <Archive className="h-4 w-4 text-muted-foreground" />Ex-Staff
+                    {!exLoading && exStaff.length > 0 && (
+                      <span className="ml-1 inline-flex items-center justify-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                        {exStaff.length}
+                      </span>
+                    )}
+                  </h2>
+                  <p className="text-xs text-muted-foreground">Restore a returning employee back to Active Staff</p>
+                </div>
+                <button onClick={() => setExPanel(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+                  <X className="h-5 w-5" />
+                </button>
               </div>
-              <button onClick={() => setExPanel(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
-                <X className="h-5 w-5" />
-              </button>
+              {!exLoading && exStaff.length > 0 && (
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={exSearch}
+                    onChange={e => setExSearch(e.target.value)}
+                    placeholder="Search ex-staff by name…"
+                    className="h-9 pl-9 text-sm"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="flex-1 overflow-y-auto px-6 py-5">
@@ -1051,6 +1072,7 @@ export default function StaffPage() {
                   <Loader2 className="h-4 w-4 animate-spin" /><span className="text-sm">Loading ex-staff…</span>
                 </div>
               ) : exStaff.length === 0 ? (
+                /* empty state — no ex-staff at all */
                 <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed py-16 text-center">
                   <UserX className="mb-4 h-12 w-12 text-muted-foreground/25" />
                   <h3 className="font-semibold text-muted-foreground">No ex-staff found</h3>
@@ -1132,8 +1154,13 @@ export default function StaffPage() {
                     </div>
                   )}
 
+                  {exSearch.trim() && exStaff.filter(e => e.name.toLowerCase().includes(exSearch.toLowerCase().trim())).length === 0 ? (
+                    <p className="py-8 text-center text-sm text-muted-foreground">
+                      No ex-staff matching "{exSearch.trim()}"
+                    </p>
+                  ) : (
                   <div className="space-y-2">
-                    {exStaff.map((e) => (
+                    {(exSearch.trim() ? exStaff.filter(e => e.name.toLowerCase().includes(exSearch.toLowerCase().trim())) : exStaff).map((e) => (
                       <div key={e.folderId} className={`rounded-lg border bg-card px-4 py-3 space-y-2 transition-colors ${exSelectedIds.has(e.folderId) ? "border-primary/40 bg-primary/5" : ""}`}>
                         <div className="flex items-center gap-3">
                           <input
@@ -1183,6 +1210,7 @@ export default function StaffPage() {
                       </div>
                     ))}
                   </div>
+                  )}
                 </>
               )}
             </div>
