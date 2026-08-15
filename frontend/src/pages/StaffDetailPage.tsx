@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext"
 import type { StaffMember, DiscRecord, TrainingItem, ExtraTrainingItem, TrainingRecord } from "@/types/staff"
 import { RoleChipPicker, parseRoles } from "@/components/ui/role-picker"
 import { daysUntil, fmtDate, discTypeLabels, discTypeCls } from "@/lib/utils"
+import { api, ApiError } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -261,9 +262,8 @@ export default function StaffDetailPage() {
   const [historyAdding, setHistoryAdding]   = useState(false)
 
   useEffect(() => {
-    fetch("/api/staff", { credentials: "include" })
-      .then((r) => r.json())
-      .then((data: StaffMember[]) => {
+    api.get<StaffMember[]>("/api/staff")
+      .then((data) => {
         const found = data.find((s) => s.id === id) ?? null
         setStaff(found)
         if (found?.training) setTrainingData(found.training)
@@ -271,8 +271,7 @@ export default function StaffDetailPage() {
       .catch(() => {})
       .finally(() => setLoading(false))
 
-    fetch(`/api/staff/${id}/photo`, { credentials: "include" })
-      .then((r) => (r.ok ? r.blob() : null))
+    api.getBlob(`/api/staff/${id}/photo`)
       .then((blob) => { if (blob) setPhotoUrl(URL.createObjectURL(blob)) })
       .catch(() => {})
   }, [id])
@@ -359,22 +358,11 @@ export default function StaffDetailPage() {
           relationship: profileDraft.ec_rel || undefined,
         },
       }
-      const res = await fetch(`/api/staff/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(body),
-      })
-      const d = await res.json()
-      if (!d.ok) { setEditError(d.error ?? "Failed to save."); setEditSaving(false); return }
-      const refreshRes = await fetch("/api/staff", { credentials: "include" })
-      const data: StaffMember[] = await refreshRes.json()
-      const updated = data.find(s => s.id === id) ?? null
-      setStaff(updated)
-      if (updated?.training) setTrainingData(updated.training)
+      await api.put(`/api/staff/${id}`, body)
+      await refreshStaffRecord()
       setEditOpen(false)
-    } catch {
-      setEditError("Network error.")
+    } catch (err) {
+      setEditError(err instanceof ApiError ? err.message : "Network error.")
     } finally {
       setEditSaving(false)
     }
@@ -382,8 +370,7 @@ export default function StaffDetailPage() {
 
   useEffect(() => {
     if (!canManagePortalAccess || !id) return
-    fetch(`/api/staff/${id}/registration-code`, { credentials: "include" })
-      .then((r) => r.json())
+    api.get<{ ok: boolean; code: string; claimed: boolean }>(`/api/staff/${id}/registration-code`)
       .then((d) => { if (d.ok) { setRegCode(d.code); setRegClaimed(d.claimed) } })
       .catch(() => {})
   }, [id, canManagePortalAccess])
@@ -391,8 +378,7 @@ export default function StaffDetailPage() {
   async function regenerateCode() {
     setRegLoading(true)
     try {
-      const res = await fetch(`/api/staff/${id}/registration-code/regenerate`, { method: "POST", credentials: "include" })
-      const d = await res.json()
+      const d = await api.post<{ ok: boolean; code: string }>(`/api/staff/${id}/registration-code/regenerate`)
       if (d.ok) { setRegCode(d.code); setRegClaimed(false) }
     } finally {
       setRegLoading(false)
@@ -411,15 +397,9 @@ export default function StaffDetailPage() {
     if (!file || !id) return
     setUploadingPhoto(true)
     try {
-      await fetch(`/api/staff/${id}/photo`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      })
-      const res = await fetch(`/api/staff/${id}/photo`, { credentials: "include" })
-      if (res.ok) {
-        const blob = await res.blob()
+      await api.post(`/api/staff/${id}/photo`, file)
+      const blob = await api.getBlob(`/api/staff/${id}/photo`)
+      if (blob) {
         if (photoUrl) URL.revokeObjectURL(photoUrl)
         setPhotoUrl(URL.createObjectURL(blob))
       }
@@ -431,12 +411,10 @@ export default function StaffDetailPage() {
   async function moveToExStaff() {
     setExMoving(true); setExError("")
     try {
-      const res = await fetch(`/api/staff/${id}`, { method: "DELETE", credentials: "include" })
-      const d = await res.json()
-      if (!d.ok) { setExError(d.error ?? "Failed to move to Ex-Staff."); setExMoving(false); return }
+      await api.delete(`/api/staff/${id}`)
       navigate("/staff", { replace: true })
-    } catch {
-      setExError("Network error.")
+    } catch (err) {
+      setExError(err instanceof ApiError ? err.message : "Network error.")
       setExMoving(false)
     }
   }
@@ -445,12 +423,7 @@ export default function StaffDetailPage() {
   async function patchTraining(updated: TrainingRecord) {
     setTrainingSaving(true)
     try {
-      await fetch(`/api/staff/${id}/training`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ training: updated }),
-      })
+      await api.patch(`/api/staff/${id}/training`, { training: updated })
     } finally { setTrainingSaving(false) }
   }
 
@@ -523,17 +496,8 @@ export default function StaffDetailPage() {
   async function patchField(updates: Partial<StaffMember>) {
     if (!staff || !id) return
     const merged = { ...staff, ...updates }
-    await fetch(`/api/staff/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify(merged),
-    })
-    const refreshRes = await fetch("/api/staff", { credentials: "include" })
-    const data: StaffMember[] = await refreshRes.json()
-    const updated = data.find(s => s.id === id) ?? null
-    setStaff(updated)
-    if (updated?.training) setTrainingData(updated.training)
+    await api.put(`/api/staff/${id}`, merged)
+    await refreshStaffRecord()
   }
 
   // ── Document helpers ──
@@ -548,22 +512,11 @@ export default function StaffDetailPage() {
     if (!editingDocKey || !id) return
     setUploadingDoc(true)
     try {
-      const res = await fetch(`/api/staff/${id}/documents/${editingDocKey}`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      })
-      const d = await res.json()
+      const d = await api.post<{ ok: boolean; date: string }>(`/api/staff/${id}/documents/${editingDocKey}`, file)
       if (d.ok) {
         setDocDraft({ uploaded: true, date: d.date })
         setDocFileName(file.name)
-        // Refresh staff record so DocRow shows updated status
-        const refreshRes = await fetch("/api/staff", { credentials: "include" })
-        const data: StaffMember[] = await refreshRes.json()
-        const updated = data.find(s => s.id === id) ?? null
-        setStaff(updated)
-        if (updated?.training) setTrainingData(updated.training)
+        await refreshStaffRecord()
       }
     } finally {
       setUploadingDoc(false)
@@ -584,8 +537,7 @@ export default function StaffDetailPage() {
 
   async function refreshStaffRecord() {
     if (!id) return
-    const res = await fetch("/api/staff", { credentials: "include" })
-    const data: StaffMember[] = await res.json()
+    const data = await api.get<StaffMember[]>("/api/staff")
     const updated = data.find(s => s.id === id) ?? null
     setStaff(updated)
     if (updated?.training) setTrainingData(updated.training)
@@ -595,14 +547,9 @@ export default function StaffDetailPage() {
     if (!id) return
     setDeletingDoc(true)
     try {
-      const res = await fetch(`/api/staff/${id}/documents/${docKey}`, { method: "DELETE", credentials: "include" })
-      const d = await res.json()
-      if (d.ok) {
-        await refreshStaffRecord()
-        toast.success("Document removed")
-      } else {
-        toast.error(d.error ?? "Failed to remove document")
-      }
+      await api.delete(`/api/staff/${id}/documents/${docKey}`)
+      await refreshStaffRecord()
+      toast.success("Document removed")
     } catch {
       toast.error("Network error — please try again")
     } finally {
@@ -625,14 +572,9 @@ export default function StaffDetailPage() {
     if (!id) return
     setDeletingCert(true)
     try {
-      const res = await fetch(`/api/staff/${id}/training/${courseKey}/certificate`, { method: "DELETE", credentials: "include" })
-      const d = await res.json()
-      if (d.ok) {
-        await refreshStaffRecord()
-        toast.success("Certificate removed")
-      } else {
-        toast.error(d.error ?? "Failed to remove certificate")
-      }
+      await api.delete(`/api/staff/${id}/training/${courseKey}/certificate`)
+      await refreshStaffRecord()
+      toast.success("Certificate removed")
     } catch {
       toast.error("Network error — please try again")
     } finally {
@@ -710,8 +652,7 @@ export default function StaffDetailPage() {
     if (!id) return
     setDiscLoading(true)
     try {
-      const res = await fetch(`/api/staff/${id}/disciplinary`, { credentials: "include" })
-      const d = await res.json()
+      const d = await api.get<{ ok: boolean; records: DiscRecord[] }>(`/api/staff/${id}/disciplinary`)
       if (d.ok) setDiscRecords(d.records)
     } finally {
       setDiscLoading(false)
@@ -725,24 +666,19 @@ export default function StaffDetailPage() {
     }
     setDiscSaving(true); setDiscError("")
     try {
-      const res = await fetch(`/api/staff/${id}/disciplinary`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(discDraft),
-      })
-      const d = await res.json()
-      if (!d.ok) { setDiscError(d.error ?? "Failed to save."); return }
+      await api.post(`/api/staff/${id}/disciplinary`, discDraft)
       setDiscForm(false)
       setDiscDraft({ incident_date: "", type: "warning", description: "", action_taken: "" })
       await loadDiscRecords()
+    } catch (err) {
+      setDiscError(err instanceof ApiError ? err.message : "Failed to save.")
     } finally {
       setDiscSaving(false)
     }
   }
 
   async function deleteDiscRecord(recordId: string) {
-    await fetch(`/api/disciplinary/${recordId}`, { method: "DELETE", credentials: "include" })
+    await api.delete(`/api/disciplinary/${recordId}`)
     await loadDiscRecords()
   }
 
@@ -750,8 +686,7 @@ export default function StaffDetailPage() {
     if (!id) return
     setMsgLoading(true)
     try {
-      const res = await fetch(`/api/staff/${id}/messages`, { credentials: "include" })
-      const d = await res.json()
+      const d = await api.get<{ ok: boolean; messages: typeof messages }>(`/api/staff/${id}/messages`)
       if (d.ok) {
         setMessages(d.messages)
         setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100)
@@ -765,14 +700,7 @@ export default function StaffDetailPage() {
     if (!msgDraft.trim() && !msgFile) return
     setMsgSending(true)
     try {
-      const res = await fetch(`/api/staff/${id}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ message: msgDraft.trim() || `📎 ${msgFile?.name}` }),
-      })
-      const d = await res.json()
-      if (!d.ok) { toast.error(d.error ?? "Failed to send."); return }
+      const d = await api.post<{ ok: boolean; message: { id: string } }>(`/api/staff/${id}/messages`, { message: msgDraft.trim() || `📎 ${msgFile?.name}` })
       if (msgFile) {
         const buf = await msgFile.arrayBuffer()
         const attRes = await fetch(`/api/messages/${d.message.id}/attachment`, {
@@ -802,10 +730,9 @@ export default function StaffDetailPage() {
   async function deleteMessage(messageId: string) {
     setDeletingMsg(true)
     try {
-      const res = await fetch(`/api/messages/${messageId}`, { method: "DELETE", credentials: "include" })
-      const d = await res.json()
-      if (d.ok) { setMessages(prev => prev.filter(m => m.id !== messageId)); toast.success("Message removed") }
-      else toast.error(d.error ?? "Failed to remove message")
+      await api.delete(`/api/messages/${messageId}`)
+      setMessages(prev => prev.filter(m => m.id !== messageId))
+      toast.success("Message removed")
     } finally {
       setDeletingMsg(false)
       setConfirmDeleteMsgId(null)
@@ -823,8 +750,7 @@ export default function StaffDetailPage() {
     if (!id) return
     setProvLoading(true)
     try {
-      const res = await fetch(`/api/staff/${id}/provisions`, { credentials: "include" })
-      const d = await res.json()
+      const d = await api.get<{ ok: boolean; provisions: any[] }>(`/api/staff/${id}/provisions`)
       if (d.ok) setProvisions(d.provisions)
     } finally {
       setProvLoading(false)
@@ -835,17 +761,13 @@ export default function StaffDetailPage() {
     setProvSaving(true)
     try {
       const itemStr = `${provDraft.itemType} × ${provDraft.quantity}`
-      const res = await fetch(`/api/staff/${id}/provisions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ item: itemStr, provided: provDraft.provided, date_given: provDraft.date_given, date_returned: provDraft.date_returned, notes: provDraft.notes }),
-      })
-      const d = await res.json()
+      const d = await api.post<{ ok: boolean; error?: string }>(`/api/staff/${id}/provisions`, { item: itemStr, provided: provDraft.provided, date_given: provDraft.date_given, date_returned: provDraft.date_returned, notes: provDraft.notes })
       if (!d.ok) { toast.error(d.error ?? "Failed to save."); return }
       setProvForm(false)
       setProvDraft({ itemType: "Security Jacket", quantity: 1, provided: true, date_given: "", date_returned: "", notes: "" })
       await loadProvisions()
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Failed to save.")
     } finally {
       setProvSaving(false)
     }
@@ -853,38 +775,34 @@ export default function StaffDetailPage() {
 
   async function loadContractInfo() {
     if (!id) return
-    const res = await fetch(`/api/staff/${id}/contract/info`, { credentials: "include" })
-    const d = await res.json()
-    if (d.ok) setContractExists(d.exists)
+    try {
+      const d = await api.get<{ ok: boolean; exists: boolean }>(`/api/staff/${id}/contract/info`)
+      if (d.ok) setContractExists(d.exists)
+    } catch {}
   }
 
   async function uploadContract(file: File) {
     setContractUploading(true)
     try {
-      const buf = await file.arrayBuffer()
-      const res = await fetch(`/api/staff/${id}/contract`, {
-        method: "POST",
-        headers: { "Content-Type": file.type || "application/pdf" },
-        credentials: "include",
-        body: buf,
-      })
-      const d = await res.json()
+      const d = await api.post<{ ok: boolean; error?: string }>(`/api/staff/${id}/contract`, new Blob([await file.arrayBuffer()], { type: file.type || "application/pdf" }))
       if (!d.ok) { toast.error(d.error ?? "Upload failed."); return }
       toast.success("Contract uploaded.")
       setContractExists(true)
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Upload failed.")
     } finally {
       setContractUploading(false)
     }
   }
 
   async function deleteContract() {
-    await fetch(`/api/staff/${id}/contract`, { method: "DELETE", credentials: "include" })
+    await api.delete(`/api/staff/${id}/contract`)
     setContractExists(false)
     toast.success("Contract removed.")
   }
 
   async function deleteProvision(provId: string) {
-    await fetch(`/api/provisions/${provId}`, { method: "DELETE", credentials: "include" })
+    await api.delete(`/api/provisions/${provId}`)
     await loadProvisions()
   }
 

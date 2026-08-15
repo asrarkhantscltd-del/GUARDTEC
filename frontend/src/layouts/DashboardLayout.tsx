@@ -234,16 +234,19 @@ export default function DashboardLayout() {
         {/* Logo area — full-width brand zone */}
         <button
           onClick={() => { navigate("/"); setSidebarOpen(false) }}
-          className="relative flex h-32 w-full shrink-0 items-center justify-center overflow-hidden border-b border-sidebar-border transition-colors hover:bg-sidebar-accent"
+          className="relative flex w-full shrink-0 flex-col items-center justify-center gap-1 overflow-hidden border-b border-sidebar-border py-5 transition-colors hover:bg-sidebar-accent"
         >
           {/* Red glow behind logo */}
-          <div className="glow-blob absolute left-1/2 top-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 opacity-50" />
+          <div className="glow-blob absolute left-1/2 top-1/2 h-48 w-48 -translate-x-1/2 -translate-y-1/2 opacity-40" />
           {/* The logo SVGs carry their own background — clip to the container */}
           <img
             src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
             alt="GuardTec Security"
-            className="relative z-10 w-[200px] h-auto"
+            className="relative z-10 w-[220px] h-auto"
           />
+          <span className="relative z-10 font-display text-[9px] font-medium tracking-[0.35em] text-sidebar-foreground/40 uppercase mt-1">
+            Compliance Platform
+          </span>
         </button>
 
         {/* Nav — grouped by area */}
@@ -335,10 +338,16 @@ export default function DashboardLayout() {
               alt="GuardTec"
               className="h-9 w-auto md:hidden rounded-sm"
             />
-            <div className="hidden md:flex items-center gap-2.5">
-              <div className="h-2 w-2 rounded-full bg-success shadow-[0_0_6px_rgba(34,197,94,0.8)]" />
-              <h1 className="text-base font-bold tracking-tight">GuardTec</h1>
-              <span className="text-xs font-medium text-muted-foreground">Compliance Platform</span>
+            <div className="hidden md:flex items-center gap-3">
+              <div className="relative">
+                <div className="h-2.5 w-2.5 rounded-full bg-success shadow-[0_0_8px_rgba(34,197,94,0.8)]" />
+                <div className="absolute inset-0 h-2.5 w-2.5 rounded-full bg-success animate-ping opacity-40" />
+              </div>
+              <h1 className="font-display text-lg font-bold tracking-wider uppercase">
+                Guard<span className="text-primary">Tec</span>
+              </h1>
+              <div className="h-4 w-px bg-border" />
+              <span className="font-display text-[10px] font-medium tracking-[0.2em] text-muted-foreground uppercase">Compliance Platform</span>
             </div>
           </div>
 
