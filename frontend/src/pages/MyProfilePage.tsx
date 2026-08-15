@@ -3,18 +3,22 @@ import { toast } from "sonner"
 import { discTypeLabels, discTypeCls } from "@/lib/utils"
 import { api, ApiError } from "@/lib/api"
 import {
-  ShieldCheck, AlertTriangle, Clock, Camera, ImageOff,
-  Loader2, Save, User as UserIcon, Upload, BadgeAlert, Flag, EyeOff, Eye,
+  ShieldCheck, AlertTriangle, Clock,
+  Loader2, User as UserIcon, Upload, BadgeAlert, Flag, EyeOff, Eye,
   Paperclip, X, FileVideo, FileText, Image as ImageIcon,
   MessageSquare, Package, Send, Pencil, Download,
 } from "lucide-react"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
-import type { TrainingRecord, BankDetails } from "@/types/staff"
+import OnboardingWizard from "@/components/onboarding/OnboardingWizard"
+import { Section, Field } from "@/components/profile/ProfileShared"
+import type {
+  TrainingRecord, BankDetails, ReferenceDetail,
+  AddressHistoryEntry, EmploymentHistoryEntry, CriminalHistoryEntry,
+  CautionEntry, OtherQualification, OnboardingDeclarations,
+} from "@/types/staff"
 
-interface EmergencyContact { name?: string; phone?: string; relationship?: string }
-interface Ref { name?: string; company?: string; email?: string; phone?: string; status?: string }
+interface EmergencyContact { name?: string; phone?: string; relationship?: string; address?: string }
+type Ref = ReferenceDetail
 interface DiscRecord { id: string; incident_date: string; type: string; description: string; action_taken?: string }
 interface IncidentReport { id: string; report_date: string; incident_type: string; status: string; description: string; resolution_notes?: string; attachment_count?: number }
 interface Profile {
@@ -26,13 +30,32 @@ interface Profile {
   emergencyContact?: EmergencyContact
   bankDetails?: BankDetails
   sia?:  { number?: string; expiry?: string; type?: string }
-  cscs?: { number?: string; expiry?: string }
+  cscs?: { number?: string; expiry?: string; cardType?: string }
   visa?: { type?: string; expiry?: string }
   references?: { ref1?: Ref; ref2?: Ref }
   pending_submission?: { submitted_at?: string; photo_pending?: boolean }
   rejection_reason?: string
-  documents?: Record<string, { uploaded?: boolean; date?: string } | undefined>
+  documents?: Record<string, { uploaded?: boolean; date?: string; docType?: string } | undefined>
   training?: TrainingRecord
+
+  // BS7858 onboarding fields
+  dateOfBirth?: string
+  nationality?: string
+  ni?: string
+  uniqueTaxpayerReference?: string
+  utrNotApplicable?: boolean
+  previousNames?: string
+  yearsAtCurrentAddress?: number
+  addressHistory?: AddressHistoryEntry[]
+  employmentHistoryDetail?: EmploymentHistoryEntry[]
+  otherQualifications?: OtherQualification[]
+  hasCriminalHistory?: boolean
+  criminalHistory?: CriminalHistoryEntry[]
+  hasCautions?: boolean
+  cautionsAndInvestigations?: CautionEntry[]
+  declarations?: OnboardingDeclarations
+  onboardingStatus?: "not-started" | "in-progress" | "submitted" | "locked"
+  onboardingSubmittedAt?: string
 }
 
 const BLANK: Profile = { id: "", name: "" }
@@ -215,8 +238,7 @@ export default function MyProfilePage() {
     setPhotoPreview(file ? URL.createObjectURL(file) : null)
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  async function handleSubmit() {
     setSaving(true)
     setError("")
     setSuccess(false)
@@ -227,6 +249,15 @@ export default function MyProfilePage() {
         bankDetails: profile.bankDetails,
         sia: profile.sia, cscs: profile.cscs, visa: profile.visa,
         references: profile.references,
+        dateOfBirth: profile.dateOfBirth, nationality: profile.nationality,
+        ni: profile.ni, uniqueTaxpayerReference: profile.uniqueTaxpayerReference,
+        utrNotApplicable: profile.utrNotApplicable,
+        previousNames: profile.previousNames, yearsAtCurrentAddress: profile.yearsAtCurrentAddress,
+        addressHistory: profile.addressHistory, employmentHistoryDetail: profile.employmentHistoryDetail,
+        otherQualifications: profile.otherQualifications,
+        hasCriminalHistory: profile.hasCriminalHistory, criminalHistory: profile.criminalHistory,
+        hasCautions: profile.hasCautions, cautionsAndInvestigations: profile.cautionsAndInvestigations,
+        declarations: profile.declarations,
       })
 
       if (photo) {
@@ -315,7 +346,7 @@ export default function MyProfilePage() {
               { label: "SIA",  status: siaStatus,  expiry: profile.sia?.expiry },
               { label: "CSCS", status: cscsStatus, expiry: profile.cscs?.expiry },
               { label: "RTW",  status: visaStatus, expiry: profile.visa?.expiry },
-            ].map(({ label, status, expiry }) => (
+            ].map(({ label, status }) => (
               <span key={label} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusCfg[status].cls}`}>
                 {label} · {statusCfg[status].label}
               </span>
@@ -480,224 +511,16 @@ export default function MyProfilePage() {
       )}
 
       {activeTab === "details" && formExpanded && (
-        <form onSubmit={handleSubmit} className="space-y-5">
-        {error && <p className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>}
-
-        {/* Photo */}
-        <Section title="Photo">
-          <div className="flex items-center gap-4">
-            <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-dashed bg-muted/40">
-              {photoPreview
-                ? <img src={photoPreview} alt="Preview" className="h-full w-full object-cover" />
-                : profile.id
-                  ? <img src={`/api/staff/${profile.id}/photo`} alt={profile.name}
-                      className="h-full w-full object-cover"
-                      onError={e => { e.currentTarget.style.display = "none" }} />
-                  : <ImageOff className="h-6 w-6 text-muted-foreground/40" />}
-            </div>
-            <div className="flex-1">
-              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors">
-                <Camera className="h-3.5 w-3.5" />
-                {photo ? "Change photo" : "Upload new photo"}
-                <input type="file" accept="image/*" className="hidden"
-                  onChange={e => pickPhoto(e.target.files?.[0] ?? null)} />
-              </label>
-              <p className="mt-1.5 text-[11px] text-muted-foreground">
-                JPG or PNG. Your new photo will show once your manager approves it.
-              </p>
-            </div>
-          </div>
-        </Section>
-
-        {/* Personal */}
-        <Section title="Personal Details">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Full name">
-              <Input value={profile.name} disabled className="opacity-60" />
-            </Field>
-            <Field label="Email">
-              <Input value={profile.email ?? ""} disabled className="opacity-60" />
-            </Field>
-            <Field label="Phone">
-              <Input type="tel" value={profile.phone ?? ""}
-                onChange={e => set("phone", e.target.value)} />
-            </Field>
-            <Field label="Address">
-              <Input value={profile.address ?? ""}
-                onChange={e => set("address", e.target.value)} />
-            </Field>
-          </div>
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <UserIcon className="h-3 w-3" />Name and email are managed by your office — contact them to change these.
-          </p>
-        </Section>
-
-        {/* Emergency contact */}
-        <Section title="Emergency Contact">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Field label="Name">
-              <Input value={profile.emergencyContact?.name ?? ""}
-                onChange={e => set("emergencyContact", { ...profile.emergencyContact, name: e.target.value })} />
-            </Field>
-            <Field label="Phone">
-              <Input type="tel" value={profile.emergencyContact?.phone ?? ""}
-                onChange={e => set("emergencyContact", { ...profile.emergencyContact, phone: e.target.value })} />
-            </Field>
-            <Field label="Relationship">
-              <Input value={profile.emergencyContact?.relationship ?? ""}
-                onChange={e => set("emergencyContact", { ...profile.emergencyContact, relationship: e.target.value })} />
-            </Field>
-          </div>
-        </Section>
-
-        {/* Bank details */}
-        <Section title="Bank Details">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Account holder name">
-              <Input value={profile.bankDetails?.accountHolderName ?? ""}
-                onChange={e => set("bankDetails", { ...profile.bankDetails, accountHolderName: e.target.value })} />
-            </Field>
-            <Field label="Bank name">
-              <Input value={profile.bankDetails?.bankName ?? ""}
-                onChange={e => set("bankDetails", { ...profile.bankDetails, bankName: e.target.value })} />
-            </Field>
-            <Field label="Sort code">
-              <Input className="font-mono" inputMode="numeric" maxLength={8} placeholder="00-00-00"
-                value={profile.bankDetails?.sortCode ?? ""}
-                onChange={e => set("bankDetails", { ...profile.bankDetails, sortCode: e.target.value })} />
-            </Field>
-            <Field label="Account number">
-              <Input className="font-mono" inputMode="numeric" maxLength={8} placeholder="12345678"
-                value={profile.bankDetails?.accountNumber ?? ""}
-                onChange={e => set("bankDetails", { ...profile.bankDetails, accountNumber: e.target.value })} />
-            </Field>
-          </div>
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <UserIcon className="h-3 w-3" />Used by Accounts to pay your wages — double-check before submitting.
-          </p>
-        </Section>
-
-        {/* SIA */}
-        <Section title="SIA Licence">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Field label="Licence number">
-              <Input className="font-mono" value={profile.sia?.number ?? ""}
-                onChange={e => set("sia", { ...profile.sia, number: e.target.value })} />
-            </Field>
-            <Field label="Licence type">
-              <Input value={profile.sia?.type ?? ""} placeholder="e.g. Door Supervisor"
-                onChange={e => set("sia", { ...profile.sia, type: e.target.value })} />
-            </Field>
-            <Field label="Expiry date">
-              <Input type="date" value={profile.sia?.expiry ?? ""}
-                onChange={e => set("sia", { ...profile.sia, expiry: e.target.value })} />
-            </Field>
-          </div>
-        </Section>
-
-        {/* CSCS */}
-        <Section title="CSCS Card">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Card number">
-              <Input className="font-mono" value={profile.cscs?.number ?? ""}
-                onChange={e => set("cscs", { ...profile.cscs, number: e.target.value })} />
-            </Field>
-            <Field label="Expiry date">
-              <Input type="date" value={profile.cscs?.expiry ?? ""}
-                onChange={e => set("cscs", { ...profile.cscs, expiry: e.target.value })} />
-            </Field>
-          </div>
-        </Section>
-
-        {/* Right to Work */}
-        <Section title="Right to Work / Visa">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Visa / status type">
-              <Input value={profile.visa?.type ?? ""} placeholder="e.g. British citizen, Skilled Worker visa"
-                onChange={e => set("visa", { ...profile.visa, type: e.target.value })} />
-            </Field>
-            <Field label="Expiry date (if applicable)">
-              <Input type="date" value={profile.visa?.expiry ?? ""}
-                onChange={e => set("visa", { ...profile.visa, expiry: e.target.value })} />
-            </Field>
-          </div>
-        </Section>
-
-        {/* References */}
-        <Section title="References">
-          {(["ref1", "ref2"] as const).map((key, i) => (
-            <div key={key} className={i > 0 ? "mt-4 border-t pt-4" : ""}>
-              <p className="mb-2 text-xs font-semibold text-muted-foreground">Reference {i + 1}</p>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Field label="Name">
-                  <Input value={profile.references?.[key]?.name ?? ""}
-                    onChange={e => set("references", { ...profile.references, [key]: { ...profile.references?.[key], name: e.target.value } })} />
-                </Field>
-                <Field label="Company">
-                  <Input value={profile.references?.[key]?.company ?? ""}
-                    onChange={e => set("references", { ...profile.references, [key]: { ...profile.references?.[key], company: e.target.value } })} />
-                </Field>
-                <Field label="Email">
-                  <Input type="email" value={profile.references?.[key]?.email ?? ""}
-                    onChange={e => set("references", { ...profile.references, [key]: { ...profile.references?.[key], email: e.target.value } })} />
-                </Field>
-                <Field label="Phone">
-                  <Input type="tel" value={profile.references?.[key]?.phone ?? ""}
-                    onChange={e => set("references", { ...profile.references, [key]: { ...profile.references?.[key], phone: e.target.value } })} />
-                </Field>
-              </div>
-            </div>
-          ))}
-        </Section>
-
-        {/* Documents */}
-        {profile.id && (
-          <Section title="Supporting Documents">
-            <p className="mb-4 text-xs text-muted-foreground">
-              Upload copies of your compliance documents. Files are stored securely and reviewed by your manager.
-            </p>
-            <div className="space-y-3">
-              {DOC_UPLOADS.map((doc) => (
-                <DocUploadRow
-                  key={doc.key}
-                  label={doc.label}
-                  hint={doc.hint}
-                  staffId={profile.id}
-                  docKey={doc.key}
-                  initialUploaded={!!profile.documents?.[doc.key]?.uploaded}
-                />
-              ))}
-            </div>
-          </Section>
-        )}
-
-        {/* Training certificates */}
-        {profile.id && (
-          <Section title="Training Certificates">
-            <p className="mb-4 text-xs text-muted-foreground">
-              Upload a copy of each certificate you hold. Your office manages the course dates — this is just the certificate file.
-            </p>
-            <div className="space-y-3">
-              {TRAINING_CERT_UPLOADS.map((course) => (
-                <TrainingCertRow
-                  key={course.key}
-                  label={course.label}
-                  staffId={profile.id}
-                  courseKey={course.key}
-                  item={profile.training?.[course.key]}
-                />
-              ))}
-            </div>
-          </Section>
-        )}
-
-        <div className="sticky bottom-4 flex justify-end">
-          <Button type="submit" disabled={saving} className="gap-2 shadow-lg">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            {saving ? "Submitting…" : "Submit for review"}
-          </Button>
-        </div>
-      </form>
+        <OnboardingWizard
+          profile={profile}
+          set={set}
+          photo={photo}
+          photoPreview={photoPreview}
+          pickPhoto={pickPhoto}
+          saving={saving}
+          submitError={error}
+          onSubmit={handleSubmit}
+        />
       )}  {/* end details tab */}
 
       {/* ══ REPORT TAB ══ */}
@@ -945,147 +768,5 @@ export default function MyProfilePage() {
   )
 }
 
-// ── Document uploads ──────────────────────────────────────────────────────────
-
-const DOC_UPLOADS = [
-  { key: "siaPhysical",     label: "SIA Licence Copy",   hint: "Front of your SIA licence card — PDF, JPG or PNG" },
-  { key: "cscsCard",        label: "CSCS Card",           hint: "Front of your CSCS card — PDF, JPG or PNG" },
-  { key: "passport",        label: "Passport / Photo ID", hint: "Photo page of your passport or national ID" },
-  { key: "brpCard",         label: "BRP Card",            hint: "Biometric Residence Permit — if applicable" },
-  { key: "proofOfAddress1", label: "Proof of Address",    hint: "Utility bill or bank statement (within 3 months)" },
-]
-
-function DocUploadRow({ label, hint, staffId, docKey, initialUploaded }: {
-  label: string; hint: string; staffId: string; docKey: string; initialUploaded?: boolean
-}) {
-  const [uploading, setUploading] = useState(false)
-  const [uploaded, setUploaded] = useState(!!initialUploaded)
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  async function handleFile(file: File) {
-    setUploading(true)
-    try {
-      await api.post(`/api/staff/${staffId}/documents/${docKey}`, file)
-      setUploaded(true)
-      toast.success(`${label} uploaded`)
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Network error — please try again")
-    } finally {
-      setUploading(false)
-      if (inputRef.current) inputRef.current.value = ""
-    }
-  }
-
-  return (
-    <div className="flex items-start gap-3 rounded-lg border bg-muted/20 px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">{label}</div>
-        <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>
-      </div>
-      <div className="shrink-0">
-        {uploaded ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-700 dark:bg-green-950/40 dark:text-green-400">
-            <ShieldCheck className="h-3 w-3" /> Uploaded
-          </span>
-        ) : (
-          <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted ${uploading ? "pointer-events-none opacity-50" : ""}`}>
-            {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-            {uploading ? "Uploading…" : "Upload"}
-            <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
-              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
-          </label>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ── Training certificate uploads ────────────────────────────────────────────
-
-type StandardTrainingKey = "siaCertificate" | "firstAid" | "manualHandling" | "fireAwareness" | "conflictManagement" | "bwcTraining" | "cscsTest"
-
-const TRAINING_CERT_UPLOADS: { key: StandardTrainingKey; label: string }[] = [
-  { key: "siaCertificate",     label: "SIA Qualifying Certificate" },
-  { key: "firstAid",           label: "First Aid (Emergency)" },
-  { key: "manualHandling",     label: "Manual Handling" },
-  { key: "fireAwareness",      label: "Fire Awareness" },
-  { key: "conflictManagement", label: "Conflict Management" },
-  { key: "bwcTraining",        label: "Body Worn Camera (BWC)" },
-  { key: "cscsTest",           label: "CSCS Health & Safety Test" },
-]
-
-function TrainingCertRow({ label, staffId, courseKey, item }: {
-  label: string; staffId: string; courseKey: string
-  item?: { completed?: boolean; expiry?: string; certUploaded?: boolean }
-}) {
-  const [uploading, setUploading] = useState(false)
-  const [uploaded, setUploaded] = useState(!!item?.certUploaded)
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  async function handleFile(file: File) {
-    setUploading(true)
-    try {
-      await api.post(`/api/staff/${staffId}/training/${courseKey}/certificate`, file)
-      setUploaded(true)
-      toast.success(`${label} certificate uploaded`)
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Network error — please try again")
-    } finally {
-      setUploading(false)
-      if (inputRef.current) inputRef.current.value = ""
-    }
-  }
-
-  return (
-    <div className="flex items-start gap-3 rounded-lg border bg-muted/20 px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">{label}</div>
-        <div className="mt-0.5 text-xs text-muted-foreground">
-          {item?.completed ? "Marked complete by your office" : "Not yet marked complete"}
-          {item?.expiry ? ` · Expires ${item.expiry}` : ""}
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {uploaded && (
-          <a href={`/api/staff/${staffId}/training/${courseKey}/certificate`} target="_blank" rel="noopener noreferrer"
-            className="text-xs text-primary hover:underline">View</a>
-        )}
-        {uploaded ? (
-          <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted ${uploading ? "pointer-events-none opacity-50" : ""}`}>
-            {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5 text-green-600" />}
-            {uploading ? "Uploading…" : "Replace"}
-            <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
-              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
-          </label>
-        ) : (
-          <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted ${uploading ? "pointer-events-none opacity-50" : ""}`}>
-            {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-            {uploading ? "Uploading…" : "Upload certificate"}
-            <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
-              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
-          </label>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function Section({ title, icon, badge, children }: { title: string; icon?: React.ReactNode; badge?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div className="surface p-5">
-      <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        {icon}{title}{badge}
-      </h3>
-      {children}
-    </div>
-  )
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <Label className="mb-1 block text-xs font-medium text-muted-foreground">{label}</Label>
-      {children}
-    </div>
-  )
-}
+// Section, Field, DocUploadRow, TrainingCertRow, DOC_UPLOADS, TRAINING_CERT_UPLOADS
+// moved to @/components/profile/ProfileShared — shared with OnboardingWizard.

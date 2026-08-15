@@ -1029,8 +1029,11 @@ export default function StaffDetailPage() {
                 { label: "Gender",             val: staff.gender },
                 { label: "Place of Birth",     val: staff.placeOfBirth },
                 { label: "NI Number",          val: staff.ni },
+                { label: "UTR",                val: staff.utrNotApplicable ? "Not applicable" : staff.uniqueTaxpayerReference },
+                { label: "Previous Names",     val: staff.previousNames },
                 { label: "Driving Licence",    val: staff.drivingLicence },
                 { label: "Address",            val: staff.address },
+                { label: "Years at Address",   val: staff.yearsAtCurrentAddress != null ? String(staff.yearsAtCurrentAddress) : null },
                 { label: "Contract",           val: staff.contract },
               ].filter((r) => r.val).map(({ label, val }) => (
                 <div key={label}>

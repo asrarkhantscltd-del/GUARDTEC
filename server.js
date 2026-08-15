@@ -466,7 +466,7 @@ app.post('/api/staff/:id/photo', requireLogin, requireOwnStaffOrPermission('staf
 
 // ── STAFF DOCUMENT FILES ──────────────────────────────────────────────────────
 var ALLOWED_DOC_KEYS = [
-  'siaPhysical','passport','brpCard','proofOfAddress1','proofOfAddress2',
+  'siaPhysical','passport','drivingLicenceDoc','brpCard','proofOfAddress1','proofOfAddress2',
   'p45','bankLetter','application','assignmentInstructions','cscsCard'
 ];
 
@@ -476,7 +476,7 @@ var ALLOWED_TRAINING_KEYS = [
 ];
 
 var DOC_KEY_LABELS = {
-  siaPhysical: 'SIA Licence copy', passport: 'Passport / Photo ID', brpCard: 'BRP Card',
+  siaPhysical: 'SIA Licence copy', passport: 'Passport / Photo ID', drivingLicenceDoc: 'Driving Licence', brpCard: 'BRP Card',
   proofOfAddress1: 'Proof of Address', proofOfAddress2: 'Proof of Address',
   p45: 'P45/P60', bankLetter: 'Bank Letter', application: 'Application Form',
   assignmentInstructions: 'Assignment Instructions', cscsCard: 'CSCS Card',
@@ -1375,6 +1375,19 @@ app.get('/api/my-profile', requireLogin, requireRole('staff'), function(req, res
   }
 });
 
+// Fields a staff member can submit via their self-service profile. Shared
+// between the pending_submission constructor below and the approve-merge
+// allowlist, so a field can never be accepted into pending_submission but
+// silently dropped on approval (or vice versa).
+var MY_PROFILE_FIELDS = [
+  'phone', 'address', 'emergencyContact', 'sia', 'cscs', 'visa', 'references',
+  'bankDetails', 'notes',
+  'dateOfBirth', 'nationality', 'ni', 'uniqueTaxpayerReference', 'utrNotApplicable', 'previousNames',
+  'yearsAtCurrentAddress', 'addressHistory', 'employmentHistoryDetail',
+  'otherQualifications', 'hasCriminalHistory', 'criminalHistory',
+  'hasCautions', 'cautionsAndInvestigations', 'declarations',
+];
+
 // Staff submit changes here — they land in pending_submission and do NOT
 // touch the live compliance record until a manager approves them.
 app.post('/api/my-profile', requireLogin, requireRole('staff'), function(req, res) {
@@ -1384,13 +1397,9 @@ app.post('/api/my-profile', requireLogin, requireRole('staff'), function(req, re
     if (!emp) return res.status(404).json({ ok: false, error: 'Profile not found' });
 
     var b = req.body || {};
-    var pending = Object.assign({}, emp.pending_submission, {
-      submitted_at: new Date().toISOString(),
-      phone: b.phone, address: b.address,
-      emergencyContact: b.emergencyContact,
-      sia: b.sia, cscs: b.cscs, visa: b.visa, references: b.references,
-      bankDetails: b.bankDetails,
-      notes: b.notes,
+    var pending = Object.assign({}, emp.pending_submission, { submitted_at: new Date().toISOString() });
+    MY_PROFILE_FIELDS.forEach(function(field) {
+      if (b[field] !== undefined) pending[field] = b[field];
     });
     emp.pending_submission = pending;
     delete emp.rejection_reason;
@@ -1474,7 +1483,7 @@ app.post('/api/staff/:id/approve', requireLogin, requirePermission('pending_revi
     var pending = emp.pending_submission;
     if (!pending) return res.status(400).json({ ok: false, error: 'No pending submission for this staff member' });
 
-    ['phone', 'address', 'emergencyContact', 'sia', 'cscs', 'visa', 'references', 'bankDetails', 'notes'].forEach(function(field) {
+    MY_PROFILE_FIELDS.forEach(function(field) {
       if (pending[field] !== undefined) emp[field] = pending[field];
     });
 
