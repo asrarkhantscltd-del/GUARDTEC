@@ -7,7 +7,7 @@
 export const JOB_ROLES = [
   "Security Officer", "Door Supervisor", "CCTV Operator", "Patrol Officer",
   "Mobile Patrol", "Supervisor", "Team Leader", "Key Holder",
-  "Receptionist / Concierge", "Gatesman / Banksman",
+  "Receptionist / Concierge", "Gatesman / Banksman", "Driver",
 ]
 
 export function parseRoles(str?: string): string[] {

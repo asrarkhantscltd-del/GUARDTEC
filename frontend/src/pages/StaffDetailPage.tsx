@@ -15,7 +15,7 @@ import {
   ArrowLeft, Phone, Mail, User, ShieldCheck, CreditCard, FileText,
   Loader2, Upload, Eye, CheckCircle2, AlertCircle, Clock, FileQuestion,
   Fingerprint, Building2, GraduationCap, ClipboardList, UserCheck,
-  HeartPulse, Flame, Swords, HardHat, Camera, Briefcase,
+  HeartPulse, Flame, Swords, HardHat, Camera, Briefcase, Car,
   MapPin, Contact, BadgeAlert, Pencil, Trash2, Plus, X as XIcon,
   KeyRound, Copy, RefreshCw, Check, UserX,
   MessageSquare, Package, Send,
@@ -256,7 +256,7 @@ export default function StaffDetailPage() {
   const [deletingCert, setDeletingCert]   = useState(false)
 
   // Vetting editing
-  const [editingVetting, setEditingVetting] = useState<"dbs" | "bs7858" | "ref1" | "ref2" | null>(null)
+  const [editingVetting, setEditingVetting] = useState<"dbs" | "bs7858" | "ref1" | "ref2" | "driver" | null>(null)
   const [vettingDraft, setVettingDraft]     = useState<Record<string, string | boolean>>({})
   const [vettingSaving, setVettingSaving]   = useState(false)
   const [newHistoryEntry, setNewHistoryEntry] = useState("")
@@ -585,7 +585,7 @@ export default function StaffDetailPage() {
   }
 
   // ── Vetting helpers ──
-  function openVettingEdit(section: "dbs" | "bs7858" | "ref1" | "ref2") {
+  function openVettingEdit(section: "dbs" | "bs7858" | "ref1" | "ref2" | "driver") {
     if (!staff) return
     setEditingVetting(section)
     if (section === "dbs") {
@@ -593,6 +593,17 @@ export default function StaffDetailPage() {
         type:          staff.dbs?.type ?? "",
         checkDate:     staff.dbs?.checkDate ?? "",
         certificateNo: staff.dbs?.certificateNo ?? "",
+      })
+    } else if (section === "driver") {
+      setVettingDraft({
+        fuelCardNumber: staff.driverAssignment?.fuelCardNumber ?? "",
+        tachoCard:      staff.driverAssignment?.tachoCard ?? "",
+        tachoExpiry:    staff.driverAssignment?.tachoExpiry ?? "",
+        dbsNumber:      staff.driverAssignment?.dbsNumber ?? "",
+        dbsDate:        staff.driverAssignment?.dbsDate ?? "",
+        lastAssessment: staff.driverAssignment?.lastAssessment ?? "",
+        status:         staff.driverAssignment?.status ?? "active",
+        notes:          staff.driverAssignment?.notes ?? "",
       })
     } else if (section === "bs7858") {
       setVettingDraft({
@@ -629,6 +640,19 @@ export default function StaffDetailPage() {
           completed:      vettingDraft.completed as boolean,
           completionDate: (vettingDraft.completionDate as string) || undefined,
           reviewer:       (vettingDraft.reviewer as string) || undefined,
+        },
+      })
+    } else if (editingVetting === "driver") {
+      await patchField({
+        driverAssignment: {
+          fuelCardNumber: (vettingDraft.fuelCardNumber as string) || undefined,
+          tachoCard:      (vettingDraft.tachoCard as string) || undefined,
+          tachoExpiry:    (vettingDraft.tachoExpiry as string) || undefined,
+          dbsNumber:      (vettingDraft.dbsNumber as string) || undefined,
+          dbsDate:        (vettingDraft.dbsDate as string) || undefined,
+          lastAssessment: (vettingDraft.lastAssessment as string) || undefined,
+          status:         (vettingDraft.status as "active" | "suspended" | "on_leave") || "active",
+          notes:          (vettingDraft.notes as string) || undefined,
         },
       })
     } else {
@@ -1287,6 +1311,171 @@ export default function StaffDetailPage() {
                 })}
               </CardContent>
             </Card>
+          )}
+
+          {/* ── Driver (only for staff carrying the "Driver" role) ── */}
+          {parseRoles(staff.jobRole).includes("Driver") && (
+            <>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Car className="h-4 w-4" />Driving Licence &amp; Qualifications
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="px-4 space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Submitted by {staff.name} via their own profile — subject to your approval on the Pending Review queue.
+                  </p>
+                  <div className="grid sm:grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Licence Number</p>
+                      <p className="mt-0.5 font-mono">{staff.driverLicence?.licenceNumber || "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Licence Expiry</p>
+                      <p className="mt-0.5">{staff.driverLicence?.licenceExpiry ? fmtDate(staff.driverLicence.licenceExpiry) : "—"}</p>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Licence Categories</p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {staff.driverLicence?.licenceCategories?.length
+                          ? staff.driverLicence.licenceCategories.map(c => (
+                              <span key={c} className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold">{c}</span>
+                            ))
+                          : <span className="text-muted-foreground">—</span>}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">CPC Card No.</p>
+                      <p className="mt-0.5 font-mono">{staff.driverLicence?.cpcCard || "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">CPC Expiry</p>
+                      <p className="mt-0.5">{staff.driverLicence?.cpcExpiry ? fmtDate(staff.driverLicence.cpcExpiry) : "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Medical Cert Expiry</p>
+                      <p className="mt-0.5">{staff.driverLicence?.medicalExpiry ? fmtDate(staff.driverLicence.medicalExpiry) : "—"}</p>
+                    </div>
+                  </div>
+                  <DocRow icon={<FileText className="h-4 w-4" />} label="Driver CPC Card (scan)"
+                    status={docStatusOf(docs.driverCpcCard?.uploaded)} uploadedDate={docs.driverCpcCard?.date}
+                    viewUrl={docs.driverCpcCard?.uploaded ? `/api/staff/${id}/documents/driverCpcCard` : undefined}
+                    onEdit={canEdit ? () => openDocEdit("driverCpcCard") : undefined} {...docDeleteProps("driverCpcCard")} />
+                  <DocRow icon={<FileText className="h-4 w-4" />} label="Driver Medical Certificate"
+                    status={docStatusOf(docs.driverMedicalCert?.uploaded)} uploadedDate={docs.driverMedicalCert?.date}
+                    viewUrl={docs.driverMedicalCert?.uploaded ? `/api/staff/${id}/documents/driverMedicalCert` : undefined}
+                    onEdit={canEdit ? () => openDocEdit("driverMedicalCert") : undefined} {...docDeleteProps("driverMedicalCert")} />
+                </CardContent>
+              </Card>
+
+              {canEdit && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Car className="h-4 w-4" />Driver — Company Assigned
+                      </CardTitle>
+                      {editingVetting !== "driver" && (
+                        <button onClick={() => openVettingEdit("driver")}
+                          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Edit">
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </CardHeader>
+                  <CardContent className="px-4 py-3">
+                    {editingVetting === "driver" ? (
+                      <div className="space-y-3">
+                        <div className="grid sm:grid-cols-2 gap-3">
+                          {[
+                            { field: "fuelCardNumber", label: "Fuel Card Number", type: "text" },
+                            { field: "tachoCard",       label: "Tachograph Card No.", type: "text" },
+                            { field: "tachoExpiry",     label: "Tachograph Expiry", type: "date" },
+                            { field: "dbsNumber",       label: "DBS Certificate No.", type: "text" },
+                            { field: "dbsDate",         label: "DBS Issue Date", type: "date" },
+                            { field: "lastAssessment",  label: "Last Assessment", type: "date" },
+                          ].map(({ field, label, type }) => (
+                            <div key={field}>
+                              <p className="text-xs text-muted-foreground mb-0.5">{label}</p>
+                              <input type={type} value={vettingDraft[field] as string}
+                                onChange={e => setVettingDraft(p => ({ ...p, [field]: e.target.value }))}
+                                className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
+                            </div>
+                          ))}
+                          <div>
+                            <p className="text-xs text-muted-foreground mb-0.5">Status</p>
+                            <select value={vettingDraft.status as string}
+                              onChange={e => setVettingDraft(p => ({ ...p, status: e.target.value }))}
+                              className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring">
+                              <option value="active">Active</option>
+                              <option value="suspended">Suspended</option>
+                              <option value="on_leave">On Leave</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-0.5">Notes</p>
+                          <textarea rows={2} value={vettingDraft.notes as string}
+                            onChange={e => setVettingDraft(p => ({ ...p, notes: e.target.value }))}
+                            className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring resize-none" />
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" className="h-7 text-xs" onClick={saveVetting} disabled={vettingSaving}>
+                            {vettingSaving ? "Saving…" : "Save"}
+                          </Button>
+                          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingVetting(null)}>Cancel</Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid sm:grid-cols-2 gap-3 text-sm">
+                        {[
+                          { label: "Fuel Card Number",     val: staff.driverAssignment?.fuelCardNumber ?? "—" },
+                          { label: "Tachograph Card No.",  val: staff.driverAssignment?.tachoCard ?? "—" },
+                          { label: "Tachograph Expiry",    val: staff.driverAssignment?.tachoExpiry ? fmtDate(staff.driverAssignment.tachoExpiry) : "—" },
+                          { label: "DBS Certificate No.",  val: staff.driverAssignment?.dbsNumber ?? "—" },
+                          { label: "DBS Issue Date",       val: staff.driverAssignment?.dbsDate ? fmtDate(staff.driverAssignment.dbsDate) : "—" },
+                          { label: "Last Assessment",      val: staff.driverAssignment?.lastAssessment ? fmtDate(staff.driverAssignment.lastAssessment) : "—" },
+                          { label: "Status",               val: staff.driverAssignment?.status ?? "active" },
+                        ].map(({ label, val }) => (
+                          <div key={label}>
+                            <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">{label}</p>
+                            <p className="mt-0.5 capitalize">{val}</p>
+                          </div>
+                        ))}
+                        {staff.driverAssignment?.notes && (
+                          <div className="sm:col-span-2">
+                            <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Notes</p>
+                            <p className="mt-0.5">{staff.driverAssignment.notes}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                  <CardContent className="px-4 pb-4 pt-0 space-y-3">
+                    <p className="text-xs text-muted-foreground">
+                      Upload results here after you've reviewed them yourself. Uploads always start hidden from{" "}
+                      {staff.name} — use the visibility toggle to reveal one only if you choose to.
+                    </p>
+                    {[
+                      { key: "driverTachoCard",        label: "Tachograph Card (scan)" },
+                      { key: "driverDbsCheck",          label: "Driver DBS Certificate" },
+                      { key: "driverAssessmentReport",  label: "Driving Assessment Report" },
+                    ].map(doc => {
+                      const meta = docs[doc.key as keyof typeof docs] as { uploaded?: boolean; date?: string; visibleToStaff?: boolean } | undefined
+                      return (
+                        <ConfidentialDocManagerRow key={doc.key} label={doc.label}
+                          uploadUrl={`/api/staff/${id}/documents/${doc.key}`}
+                          visibilityUrl={`/api/staff/${id}/documents/${doc.key}/visibility`}
+                          downloadUrl={`/api/staff/${id}/documents/${doc.key}`}
+                          uploaded={meta?.uploaded} date={meta?.date} visibleToSubject={meta?.visibleToStaff}
+                          subjectLabel={staff.name} onChanged={refreshStaffRecord} />
+                      )
+                    })}
+                  </CardContent>
+                </Card>
+              )}
+            </>
           )}
         </div>
       )}

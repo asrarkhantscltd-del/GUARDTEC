@@ -14,8 +14,11 @@ import { Section, Field } from "@/components/profile/ProfileShared"
 import type {
   TrainingRecord, BankDetails, ReferenceDetail,
   AddressHistoryEntry, EmploymentHistoryEntry, CriminalHistoryEntry,
-  CautionEntry, OtherQualification, OnboardingDeclarations,
+  CautionEntry, OtherQualification, OnboardingDeclarations, DriverLicenceInfo,
 } from "@/types/staff"
+import { parseRoles } from "@/components/ui/role-picker"
+
+const LICENCE_CATS = ["B", "B+E", "C1", "C1+E", "C", "C+E", "D1", "D1+E", "D", "AM"]
 
 interface EmergencyContact { name?: string; phone?: string; relationship?: string; address?: string }
 type Ref = ReferenceDetail
@@ -24,11 +27,13 @@ interface IncidentReport { id: string; report_date: string; incident_type: strin
 interface Profile {
   id: string
   name: string
+  jobRole?: string
   email?: string
   phone?: string
   address?: string
   emergencyContact?: EmergencyContact
   bankDetails?: BankDetails
+  driverLicence?: DriverLicenceInfo
   sia?:  { number?: string; expiry?: string; type?: string }
   cscs?: { number?: string; expiry?: string; cardType?: string }
   visa?: { type?: string; expiry?: string }
@@ -112,14 +117,44 @@ export default function MyProfilePage() {
   // Form minimize — collapses to summary after submit
   const [formExpanded, setFormExpanded] = useState(true)
 
+  // Driver licence & qualifications — self-service, saved independently of
+  // the big onboarding form below (own pending_submission field, see
+  // MY_PROFILE_FIELDS in server.js). Only shown once a manager has given
+  // this staff member the "Driver" role via Add/Edit Staff.
+  const [driverDraft, setDriverDraft]     = useState<DriverLicenceInfo>({})
+  const [driverSaving, setDriverSaving]   = useState(false)
+  const [driverSuccess, setDriverSuccess] = useState(false)
+
   async function load() {
     setLoading(true)
     try {
       const d = await api.get<{ profile: Profile }>("/api/my-profile")
       setProfile(d.profile)
+      setDriverDraft(d.profile.driverLicence ?? {})
     } catch {
     } finally {
       setLoading(false)
+    }
+  }
+
+  function toggleDriverCat(cat: string) {
+    setDriverDraft(prev => {
+      const cats = prev.licenceCategories ?? []
+      return { ...prev, licenceCategories: cats.includes(cat) ? cats.filter(c => c !== cat) : [...cats, cat] }
+    })
+  }
+
+  async function saveDriverLicence() {
+    setDriverSaving(true)
+    setDriverSuccess(false)
+    try {
+      await api.post("/api/my-profile", { driverLicence: driverDraft })
+      await load()
+      setDriverSuccess(true)
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Failed to save — please try again.")
+    } finally {
+      setDriverSaving(false)
     }
   }
 
@@ -485,6 +520,73 @@ export default function MyProfilePage() {
 
           {discRecords.length === 0 && provisions.length === 0 && !contractExists && (
             <p className="text-sm text-muted-foreground text-center py-8">Your compliance overview will appear here once your details are on file.</p>
+          )}
+
+          {/* Driver licence & qualifications — only for staff carrying the "Driver" role */}
+          {parseRoles(profile.jobRole).includes("Driver") && (
+            <div className="rounded-xl border bg-card p-4 space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                <ShieldCheck className="h-3.5 w-3.5" /> Driving Licence &amp; Qualifications
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Fill in what's on your own licence — your office handles fuel cards, tachograph, DBS and assessments separately.
+              </p>
+              {driverSuccess && (
+                <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-success">
+                  <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                  Submitted — your manager will review these changes shortly.
+                </div>
+              )}
+              <div className="grid sm:grid-cols-2 gap-3">
+                <Field label="Licence Number">
+                  <input className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-mono uppercase focus:outline-none focus:ring-1 focus:ring-ring"
+                    value={driverDraft.licenceNumber ?? ""}
+                    onChange={e => setDriverDraft(p => ({ ...p, licenceNumber: e.target.value.toUpperCase() }))} />
+                </Field>
+                <Field label="Licence Expiry">
+                  <input type="date" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    value={driverDraft.licenceExpiry ?? ""}
+                    onChange={e => setDriverDraft(p => ({ ...p, licenceExpiry: e.target.value }))} />
+                </Field>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Licence Categories</label>
+                <div className="flex flex-wrap gap-2">
+                  {LICENCE_CATS.map(cat => {
+                    const active = driverDraft.licenceCategories?.includes(cat)
+                    return (
+                      <button key={cat} type="button" onClick={() => toggleDriverCat(cat)}
+                        className={`rounded-md border px-3 py-1 text-xs font-bold transition-colors ${
+                          active ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background hover:bg-muted"
+                        }`}>
+                        {cat}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+              <div className="grid sm:grid-cols-3 gap-3">
+                <Field label="CPC Card Number">
+                  <input className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+                    value={driverDraft.cpcCard ?? ""}
+                    onChange={e => setDriverDraft(p => ({ ...p, cpcCard: e.target.value }))} />
+                </Field>
+                <Field label="CPC Expiry">
+                  <input type="date" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    value={driverDraft.cpcExpiry ?? ""}
+                    onChange={e => setDriverDraft(p => ({ ...p, cpcExpiry: e.target.value }))} />
+                </Field>
+                <Field label="Medical Cert Expiry">
+                  <input type="date" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    value={driverDraft.medicalExpiry ?? ""}
+                    onChange={e => setDriverDraft(p => ({ ...p, medicalExpiry: e.target.value }))} />
+                </Field>
+              </div>
+              <Button size="sm" onClick={saveDriverLicence} disabled={driverSaving} className="gap-1.5">
+                {driverSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                {driverSaving ? "Saving…" : "Save Driver Details"}
+              </Button>
+            </div>
           )}
         </div>
       )}

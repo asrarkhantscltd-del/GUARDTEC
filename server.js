@@ -874,14 +874,15 @@ app.post('/api/staff/:id/photo', requireLogin, requireOwnStaffOrPermission('staf
 var ALLOWED_DOC_KEYS = [
   'siaPhysical','passport','drivingLicenceDoc','brpCard','proofOfAddress1','proofOfAddress2',
   'p45','bankLetter','application','assignmentInstructions','cscsCard',
-  'creditCheckReport','socialMediaCheckReport'
+  'creditCheckReport','socialMediaCheckReport',
+  'driverCpcCard','driverMedicalCert','driverTachoCard','driverDbsCheck','driverAssessmentReport'
 ];
 
 // Uploaded by management only, and hidden from the staff member by default —
 // unlike every other doc key above (self-uploaded, or manager-uploaded but
 // always visible, e.g. assignmentInstructions), visibility here is an
 // explicit per-document manager choice stored as documents[key].visibleToStaff.
-var MANAGER_ONLY_DOC_KEYS = ['creditCheckReport', 'socialMediaCheckReport'];
+var MANAGER_ONLY_DOC_KEYS = ['creditCheckReport', 'socialMediaCheckReport', 'driverTachoCard', 'driverDbsCheck', 'driverAssessmentReport'];
 
 var ALLOWED_TRAINING_KEYS = [
   'siaCertificate','firstAid','manualHandling','fireAwareness',
@@ -894,6 +895,9 @@ var DOC_KEY_LABELS = {
   p45: 'P45/P60', bankLetter: 'Bank Letter', application: 'Application Form',
   assignmentInstructions: 'Assignment Instructions', cscsCard: 'CSCS Card',
   creditCheckReport: 'Credit Check Report', socialMediaCheckReport: 'Social Media Check Report',
+  driverCpcCard: 'Driver CPC Card', driverMedicalCert: 'Driver Medical Certificate',
+  driverTachoCard: 'Tachograph Card', driverDbsCheck: 'Driver DBS Certificate',
+  driverAssessmentReport: 'Driving Assessment Report',
 };
 var TRAINING_KEY_LABELS = {
   siaCertificate: 'SIA Qualifying Certificate', firstAid: 'First Aid certificate',
@@ -1847,7 +1851,7 @@ app.get('/api/my-profile', requireLogin, requireRole('staff'), function(req, res
 // silently dropped on approval (or vice versa).
 var MY_PROFILE_FIELDS = [
   'phone', 'address', 'emergencyContact', 'sia', 'cscs', 'visa', 'references',
-  'bankDetails', 'notes',
+  'bankDetails', 'notes', 'driverLicence',
   'dateOfBirth', 'nationality', 'ni', 'uniqueTaxpayerReference', 'utrNotApplicable', 'previousNames',
   'yearsAtCurrentAddress', 'addressHistory', 'employmentHistoryDetail',
   'otherQualifications', 'hasCriminalHistory', 'criminalHistory',
@@ -2869,7 +2873,11 @@ app.get('/api/dashboard/stats', requireLogin, async function(req, res) {
     var vehicleCount = loadVehicles().filter(function(v){ return v.status === 'active'; }).length;
 
     var activeSites = loadSites().filter(function(s){ return s.status !== 'inactive'; }).length;
-    var fleetDrivers = loadFleetDrivers().length;
+    // Drivers are just staff carrying the "Driver" role now (see driver/staff
+    // unification) — no separate fleet-drivers collection to count anymore.
+    var driverCount = allStaff.filter(function(s){
+      return String(s.jobRole || '').split(',').map(function(r){ return r.trim(); }).indexOf('Driver') !== -1;
+    }).length;
 
     res.json({
       totalStaff: totalStaff,
@@ -2878,7 +2886,7 @@ app.get('/api/dashboard/stats', requireLogin, async function(req, res) {
       expired: expired,
       vehicles: vehicleCount,
       activeSites: activeSites,
-      drivers: fleetDrivers,
+      drivers: driverCount,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -3103,172 +3111,11 @@ app.delete('/api/vehicles/:id/docs/:filename', requireLogin, requirePermission('
   }
 });
 
-// ── FLEET DRIVERS ─────────────────────────────────────────────────────────────
-var FLEET_DRIVERS_FILE = path.join(BASE, 'fleet-drivers.json');
-
-function loadFleetDrivers() { return loadJsonFile(FLEET_DRIVERS_FILE); }
-
-function saveFleetDrivers(drivers) {
-  fs.writeFileSync(FLEET_DRIVERS_FILE, JSON.stringify(drivers, null, 2), 'utf8');
-}
-
-app.get('/api/fleet-drivers', requireLogin, requirePermission('fleet'), function(req, res) {
-  res.json(loadFleetDrivers());
-});
-
-app.post('/api/fleet-drivers', requireLogin, requirePermission('fleet'), function(req, res) {
-  try {
-    var drivers = loadFleetDrivers();
-    var newDriver = Object.assign({}, req.body, { id: Date.now().toString() });
-    drivers.push(newDriver);
-    saveFleetDrivers(drivers);
-    res.json({ ok: true, driver: newDriver });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-app.patch('/api/fleet-drivers/:id', requireLogin, requirePermission('fleet'), function(req, res) {
-  try {
-    var drivers = loadFleetDrivers();
-    var idx = drivers.findIndex(function(d) { return d.id === req.params.id; });
-    if (idx === -1) return res.status(404).json({ ok: false, error: 'Driver not found' });
-    drivers[idx] = Object.assign({}, drivers[idx], req.body);
-    saveFleetDrivers(drivers);
-    res.json({ ok: true, driver: drivers[idx] });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-app.delete('/api/fleet-drivers/:id', requireLogin, requirePermission('fleet'), function(req, res) {
-  try {
-    var drivers = loadFleetDrivers();
-    drivers = drivers.filter(function(d) { return d.id !== req.params.id; });
-    saveFleetDrivers(drivers);
-
-    // Clean up any uploaded documents + metadata rather than leaving them
-    // orphaned on disk forever (found via testing: deleting a driver left
-    // both the files and the driver-documents-meta.json entry behind).
-    DRIVER_DOC_TYPES.forEach(function(docType) {
-      var fp = findDriverDocFile(req.params.id, docType);
-      if (fp) fs.unlinkSync(fp);
-    });
-    var meta = loadDriverDocsMeta();
-    if (meta[req.params.id]) {
-      delete meta[req.params.id];
-      saveDriverDocsMeta(meta);
-    }
-
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// ── Fleet Driver Documents ─────────────────────────────────────────────────────
-// fleet-drivers.json is a flexible blob (no schema to migrate), so the only
-// new backend surface the driver/staff unification actually needs is file
-// handling — every other new field (staffId, fuelCardNumber, document
-// metadata) just flows through the existing POST/PATCH Object.assign(...)
-// untouched.
-//
-// Two categories, matching the staff-fillable / manager-fillable split:
-// licenceCopy/cpcCard/medicalCert are what the driver already holds — no
-// visibility toggle, there's nothing to hide from someone about their own
-// licence. tachoCard/dbsCheck/assessmentReport are company-assigned or
-// company-conducted — same "uploads hidden until you choose to reveal"
-// pattern as the credit-check/social-media-check documents elsewhere.
-var DRIVER_DOCS_DIR = path.join(BASE, 'driver-documents');
-if (!fs.existsSync(DRIVER_DOCS_DIR)) fs.mkdirSync(DRIVER_DOCS_DIR, { recursive: true });
-var DRIVER_DOC_TYPES = ['licenceCopy', 'cpcCard', 'medicalCert', 'tachoCard', 'dbsCheck', 'assessmentReport'];
-var DRIVER_MANAGER_ONLY_DOC_TYPES = ['tachoCard', 'dbsCheck', 'assessmentReport'];
-var DRIVER_DOCS_META_FILE = path.join(BASE, 'driver-documents-meta.json');
-
-function loadDriverDocsMeta() { return loadJsonFile(DRIVER_DOCS_META_FILE, {}); }
-function saveDriverDocsMeta(meta) { fs.writeFileSync(DRIVER_DOCS_META_FILE, JSON.stringify(meta, null, 2), 'utf8'); }
-
-function findDriverDocFile(driverId, docType) {
-  var exts = ['.pdf', '.jpg', '.jpeg', '.png', '.webp'];
-  for (var i = 0; i < exts.length; i++) {
-    var fp = path.join(DRIVER_DOCS_DIR, driverId + '_' + docType + exts[i]);
-    if (fs.existsSync(fp)) return fp;
-  }
-  return null;
-}
-
-app.get('/api/fleet-drivers/:id/documents', requireLogin, requirePermission('fleet'), function(req, res) {
-  var meta = loadDriverDocsMeta();
-  res.json({ ok: true, documents: meta[req.params.id] || {} });
-});
-
-app.get('/api/fleet-drivers/:id/documents/:docType', requireLogin, requirePermission('fleet'), function(req, res) {
-  var docType = req.params.docType;
-  if (DRIVER_DOC_TYPES.indexOf(docType) === -1) return res.status(400).end();
-  var fp = findDriverDocFile(req.params.id, docType);
-  if (!fp) return res.status(404).end();
-  var ext = path.extname(fp).toLowerCase();
-  var mime = ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-  res.setHeader('Content-Type', mime);
-  res.setHeader('Cache-Control', 'no-store');
-  res.send(fs.readFileSync(fp));
-});
-
-app.post('/api/fleet-drivers/:id/documents/:docType', requireLogin, requirePermission('fleet'), function(req, res) {
-  var docType = req.params.docType;
-  if (DRIVER_DOC_TYPES.indexOf(docType) === -1) return res.status(400).json({ ok: false, error: 'Invalid document type.' });
-  var driverId = path.basename(req.params.id);
-  var chunks = [];
-  req.on('data', function(c) { chunks.push(c); });
-  req.on('end', function() {
-    try {
-      var buf = Buffer.concat(chunks);
-      var ext = '.pdf';
-      if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
-      else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
-      ['.pdf', '.jpg', '.jpeg', '.png', '.webp'].forEach(function(e) {
-        var old = path.join(DRIVER_DOCS_DIR, driverId + '_' + docType + e);
-        if (fs.existsSync(old)) fs.unlinkSync(old);
-      });
-      fs.writeFileSync(path.join(DRIVER_DOCS_DIR, driverId + '_' + docType + ext), buf);
-
-      var meta = loadDriverDocsMeta();
-      if (!meta[driverId]) meta[driverId] = {};
-      var today = new Date().toISOString().split('T')[0];
-      var visibleToStaff = DRIVER_MANAGER_ONLY_DOC_TYPES.indexOf(docType) !== -1
-        ? req.query.visibleToStaff === 'true'
-        : true;
-      meta[driverId][docType] = { uploaded: true, date: today, visibleToStaff: visibleToStaff };
-      saveDriverDocsMeta(meta);
-      res.json({ ok: true, date: today });
-    } catch (e) {
-      res.status(500).json({ ok: false, error: e.message });
-    }
-  });
-});
-
-app.patch('/api/fleet-drivers/:id/documents/:docType/visibility', requireLogin, requirePermission('fleet'), function(req, res) {
-  var docType = req.params.docType;
-  if (DRIVER_MANAGER_ONLY_DOC_TYPES.indexOf(docType) === -1) {
-    return res.status(400).json({ ok: false, error: 'Visibility is not configurable for this document type.' });
-  }
-  try {
-    var meta = loadDriverDocsMeta();
-    var driverMeta = meta[req.params.id];
-    if (!driverMeta || !driverMeta[docType]) return res.status(404).json({ ok: false, error: 'Document not found.' });
-    driverMeta[docType].visibleToStaff = !!(req.body && req.body.visibleToStaff);
-    saveDriverDocsMeta(meta);
-    res.json({ ok: true, visibleToStaff: driverMeta[docType].visibleToStaff });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
 // ── FLEET EXCEL EXPORTS ───────────────────────────────────────────────────────
 app.get('/api/vehicles/export', requireLogin, requirePermission('fleet'), function(req, res) {
   try {
     var all = loadVehicles();
-    var drivers = loadFleetDrivers();
+    var staff = loadAllStaff();
     var ids = req.query.ids ? String(req.query.ids).split(',') : null;
     var list = ids ? all.filter(function(v) { return ids.indexOf(v.id) !== -1; }) : all;
 
@@ -3279,7 +3126,7 @@ app.get('/api/vehicles/export', requireLogin, requirePermission('fleet'), functi
     if (typeFilter) list = list.filter(function(v) { return v.type === typeFilter; });
 
     var rows = list.map(function(v) {
-      var driver = drivers.find(function(d) { return d.id === v.assignedDriverId; });
+      var driver = staff.find(function(s) { return s.id === v.assignedDriverId; });
       return {
         'Registration': v.registration || '',
         'Make': v.make || '',
@@ -3293,46 +3140,10 @@ app.get('/api/vehicles/export', requireLogin, requirePermission('fleet'), functi
         'Insurance Expiry': v.insurance_expiry || '',
         'Road Tax Expiry': v.road_tax_expiry || '',
         'Service Due': v.service_due || '',
-        'Assigned Driver': driver ? (driver.first_name + ' ' + driver.last_name) : '',
+        'Assigned Driver': driver ? driver.name : '',
       };
     });
     sendXlsx(res, 'GuardTec-Fleet-Report-' + new Date().toISOString().slice(0,10) + '.xlsx', rows);
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-app.get('/api/drivers/export', requireLogin, requirePermission('fleet'), function(req, res) {
-  try {
-    var all = loadFleetDrivers();
-    var vehicles = loadVehicles();
-    var ids = req.query.ids ? String(req.query.ids).split(',') : null;
-    var list = ids ? all.filter(function(d) { return ids.indexOf(d.id) !== -1; }) : all;
-
-    var statusFilter = req.query.status ? String(req.query.status) : null;
-    if (statusFilter) list = list.filter(function(d) { return d.status === statusFilter; });
-
-    var rows = list.map(function(d) {
-      var vehicle = vehicles.find(function(v) { return v.id === d.assignedVehicleId; });
-      return {
-        'First Name': d.first_name || '',
-        'Last Name': d.last_name || '',
-        'Phone': d.phone || '',
-        'Email': d.email || '',
-        'Licence Number': d.licenceNumber || '',
-        'Licence Expiry': d.licenceExpiry || '',
-        'Licence Categories': (d.licenceCategories || []).join(', '),
-        'CPC Card': d.cpcCard || '',
-        'CPC Expiry': d.cpcExpiry || '',
-        'Tacho Card': d.tachoCard || '',
-        'Tacho Expiry': d.tachoExpiry || '',
-        'Medical Expiry': d.medicalExpiry || '',
-        'DBS Number': d.dbsNumber || '',
-        'DBS Date': d.dbsDate || '',
-        'Status': d.status || '',
-        'Assigned Vehicle': vehicle ? vehicle.registration : '',
-        'Notes': d.notes || '',
-      };
-    });
-    sendXlsx(res, 'GuardTec-Drivers-Report-' + new Date().toISOString().slice(0,10) + '.xlsx', rows);
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
