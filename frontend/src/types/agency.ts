@@ -28,7 +28,10 @@ export type ComplianceStatus = "COMPLIANT" | "ACTION_NEEDED" | "INCOMPLETE" | "E
 
 export type DeploymentStatus = "scheduled" | "completed" | "cancelled"
 
-export type AcknowledgmentRespondentType = "agency_staff" | "employee"
+// Widened alongside the backend's respondent_type CHECK constraint (Stage 2)
+// to also cover fleet drivers and internal managers as acknowledgment-link
+// recipients, not just agency guards and GuardTec staff.
+export type AcknowledgmentRespondentType = "agency_staff" | "employee" | "driver" | "manager"
 
 export type EventInstructionStatus = "draft" | "published" | "archived"
 

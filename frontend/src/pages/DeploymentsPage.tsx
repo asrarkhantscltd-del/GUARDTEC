@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
-import { CalendarDays, MapPin, Building2, Loader2, X, Filter } from "lucide-react"
+import { CalendarDays, MapPin, Building2, Loader2, X, Filter, Plus } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { fmtDate } from "@/lib/utils"
 import { api } from "@/lib/api"
+import { DeploymentForm } from "@/components/agency/DeploymentForm"
 
 interface Site { id: string; name: string }
 interface AgencyOption { id: string; name: string }
@@ -41,42 +42,51 @@ export default function DeploymentsPage() {
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
 
+  const [createOpen, setCreateOpen] = useState(false)
+
   useEffect(() => {
     api.get<{ sites: Site[] }>("/api/sites").then(d => setSites(d.sites ?? [])).catch(() => {})
     api.get<{ ok: boolean; agencies: AgencyOption[] }>("/api/agencies").then(d => setAgencies(d.agencies ?? [])).catch(() => {})
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-    async function load() {
-      setLoading(true)
-      try {
-        const params = new URLSearchParams()
-        if (siteFilter) params.set("site_id", siteFilter)
-        if (agencyFilter) params.set("agency_id", agencyFilter)
-        if (dateFrom) params.set("date_from", dateFrom)
-        if (dateTo) params.set("date_to", dateTo)
-        const qs = params.toString()
-        const d = await api.get<{ ok: boolean; deployments: DeploymentRow[] }>(`/api/admin/deployments${qs ? `?${qs}` : ""}`)
-        if (!cancelled) setDeployments(d.deployments ?? [])
-      } catch {
-        if (!cancelled) toast.error("Failed to load deployments")
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
+  async function loadDeployments() {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (siteFilter) params.set("site_id", siteFilter)
+      if (agencyFilter) params.set("agency_id", agencyFilter)
+      if (dateFrom) params.set("date_from", dateFrom)
+      if (dateTo) params.set("date_to", dateTo)
+      const qs = params.toString()
+      const d = await api.get<{ ok: boolean; deployments: DeploymentRow[] }>(`/api/admin/deployments${qs ? `?${qs}` : ""}`)
+      setDeployments(d.deployments ?? [])
+    } catch {
+      toast.error("Failed to load deployments")
+    } finally {
+      setLoading(false)
     }
-    load()
-    return () => { cancelled = true }
-  }, [siteFilter, agencyFilter, dateFrom, dateTo])
+  }
+
+  useEffect(() => { loadDeployments() }, [siteFilter, agencyFilter, dateFrom, dateTo]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function clearFilters() { setSiteFilter(""); setAgencyFilter(""); setDateFrom(""); setDateTo("") }
   const hasFilters = !!(siteFilter || agencyFilter || dateFrom || dateTo)
 
+  function handleCreated() {
+    setCreateOpen(false)
+    loadDeployments()
+  }
+
   return (
     <div className="space-y-5">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Deployments</h2>
-        <p className="text-sm text-muted-foreground">Cross-agency cover guard bookings, filterable by site, agency and date</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">Deployments</h2>
+          <p className="text-sm text-muted-foreground">Cross-agency cover guard bookings, filterable by site, agency and date</p>
+        </div>
+        <Button onClick={() => setCreateOpen(true)} size="sm" className="gap-1.5">
+          <Plus className="h-4 w-4" /> New deployment
+        </Button>
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
@@ -158,6 +168,23 @@ export default function DeploymentsPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── New deployment panel (admin, cross-agency) ── */}
+      {createOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          <div className="flex items-center justify-between border-b px-6 py-4">
+            <h2 className="text-lg font-semibold">New deployment</h2>
+            <button onClick={() => setCreateOpen(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <DeploymentForm
+            sites={sites}
+            onSaved={handleCreated}
+            onCancel={() => setCreateOpen(false)}
+          />
         </div>
       )}
     </div>

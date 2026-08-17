@@ -1,6 +1,6 @@
 import { useState, useRef } from "react"
 import { toast } from "sonner"
-import { Loader2, Upload, ShieldCheck, Download, FileText } from "lucide-react"
+import { Loader2, Upload, ShieldCheck, Download, FileText, Eye, EyeOff } from "lucide-react"
 import { Label } from "@/components/ui/label"
 import { api, ApiError } from "@/lib/api"
 
@@ -33,6 +33,121 @@ export function ManagerDocRow({ label, staffId, docKey, uploaded, date }: {
           <Download className="h-3.5 w-3.5" /> View / Download
         </a>
       )}
+    </div>
+  )
+}
+
+// Manager-only documents whose visibility to the subject is a per-document
+// choice (default hidden) — see server.js MANAGER_ONLY_DOC_KEYS. The backend
+// already strips these from a staff member's own profile fetch entirely when
+// not visible, so unlike ManagerDocRow above there is no "not yet provided"
+// state to render here — if the entry isn't in `documents` at all, there is
+// nothing to show, full stop.
+export const CONFIDENTIAL_STAFF_DOCS = [
+  { key: "creditCheckReport",      label: "Credit Check Report" },
+  { key: "socialMediaCheckReport", label: "Social Media Check Report" },
+]
+
+export function ConfidentialDocRow({ label, staffId, docKey, date }: {
+  label: string; staffId: string; docKey: string; date?: string
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg border bg-muted/20 px-4 py-3">
+      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium">{label}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">Shared by your office{date ? ` · ${date}` : ""}</div>
+      </div>
+      <a href={`/api/staff/${staffId}/documents/${docKey}`} target="_blank" rel="noopener noreferrer"
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors">
+        <Download className="h-3.5 w-3.5" /> View / Download
+      </a>
+    </div>
+  )
+}
+
+// Manager-side counterpart to ConfidentialDocRow above — upload + explicit
+// visibility toggle for a document whose subject shouldn't automatically see
+// it. Parametrized by URL rather than hardcoded to /api/staff/... so the same
+// component covers staff, agency guards, and drivers, each with their own
+// backend route but identical behavior: upload always lands HIDDEN, and only
+// the toggle button reveals it — there is no "upload and show" combined
+// action, matching "I check it myself, then decide who sees it" (never
+// implicitly granted by the act of uploading).
+export function ConfidentialDocManagerRow({ label, uploadUrl, visibilityUrl, downloadUrl, uploaded, date, visibleToSubject, subjectLabel = "them", onChanged }: {
+  label: string
+  uploadUrl: string
+  visibilityUrl: string
+  downloadUrl: string
+  uploaded?: boolean
+  date?: string
+  visibleToSubject?: boolean
+  subjectLabel?: string
+  onChanged: () => void
+}) {
+  const [uploading, setUploading] = useState(false)
+  const [togglingVisibility, setTogglingVisibility] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  async function handleFile(file: File) {
+    setUploading(true)
+    try {
+      // Always uploads hidden — see the note above on why there's no
+      // upload-and-show combined path.
+      await api.post(`${uploadUrl}?visibleToStaff=false`, file)
+      toast.success(`${label} uploaded — hidden from ${subjectLabel} until you choose to reveal it`)
+      onChanged()
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Upload failed")
+    } finally {
+      setUploading(false)
+      if (inputRef.current) inputRef.current.value = ""
+    }
+  }
+
+  async function toggleVisibility() {
+    setTogglingVisibility(true)
+    try {
+      await api.patch(visibilityUrl, { visibleToStaff: !visibleToSubject })
+      toast.success(visibleToSubject ? `Now hidden from ${subjectLabel}` : `Now visible to ${subjectLabel}`)
+      onChanged()
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Failed to update visibility")
+    } finally {
+      setTogglingVisibility(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3 rounded-lg border bg-muted/20 px-4 py-3">
+      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium">{label}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">
+          {uploaded ? `Uploaded${date ? ` · ${date}` : ""}` : "Not uploaded"}
+        </div>
+      </div>
+      {uploaded && (
+        <>
+          <a href={downloadUrl} target="_blank" rel="noopener noreferrer"
+            className="inline-flex shrink-0 items-center gap-1 text-xs text-primary hover:underline">View</a>
+          <button type="button" onClick={toggleVisibility} disabled={togglingVisibility}
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
+              visibleToSubject
+                ? "border-green-300 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950/30 dark:text-green-400"
+                : "border-border bg-background hover:bg-muted"
+            }`}>
+            {togglingVisibility ? <Loader2 className="h-3 w-3 animate-spin" /> : visibleToSubject ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+            {visibleToSubject ? `Visible to ${subjectLabel}` : `Hidden from ${subjectLabel}`}
+          </button>
+        </>
+      )}
+      <label className={`inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted ${uploading ? "pointer-events-none opacity-50" : ""}`}>
+        {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+        {uploaded ? "Replace" : "Upload"}
+        <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
+      </label>
     </div>
   )
 }

@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Section, Field } from "@/components/profile/ProfileShared"
 import { DocumentUploadRow } from "@/components/agency/DocumentUploadRow"
+import { AgencyStaffCustomDocuments } from "@/components/agency/AgencyStaffCustomDocuments"
 import { UnavailabilityCalendar } from "@/components/agency/UnavailabilityCalendar"
 import { ComplianceBadge } from "@/components/agency/ComplianceBadge"
 import { api, ApiError } from "@/lib/api"
@@ -29,6 +30,8 @@ export interface AgencyStaffRecord {
   custom_role?: string
   badge_type?: string
   dbs_expiry?: string
+  consent_credit_check: boolean
+  consent_social_media_check: boolean
   sia_cert_uploaded: boolean
   sia_cert_upload_date?: string
   cscs_cert_uploaded: boolean
@@ -86,6 +89,11 @@ export default function AgencyStaffForm({ agencyId, initialStaff, onSaved, onCan
   const [nationality, setNationality] = useState(initialStaff?.nationality ?? "")
   const [badgeType, setBadgeType] = useState(initialStaff?.badge_type ?? "")
   const [dbsExpiry, setDbsExpiry] = useState(initialStaff?.dbs_expiry?.slice(0, 10) ?? "")
+  // Required only when registering a NEW guard — an existing one already
+  // attested this at creation, re-editing other fields shouldn't force
+  // re-consent every time.
+  const [consentCredit, setConsentCredit] = useState(initialStaff?.consent_credit_check ?? false)
+  const [consentSocial, setConsentSocial] = useState(initialStaff?.consent_social_media_check ?? false)
 
   const [photo, setPhoto] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
@@ -109,6 +117,8 @@ export default function AgencyStaffForm({ agencyId, initialStaff, onSaved, onCan
     if (!trimmedName) { setError("Guard name is required."); return }
     if (!jobRole) { setError("Job role is required."); return }
     if (jobRole === "Other" && !customRole.trim()) { setError("Please describe the role."); return }
+    if (!editing && !consentCredit)  { setError("You must confirm the guard has consented to a credit check."); return }
+    if (!editing && !consentSocial)  { setError("You must confirm the guard has consented to a social media check."); return }
 
     setSaving(true)
     try {
@@ -121,6 +131,8 @@ export default function AgencyStaffForm({ agencyId, initialStaff, onSaved, onCan
         custom_role: jobRole === "Other" ? customRole.trim() : undefined,
         badge_type: badgeType || undefined,
         dbs_expiry: dbsExpiry || undefined,
+        consent_credit_check: consentCredit,
+        consent_social_media_check: consentSocial,
       }
       const res = editing
         ? await api.patch<{ ok: boolean; staff: AgencyStaffRecord }>(
@@ -148,25 +160,23 @@ export default function AgencyStaffForm({ agencyId, initialStaff, onSaved, onCan
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex">
-      <div className="flex-1 bg-black/40" onClick={onCancel} />
-      <div className="flex h-full w-full max-w-lg flex-col bg-background shadow-2xl">
-        <div className="flex items-center justify-between border-b px-6 py-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold">{editing ? "Edit Cover Guard" : "Add Cover Guard"}</h2>
-              {editing && initialStaff?.compliance_status && <ComplianceBadge status={initialStaff.compliance_status} />}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {editing ? "Update this guard's details, certificates and availability" : "Register a new cover guard for this agency"}
-            </p>
+    <div className="fixed inset-0 z-50 flex flex-col bg-background">
+      <div className="flex items-center justify-between border-b px-6 py-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold">{editing ? "Edit Cover Guard" : "Add Cover Guard"}</h2>
+            {editing && initialStaff?.compliance_status && <ComplianceBadge status={initialStaff.compliance_status} />}
           </div>
-          <button onClick={onCancel} className="rounded-md p-1.5 hover:bg-muted transition-colors">
-            <X className="h-5 w-5" />
-          </button>
+          <p className="text-xs text-muted-foreground">
+            {editing ? "Update this guard's details, certificates and availability" : "Register a new cover guard for this agency"}
+          </p>
         </div>
+        <button onClick={onCancel} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+          <X className="h-5 w-5" />
+        </button>
+      </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+      <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-6 py-5 space-y-4">
           {error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
 
           <Section title="Guard Details" icon={<Briefcase className="h-3.5 w-3.5" />}>
@@ -235,6 +245,27 @@ export default function AgencyStaffForm({ agencyId, initialStaff, onSaved, onCan
             </div>
           </Section>
 
+          {!editing && (
+            <Section title="Consent" icon={<ShieldCheck className="h-3.5 w-3.5" />}>
+              <p className="mb-2 text-xs text-muted-foreground">
+                This guard has no login of their own — by ticking these, you're confirming your agency has informed
+                them and obtained their consent, not that they clicked this themselves.
+              </p>
+              <div className="space-y-2">
+                <label className="flex items-start gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={consentCredit} onChange={e => setConsentCredit(e.target.checked)}
+                    className="mt-0.5 h-3.5 w-3.5 rounded border-border" />
+                  I confirm this guard has been informed of and consents to a credit check.
+                </label>
+                <label className="flex items-start gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={consentSocial} onChange={e => setConsentSocial(e.target.checked)}
+                    className="mt-0.5 h-3.5 w-3.5 rounded border-border" />
+                  I confirm this guard has been informed of and consents to a social media check.
+                </label>
+              </div>
+            </Section>
+          )}
+
           {editing ? (
             <>
               <Section title="Certification Documents" icon={<ShieldCheck className="h-3.5 w-3.5" />}>
@@ -260,6 +291,8 @@ export default function AgencyStaffForm({ agencyId, initialStaff, onSaved, onCan
                   <DocumentUploadRow label="Training Certificate" hint="BS7858 / general training evidence"
                     agencyId={agencyId} staffId={initialStaff!.id} docType="training_cert"
                     initialUploaded={initialStaff!.training_cert_uploaded} initialDate={initialStaff!.training_cert_upload_date} />
+
+                  <AgencyStaffCustomDocuments agencyId={agencyId} staffId={initialStaff!.id} />
                 </div>
               </Section>
 
@@ -274,12 +307,11 @@ export default function AgencyStaffForm({ agencyId, initialStaff, onSaved, onCan
           )}
         </div>
 
-        <div className="flex gap-2 border-t px-6 py-4">
-          <Button variant="outline" className="flex-1" onClick={onCancel}>Cancel</Button>
-          <Button className="flex-1" onClick={handleSubmit} disabled={saving}>
-            {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : editing ? "Save changes" : "Add guard"}
-          </Button>
-        </div>
+      <div className="mx-auto flex w-full max-w-2xl gap-2 border-t px-6 py-4">
+        <Button variant="outline" className="flex-1" onClick={onCancel}>Cancel</Button>
+        <Button className="flex-1" onClick={handleSubmit} disabled={saving}>
+          {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : editing ? "Save changes" : "Add guard"}
+        </Button>
       </div>
     </div>
   )

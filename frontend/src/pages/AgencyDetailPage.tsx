@@ -4,7 +4,7 @@ import { toast } from "sonner"
 import {
   ChevronLeft, Building2, Mail, Phone, Pencil, Archive, RotateCcw, Plus, X,
   Loader2, Users, CalendarDays, MapPin, ShieldCheck, AlertTriangle, UserX,
-  BarChart3,
+  BarChart3, MessageSquare, Paperclip,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -68,7 +68,20 @@ function StatTile({ icon, label, value, colorClass }: { icon: React.ReactNode; l
   )
 }
 
-type TabId = "staff" | "deployments" | "performance"
+type TabId = "staff" | "deployments" | "performance" | "messages"
+
+interface AgencyMessage {
+  id: string
+  message: string
+  is_read: boolean
+  created_at: string
+  sender_name: string
+  sender_role: string
+  attachment_id?: string
+  attachment_filename?: string
+  attachment_original_name?: string
+  attachment_mime_type?: string
+}
 
 export default function AgencyDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -95,6 +108,14 @@ export default function AgencyDetailPage() {
   const [guardArchiveConfirm, setGuardArchiveConfirm] = useState<string | null>(null)
   const [guardArchiving, setGuardArchiving] = useState(false)
 
+  // Messages — this is what a click-through from an agency-message
+  // notification lands on (see DashboardLayout's goToNotification).
+  const [messages, setMessages] = useState<AgencyMessage[]>([])
+  const [msgLoading, setMsgLoading] = useState(false)
+  const [msgDraft, setMsgDraft] = useState("")
+  const [msgFile, setMsgFile] = useState<File | null>(null)
+  const [msgSending, setMsgSending] = useState(false)
+
   async function load() {
     if (!id) return
     setLoading(true)
@@ -117,7 +138,43 @@ export default function AgencyDetailPage() {
     }
   }
 
+  async function loadMessages() {
+    if (!id) return
+    setMsgLoading(true)
+    try {
+      const d = await api.get<{ ok: boolean; messages: AgencyMessage[] }>(`/api/agencies/${id}/messages`)
+      setMessages(d.messages ?? [])
+    } catch {
+      toast.error("Failed to load messages")
+    } finally {
+      setMsgLoading(false)
+    }
+  }
+
   useEffect(() => { load() }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (activeTab === "messages") loadMessages() }, [activeTab, id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function sendMessage() {
+    if (!id || (!msgDraft.trim() && !msgFile)) return
+    setMsgSending(true)
+    try {
+      const d = await api.post<{ ok: boolean; message: { id: string } }>(`/api/agencies/${id}/messages`, { message: msgDraft.trim() || `📎 ${msgFile?.name}` })
+      if (msgFile && d.message?.id) {
+        await fetch(`/api/messages/${d.message.id}/attachment`, {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": msgFile.type || "application/octet-stream", "X-Original-Name": encodeURIComponent(msgFile.name) },
+          body: msgFile,
+        })
+      }
+      setMsgDraft("")
+      setMsgFile(null)
+      await loadMessages()
+    } catch {
+      toast.error("Failed to send message")
+    } finally {
+      setMsgSending(false)
+    }
+  }
 
   function switchTab(tab: TabId) { setSearchParams({ tab }) }
 
@@ -253,6 +310,7 @@ export default function AgencyDetailPage() {
           { id: "staff", label: `Cover Guards (${staff.length})`, icon: <Users className="h-3.5 w-3.5" /> },
           { id: "deployments", label: `Deployments (${deployments.length})`, icon: <CalendarDays className="h-3.5 w-3.5" /> },
           { id: "performance", label: "Performance", icon: <BarChart3 className="h-3.5 w-3.5" /> },
+          { id: "messages", label: "Messages", icon: <MessageSquare className="h-3.5 w-3.5" /> },
         ] as { id: TabId; label: string; icon: React.ReactNode }[]).map(t => (
           <button key={t.id} onClick={() => switchTab(t.id)}
             className={`flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-medium transition-all ${
@@ -386,16 +444,74 @@ export default function AgencyDetailPage() {
         )
       )}
 
-      {/* Edit agency panel */}
-      {editOpen && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/40" onClick={() => setEditOpen(false)} />
-          <div className="flex h-full w-full max-w-md flex-col bg-background shadow-2xl">
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <h2 className="text-lg font-semibold">Edit agency</h2>
-              <button onClick={() => setEditOpen(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors"><X className="h-5 w-5" /></button>
+      {activeTab === "messages" && (
+        <div className="flex h-[28rem] flex-col rounded-xl border bg-card">
+          <div className="flex-1 space-y-3 overflow-y-auto p-4">
+            {msgLoading && <p className="text-center text-sm text-muted-foreground py-8">Loading…</p>}
+            {!msgLoading && messages.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-8">No messages yet. Send the first one below.</p>
+            )}
+            {messages.map(m => {
+              const isMe = m.sender_role !== "agency"
+              const isImage = m.attachment_mime_type?.startsWith("image/")
+              return (
+                <div key={m.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-sm rounded-2xl px-4 py-2.5 text-sm shadow-sm ${isMe ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-muted border text-foreground rounded-tl-sm"}`}>
+                    <p className="text-[11px] font-semibold mb-1 opacity-60">{m.sender_name}</p>
+                    <p className="leading-snug">{m.message}</p>
+                    {m.attachment_filename && (
+                      isImage ? (
+                        <a href={`/api/message-attachments/${m.attachment_filename}`} target="_blank" rel="noopener noreferrer" className="mt-1.5 block">
+                          <img src={`/api/message-attachments/${m.attachment_filename}`} alt={m.attachment_original_name}
+                            className="max-h-48 w-full rounded-lg object-cover" />
+                        </a>
+                      ) : (
+                        <a href={`/api/message-attachments/${m.attachment_filename}`} target="_blank" rel="noopener noreferrer" download={m.attachment_original_name}
+                          className={`mt-1.5 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs ${isMe ? "bg-white/15" : "bg-background"}`}>
+                          <Paperclip className="h-3 w-3 shrink-0" />
+                          <span className="flex-1 truncate">{m.attachment_original_name}</span>
+                        </a>
+                      )
+                    )}
+                    <p className="text-[10px] mt-1.5 opacity-50 text-right">
+                      {new Date(m.created_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          <div className="border-t p-3">
+            {msgFile && (
+              <div className="mb-2 flex items-center gap-2 rounded-md bg-muted px-2.5 py-1.5 text-xs">
+                <Paperclip className="h-3 w-3" /><span className="flex-1 truncate">{msgFile.name}</span>
+                <button onClick={() => setMsgFile(null)} className="text-muted-foreground hover:text-foreground"><X className="h-3 w-3" /></button>
+              </div>
+            )}
+            <div className="flex items-end gap-2">
+              <label className="cursor-pointer rounded-md border bg-background p-2 text-muted-foreground hover:bg-muted transition-colors">
+                <Paperclip className="h-4 w-4" />
+                <input type="file" className="hidden" onChange={e => setMsgFile(e.target.files?.[0] ?? null)} />
+              </label>
+              <textarea value={msgDraft} onChange={e => setMsgDraft(e.target.value)} rows={1} placeholder="Type a message…"
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
+                className="flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring" />
+              <Button size="sm" onClick={sendMessage} disabled={msgSending || (!msgDraft.trim() && !msgFile)}>
+                {msgSending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send"}
+              </Button>
             </div>
-            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+          </div>
+        </div>
+      )}
+
+      {/* Edit agency panel — full screen rather than a side drawer */}
+      {editOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          <div className="flex items-center justify-between border-b px-6 py-4">
+            <h2 className="text-lg font-semibold">Edit agency</h2>
+            <button onClick={() => setEditOpen(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors"><X className="h-5 w-5" /></button>
+          </div>
+          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-6 py-5 space-y-4">
               {editError && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{editError}</p>}
               <div className="space-y-1.5">
                 <Label>Agency name *</Label>
@@ -416,7 +532,6 @@ export default function AgencyDetailPage() {
                 {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save changes"}
               </Button>
             </div>
-          </div>
         </div>
       )}
 

@@ -937,20 +937,18 @@ export default function StaffPage() {
 
       {/* ── Add Staff panel ── */}
       {addPanel && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/40" onClick={() => setAddPanel(false)} />
-          <div className="flex h-full w-full max-w-md flex-col bg-background shadow-2xl">
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <div>
-                <h2 className="text-lg font-semibold">Add new staff member</h2>
-                <p className="text-xs text-muted-foreground">Basic details — full compliance data is added from their profile page</p>
-              </div>
-              <button onClick={() => setAddPanel(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
-                <X className="h-5 w-5" />
-              </button>
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          <div className="flex items-center justify-between border-b px-6 py-4">
+            <div>
+              <h2 className="text-lg font-semibold">Add new staff member</h2>
+              <p className="text-xs text-muted-foreground">Basic details — full compliance data is added from their profile page</p>
             </div>
+            <button onClick={() => setAddPanel(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-6 py-5 space-y-4">
               {addError && (
                 <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{addError}</p>
               )}
@@ -1013,56 +1011,53 @@ export default function StaffPage() {
               <p className="rounded-lg bg-muted/50 px-3 py-2.5 text-xs text-muted-foreground">
                 SIA licence, CSCS, Right to Work, documents and training are added from the staff member's profile page after creation.
               </p>
-            </div>
+          </div>
 
-            <div className="flex gap-2 border-t px-6 py-4">
-              <Button variant="outline" className="flex-1" onClick={() => setAddPanel(false)}>
-                Cancel
-              </Button>
-              <Button className="flex-1" onClick={handleAddStaff} disabled={addSaving}>
-                {addSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Adding…</> : "Add staff member"}
-              </Button>
-            </div>
+          <div className="flex gap-2 border-t px-6 py-4">
+            <Button variant="outline" className="flex-1" onClick={() => setAddPanel(false)}>
+              Cancel
+            </Button>
+            <Button className="flex-1" onClick={handleAddStaff} disabled={addSaving}>
+              {addSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Adding…</> : "Add staff member"}
+            </Button>
           </div>
         </div>
       )}
 
       {/* ── Ex-Staff panel ── */}
       {exPanel && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/40" onClick={() => setExPanel(false)} />
-          <div className="flex h-full w-full max-w-lg flex-col bg-background shadow-2xl">
-            <div className="border-b px-6 py-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="flex items-center gap-2 text-lg font-semibold">
-                    <Archive className="h-4 w-4 text-muted-foreground" />Ex-Staff
-                    {!exLoading && exStaff.length > 0 && (
-                      <span className="ml-1 inline-flex items-center justify-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                        {exStaff.length}
-                      </span>
-                    )}
-                  </h2>
-                  <p className="text-xs text-muted-foreground">Restore a returning employee back to Active Staff</p>
-                </div>
-                <button onClick={() => setExPanel(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
-                  <X className="h-5 w-5" />
-                </button>
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          <div className="border-b px-6 py-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="flex items-center gap-2 text-lg font-semibold">
+                  <Archive className="h-4 w-4 text-muted-foreground" />Ex-Staff
+                  {!exLoading && exStaff.length > 0 && (
+                    <span className="ml-1 inline-flex items-center justify-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                      {exStaff.length}
+                    </span>
+                  )}
+                </h2>
+                <p className="text-xs text-muted-foreground">Restore a returning employee back to Active Staff</p>
               </div>
-              {!exLoading && exStaff.length > 0 && (
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={exSearch}
-                    onChange={e => setExSearch(e.target.value)}
-                    placeholder="Search ex-staff by name…"
-                    className="h-9 pl-9 text-sm"
-                  />
-                </div>
-              )}
+              <button onClick={() => setExPanel(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+                <X className="h-5 w-5" />
+              </button>
             </div>
+            {!exLoading && exStaff.length > 0 && (
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={exSearch}
+                  onChange={e => setExSearch(e.target.value)}
+                  placeholder="Search ex-staff by name…"
+                  className="h-9 pl-9 text-sm"
+                />
+              </div>
+            )}
+          </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-6 py-5">
               {exError && (
                 <p className="mb-4 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{exError}</p>
               )}
@@ -1213,7 +1208,6 @@ export default function StaffPage() {
                   )}
                 </>
               )}
-            </div>
           </div>
         </div>
       )}

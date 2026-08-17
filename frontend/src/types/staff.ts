@@ -98,6 +98,8 @@ export interface OnboardingDeclarations {
   proofOfAddressConfirmed?: boolean
   siaLicenceConfirmed?: boolean
   dbsConsent?: boolean
+  creditCheckConsent?: boolean
+  socialMediaCheckConsent?: boolean
   criminalHistoryDeclared?: boolean
   vettingAuthorization?: boolean
   bankDetailsConfirmed?: boolean
@@ -152,6 +154,8 @@ export interface StaffMember {
     bankLetter?:       { uploaded?: boolean; date?: string }
     application?:      { uploaded?: boolean; date?: string }
     assignmentInstructions?: { uploaded?: boolean; date?: string }
+    creditCheckReport?:      { uploaded?: boolean; date?: string; visibleToStaff?: boolean }
+    socialMediaCheckReport?: { uploaded?: boolean; date?: string; visibleToStaff?: boolean }
   }
 
   // ── BS7858 onboarding fields new to this form ──

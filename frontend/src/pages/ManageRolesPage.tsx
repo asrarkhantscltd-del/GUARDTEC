@@ -184,17 +184,15 @@ export default function ManageRolesPage() {
 
       {/* ── Add / Edit panel ── */}
       {panel && (
-        <div className="fixed inset-0 z-40 flex">
-          <div className="flex-1 bg-black/40" onClick={closePanel} />
-          <div className="flex w-full max-w-md flex-col bg-background shadow-xl">
-            <div className="flex items-center justify-between border-b px-5 py-4">
-              <h3 className="text-base font-semibold">{editing ? "Edit role" : "Add new role"}</h3>
-              <button onClick={closePanel} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+        <div className="fixed inset-0 z-40 flex flex-col bg-background">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <h3 className="text-base font-semibold">{editing ? "Edit role" : "Add new role"}</h3>
+            <button onClick={closePanel} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-5 py-5 space-y-5">
               {panelError && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{panelError}</p>}
 
               {isLocked && (
@@ -232,14 +230,13 @@ export default function ManageRolesPage() {
                   ))}
                 </div>
               </div>
-            </div>
+          </div>
 
-            <div className="flex gap-2 border-t px-5 py-4">
-              <Button variant="outline" className="flex-1" onClick={closePanel}>Cancel</Button>
-              <Button className="flex-1" onClick={save} disabled={saving || isLocked}>
-                {saving ? "Saving…" : editing ? "Save changes" : "Create role"}
-              </Button>
-            </div>
+          <div className="flex gap-2 border-t px-5 py-4">
+            <Button variant="outline" className="flex-1" onClick={closePanel}>Cancel</Button>
+            <Button className="flex-1" onClick={save} disabled={saving || isLocked}>
+              {saving ? "Saving…" : editing ? "Save changes" : "Create role"}
+            </Button>
           </div>
         </div>
       )}

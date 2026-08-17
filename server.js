@@ -10,7 +10,7 @@ const crypto       = require('crypto');
 const { Pool }     = require('pg');
 
 const app  = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const BASE_URL = process.env.BASE_URL || ('http://localhost:' + PORT); // link base for acknowledgment-form URLs (Feature 2)
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -67,6 +67,11 @@ const pgPool = new Pool({ connectionString: process.env.DATABASE_URL });
       )
     `);
     await pgPool.query("CREATE INDEX IF NOT EXISTS idx_notifications_unseen ON notifications(seen_at) WHERE seen_at IS NULL");
+    // An agency message notification had nowhere to point — link_staff_id
+    // only makes sense for the employee_id-owned side of staff_messages, an
+    // agency-owned thread needs its own link column (bug found via user
+    // report: clicking the notification just dismissed it, no navigation).
+    await pgPool.query("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS link_agency_id TEXT");
   } catch (e) {
     console.error('[DB] notifications schema migration failed:', e.message);
   }
@@ -75,9 +80,9 @@ const pgPool = new Pool({ connectionString: process.env.DATABASE_URL });
 async function createNotification(opts) {
   try {
     await pgPool.query(
-      `INSERT INTO notifications (type, actor_name, summary, link_staff_id, link_tab, link_incident_id)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
-      [opts.type, opts.actorName, opts.summary, opts.linkStaffId || null, opts.linkTab || null, opts.linkIncidentId || null]
+      `INSERT INTO notifications (type, actor_name, summary, link_staff_id, link_tab, link_incident_id, link_agency_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [opts.type, opts.actorName, opts.summary, opts.linkStaffId || null, opts.linkTab || null, opts.linkIncidentId || null, opts.linkAgencyId || null]
     );
   } catch (e) {
     console.error('[NOTIFY] failed to create notification:', e.message);
@@ -123,7 +128,13 @@ var DEFAULT_ROLES = [
 // Agency cover-guard management (external staffing agencies) — agencies log
 // in through the SAME users/JWT system as everyone else (role='agency',
 // agency_id TEXT mirrors the existing users.staff_id TEXT column exactly).
-(async function ensureAgenciesSchema() {
+// Captured as a promise (not fire-and-forget) because ensureDeploymentsSchema
+// and ensureAgencyMessagingSchema below both create foreign keys into
+// `agencies` — without an explicit await, these are independent async IIFEs
+// that all start at module load and race the DB on their own timing, so
+// "agencies" can still be mid-CREATE when a dependent ALTER/CREATE fires
+// (confirmed in testing: this raced and failed intermittently before this fix).
+var agenciesSchemaReady = (async function ensureAgenciesSchema() {
   try {
     await pgPool.query(`
       CREATE TABLE IF NOT EXISTS agencies (
@@ -179,8 +190,59 @@ var DEFAULT_ROLES = [
       )
     `);
     await pgPool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS agency_id TEXT");
+    // Consent attestations — a guard has no login of their own (Option 2,
+    // confirmed design), so this is the AGENCY confirming they've informed
+    // the guard and obtained consent, not the guard's own click. ALTER (not
+    // baked into the CREATE above) because agency_staff already has live
+    // rows from this session's own testing before this column existed.
+    await pgPool.query("ALTER TABLE agency_staff ADD COLUMN IF NOT EXISTS consent_credit_check BOOLEAN NOT NULL DEFAULT FALSE");
+    await pgPool.query("ALTER TABLE agency_staff ADD COLUMN IF NOT EXISTS consent_social_media_check BOOLEAN NOT NULL DEFAULT FALSE");
+    // Credit/social-media check results — admin uploads after reviewing
+    // externally, visibility defaults hidden. "Visible" here means visible
+    // to the AGENCY (their admin portal), not the guard — guards never see
+    // their own agency_staff record at all, they have no login.
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS agency_staff_documents (
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        agency_staff_id  UUID NOT NULL REFERENCES agency_staff(id) ON DELETE CASCADE,
+        doc_type         TEXT NOT NULL,
+        filename         TEXT NOT NULL,
+        uploaded_by      UUID NOT NULL REFERENCES users(id),
+        uploaded_at      TIMESTAMPTZ DEFAULT NOW(),
+        visible_to_agency BOOLEAN NOT NULL DEFAULT FALSE,
+        UNIQUE (agency_staff_id, doc_type)
+      )
+    `);
   } catch (e) {
     console.error('[DB] agencies schema migration failed:', e.message);
+  }
+})();
+
+// Agency Staff: unlimited custom-labeled certificates, separate from the
+// fixed 5 types in ALLOWED_AGENCY_DOC_TYPES (defined further down with the
+// certificate document routes) — that design is a column-per-type on
+// agency_staff itself and can't take arbitrary new labels, hence a proper
+// child table instead. Awaits agenciesSchemaReady (not fire-and-forget) for
+// the exact same reason spelled out in the comment above ensureAgenciesSchema:
+// agency_staff_custom_documents.agency_staff_id FKs into agency_staff, which
+// is created inside that IIFE, so an independent unawaited IIFE here could
+// race it.
+(async function ensureAgencyStaffCustomDocumentsSchema() {
+  try {
+    await agenciesSchemaReady; // agency_staff_custom_documents.agency_staff_id FKs into agency_staff
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS agency_staff_custom_documents (
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        agency_staff_id  UUID NOT NULL REFERENCES agency_staff(id) ON DELETE CASCADE,
+        label            TEXT NOT NULL,
+        filename         TEXT NOT NULL,
+        uploaded_by      UUID NOT NULL REFERENCES users(id),
+        uploaded_at      TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pgPool.query("CREATE INDEX IF NOT EXISTS idx_agency_staff_custom_docs_staff ON agency_staff_custom_documents(agency_staff_id)");
+  } catch (e) {
+    console.error('[DB] agency staff custom documents schema migration failed:', e.message);
   }
 })();
 
@@ -188,8 +250,11 @@ var DEFAULT_ROLES = [
 // site_id is TEXT with NO foreign key on purpose — sites are JSON-file-backed
 // (deployment-sites.json / loadSites()), never a Postgres table, so there is
 // nothing real for a FK to reference (same reasoning as users.staff_id TEXT).
-(async function ensureDeploymentsSchema() {
+// Captured as a promise too — ensureEventInstructionsSchema's acknowledgment_forms
+// table FKs into agency_deployments created here.
+var deploymentsSchemaReady = (async function ensureDeploymentsSchema() {
   try {
+    await agenciesSchemaReady; // agency_deployments.agency_id FKs into agencies
     await pgPool.query(`
       CREATE TABLE IF NOT EXISTS agency_deployments (
         id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -206,6 +271,11 @@ var DEFAULT_ROLES = [
         updated_at             TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+    // Manually-typed names, not tied to whoever happens to be logged in —
+    // the user specifically wants free text here, e.g. a manager's name
+    // relayed over the phone, not a lookup against the users table.
+    await pgPool.query("ALTER TABLE agency_deployments ADD COLUMN IF NOT EXISTS informed_by TEXT");
+    await pgPool.query("ALTER TABLE agency_deployments ADD COLUMN IF NOT EXISTS approved_by TEXT");
     await pgPool.query("CREATE INDEX IF NOT EXISTS idx_deployments_agency ON agency_deployments(agency_id)");
     await pgPool.query("CREATE INDEX IF NOT EXISTS idx_deployments_site_date ON agency_deployments(site_id, event_date)");
 
@@ -228,6 +298,13 @@ var DEFAULT_ROLES = [
         UNIQUE (deployment_id, agency_staff_id)
       )
     `);
+    // Shift times, e.g. "10:00" to "18:00" on the deployment's single
+    // event_date — the user wants a start/end clock time entered directly,
+    // not a raw hours count. scheduled_hours is kept (existing attendance/
+    // reporting code already reads it) and is now DERIVED from these two on
+    // insert, rather than being the thing typed in directly.
+    await pgPool.query("ALTER TABLE deployment_attendance ADD COLUMN IF NOT EXISTS start_time TEXT");
+    await pgPool.query("ALTER TABLE deployment_attendance ADD COLUMN IF NOT EXISTS end_time TEXT");
     await pgPool.query("CREATE INDEX IF NOT EXISTS idx_attendance_deployment ON deployment_attendance(deployment_id)");
     await pgPool.query("CREATE INDEX IF NOT EXISTS idx_attendance_staff ON deployment_attendance(agency_staff_id)");
 
@@ -256,6 +333,7 @@ var DEFAULT_ROLES = [
 // uses for seeding DEFAULT_ROLES via ON CONFLICT DO NOTHING.
 (async function ensureAgencyMessagingSchema() {
   try {
+    await agenciesSchemaReady; // staff_messages.agency_id FKs into agencies
     await pgPool.query("ALTER TABLE staff_messages ALTER COLUMN employee_id DROP NOT NULL");
     await pgPool.query("ALTER TABLE staff_messages ADD COLUMN IF NOT EXISTS agency_id UUID REFERENCES agencies(id) ON DELETE CASCADE");
     var existing = await pgPool.query("SELECT 1 FROM pg_constraint WHERE conname = 'staff_messages_one_party'");
@@ -281,6 +359,7 @@ var DEFAULT_ROLES = [
 // reasoning as site_id (debug note #1).
 (async function ensureEventInstructionsSchema() {
   try {
+    await deploymentsSchemaReady; // acknowledgment_forms.deployment_id FKs into agency_deployments (this also transitively waits on agencies)
     await pgPool.query(`
       CREATE TABLE IF NOT EXISTS event_instructions (
         id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -330,6 +409,28 @@ var DEFAULT_ROLES = [
     `);
     await pgPool.query("CREATE INDEX IF NOT EXISTS idx_ack_forms_token ON acknowledgment_forms(form_token)");
     await pgPool.query("CREATE INDEX IF NOT EXISTS idx_ack_forms_instruction ON acknowledgment_forms(instruction_id, respondent_type, respondent_id)");
+
+    // Widen respondent_type from ('agency_staff','employee') to also allow
+    // 'driver' and 'manager' audience types (Stage 2). The constraint's real
+    // name is looked up rather than assumed (Postgres's default auto-name
+    // would be acknowledgment_forms_respondent_type_check, but that's not
+    // guaranteed) — same "check before you write" idiom as
+    // staff_messages_one_party above, adapted because this constraint already
+    // exists under some name from the CREATE TABLE above rather than being
+    // absent entirely.
+    var respondentTypeConstraint = await pgPool.query(
+      `SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint
+       WHERE conrelid = 'acknowledgment_forms'::regclass AND contype = 'c'
+         AND pg_get_constraintdef(oid) LIKE '%respondent_type%'`
+    );
+    if (respondentTypeConstraint.rows.length && respondentTypeConstraint.rows[0].def.indexOf('driver') === -1) {
+      var conname = respondentTypeConstraint.rows[0].conname;
+      await pgPool.query('ALTER TABLE acknowledgment_forms DROP CONSTRAINT ' + conname);
+      await pgPool.query(
+        'ALTER TABLE acknowledgment_forms ADD CONSTRAINT ' + conname +
+        " CHECK (respondent_type IN ('agency_staff', 'employee', 'driver', 'manager'))"
+      );
+    }
   } catch (e) {
     console.error('[DB] event instructions / acknowledgment schema migration failed:', e.message);
   }
@@ -448,9 +549,29 @@ function getAuthedUser(req) {
 
 // The gatekeeper: sits in front of API routes. No valid token -> 401, real
 // route code never runs.
-function requireLogin(req, res, next) {
+//
+// Agencies get one extra check other roles don't: is_active is re-verified
+// against the DB on every request, not just trusted from the JWT. Found via
+// testing — archiving an agency (which sets users.is_active=false) otherwise
+// left any session token that agency had already been issued fully working
+// for the rest of its 7-day life, since a JWT's signature staying valid says
+// nothing about whether the account behind it is still allowed to log in.
+// That's an acceptable gap for internal staff (rare, trusted, and app-wide
+// change would be a bigger unrelated behavior shift) but not for an external
+// party you may need to lock out immediately.
+async function requireLogin(req, res, next) {
   var user = getAuthedUser(req);
   if (!user) return res.status(401).json({ error: 'Not logged in' });
+  if (user.role === 'agency') {
+    try {
+      var r = await pgPool.query('SELECT is_active FROM users WHERE id = $1', [user.id]);
+      if (!r.rows.length || r.rows[0].is_active === false) {
+        return res.status(401).json({ error: 'This account has been suspended.' });
+      }
+    } catch (e) {
+      return res.status(500).json({ error: 'Auth check failed.' });
+    }
+  }
   req.user = user;
   next();
 }
@@ -752,8 +873,15 @@ app.post('/api/staff/:id/photo', requireLogin, requireOwnStaffOrPermission('staf
 // ── STAFF DOCUMENT FILES ──────────────────────────────────────────────────────
 var ALLOWED_DOC_KEYS = [
   'siaPhysical','passport','drivingLicenceDoc','brpCard','proofOfAddress1','proofOfAddress2',
-  'p45','bankLetter','application','assignmentInstructions','cscsCard'
+  'p45','bankLetter','application','assignmentInstructions','cscsCard',
+  'creditCheckReport','socialMediaCheckReport'
 ];
+
+// Uploaded by management only, and hidden from the staff member by default —
+// unlike every other doc key above (self-uploaded, or manager-uploaded but
+// always visible, e.g. assignmentInstructions), visibility here is an
+// explicit per-document manager choice stored as documents[key].visibleToStaff.
+var MANAGER_ONLY_DOC_KEYS = ['creditCheckReport', 'socialMediaCheckReport'];
 
 var ALLOWED_TRAINING_KEYS = [
   'siaCertificate','firstAid','manualHandling','fireAwareness',
@@ -765,6 +893,7 @@ var DOC_KEY_LABELS = {
   proofOfAddress1: 'Proof of Address', proofOfAddress2: 'Proof of Address',
   p45: 'P45/P60', bankLetter: 'Bank Letter', application: 'Application Form',
   assignmentInstructions: 'Assignment Instructions', cscsCard: 'CSCS Card',
+  creditCheckReport: 'Credit Check Report', socialMediaCheckReport: 'Social Media Check Report',
 };
 var TRAINING_KEY_LABELS = {
   siaCertificate: 'SIA Qualifying Certificate', firstAid: 'First Aid certificate',
@@ -782,13 +911,21 @@ function findDocFile(folderPath, docKey) {
   return null;
 }
 
-app.get('/api/staff/:id/documents/:docKey', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
+app.get('/api/staff/:id/documents/:docKey', requireLogin, requireOwnStaffOrPermission('staff'), async function(req, res) {
   var docKey = req.params.docKey;
   if (!ALLOWED_DOC_KEYS.includes(docKey)) return res.status(400).end();
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
     if (!emp || !emp._folderPath) return res.status(404).end();
+    // requireOwnStaffOrPermission already let the staff member themselves
+    // through for their own :id — this extra check catches that specific
+    // case for manager-only docs, since the middleware alone can't tell
+    // "staff viewing their own record" apart from "manager viewing it".
+    if (MANAGER_ONLY_DOC_KEYS.includes(docKey) && !(await hasStaffPermission(req))) {
+      var visMeta = emp.documents && emp.documents[docKey];
+      if (!visMeta || visMeta.visibleToStaff !== true) return res.status(404).end();
+    }
     var fp = findDocFile(emp._folderPath, docKey);
     if (!fp) return res.status(404).end();
     var ext = path.extname(fp).toLowerCase();
@@ -802,9 +939,12 @@ app.get('/api/staff/:id/documents/:docKey', requireLogin, requireOwnStaffOrPermi
   }
 });
 
-app.post('/api/staff/:id/documents/:docKey', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
+app.post('/api/staff/:id/documents/:docKey', requireLogin, requireOwnStaffOrPermission('staff'), async function(req, res) {
   var docKey = req.params.docKey;
   if (!ALLOWED_DOC_KEYS.includes(docKey)) return res.status(400).json({ ok:false, error:'Invalid document key' });
+  if (MANAGER_ONLY_DOC_KEYS.includes(docKey) && !(await hasStaffPermission(req))) {
+    return res.status(403).json({ ok:false, error: 'Only management can upload this document.' });
+  }
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -828,7 +968,14 @@ app.post('/api/staff/:id/documents/:docKey', requireLogin, requireOwnStaffOrPerm
       var data = JSON.parse(fs.readFileSync(jp, 'utf8'));
       if (!data.documents) data.documents = {};
       var today = new Date().toISOString().split('T')[0];
-      data.documents[docKey] = { uploaded: true, date: today };
+      // Manager-only docs default HIDDEN from the subject unless the uploader
+      // explicitly opts them in via this header at upload time (see
+      // MANAGER_ONLY_DOC_KEYS comment) — everything else stays visible, same
+      // as before this feature existed.
+      var visibleToStaff = MANAGER_ONLY_DOC_KEYS.includes(docKey)
+        ? req.query.visibleToStaff === 'true'
+        : true;
+      data.documents[docKey] = { uploaded: true, date: today, visibleToStaff: visibleToStaff };
       fs.writeFileSync(jp, JSON.stringify(data, null, 2));
       console.log('[DOCS] Saved', docKey, 'for', emp.name);
       if (req.user.role === 'staff') {
@@ -862,6 +1009,29 @@ app.delete('/api/staff/:id/documents/:docKey', requireLogin, requirePermission('
     fs.writeFileSync(jp, JSON.stringify(data, null, 2));
     console.log('[DOCS] Deleted', docKey, 'for', emp.name);
     res.json({ ok:true });
+  } catch(e) {
+    res.status(500).json({ ok:false, error: e.message });
+  }
+});
+
+// Flip visibility on an already-uploaded manager-only document without
+// re-uploading it — the manager's own control over "can this person see
+// what I checked", separate from the upload step itself.
+app.patch('/api/staff/:id/documents/:docKey/visibility', requireLogin, requirePermission('staff'), function(req, res) {
+  var docKey = req.params.docKey;
+  if (!MANAGER_ONLY_DOC_KEYS.includes(docKey)) {
+    return res.status(400).json({ ok:false, error: 'Visibility is not configurable for this document type.' });
+  }
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.params.id; });
+    if (!emp || !emp._folderPath) return res.status(404).json({ ok:false, error:'Staff not found' });
+    var jp = path.join(emp._folderPath, 'staff_data.json');
+    var data = JSON.parse(fs.readFileSync(jp, 'utf8'));
+    if (!data.documents || !data.documents[docKey]) return res.status(404).json({ ok:false, error: 'Document not found' });
+    data.documents[docKey].visibleToStaff = !!(req.body && req.body.visibleToStaff);
+    fs.writeFileSync(jp, JSON.stringify(data, null, 2));
+    res.json({ ok:true, visibleToStaff: data.documents[docKey].visibleToStaff });
   } catch(e) {
     res.status(500).json({ ok:false, error: e.message });
   }
@@ -1644,6 +1814,17 @@ app.post('/api/staff/:id/registration-code/regenerate', requireLogin, requirePer
 function sanitizeForStaffView(emp) {
   var copy = Object.assign({}, emp);
   delete copy._folderPath;
+  // Manager-only docs (credit check, social media check) are stripped
+  // entirely from what a staff member's own profile fetch returns unless
+  // explicitly marked visibleToStaff — the row shouldn't just be hidden in
+  // the UI, the data shouldn't reach their browser at all.
+  if (copy.documents) {
+    var docs = Object.assign({}, copy.documents);
+    MANAGER_ONLY_DOC_KEYS.forEach(function(k) {
+      if (docs[k] && docs[k].visibleToStaff !== true) delete docs[k];
+    });
+    copy.documents = docs;
+  }
   return copy;
 }
 
@@ -2965,7 +3146,119 @@ app.delete('/api/fleet-drivers/:id', requireLogin, requirePermission('fleet'), f
     var drivers = loadFleetDrivers();
     drivers = drivers.filter(function(d) { return d.id !== req.params.id; });
     saveFleetDrivers(drivers);
+
+    // Clean up any uploaded documents + metadata rather than leaving them
+    // orphaned on disk forever (found via testing: deleting a driver left
+    // both the files and the driver-documents-meta.json entry behind).
+    DRIVER_DOC_TYPES.forEach(function(docType) {
+      var fp = findDriverDocFile(req.params.id, docType);
+      if (fp) fs.unlinkSync(fp);
+    });
+    var meta = loadDriverDocsMeta();
+    if (meta[req.params.id]) {
+      delete meta[req.params.id];
+      saveDriverDocsMeta(meta);
+    }
+
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Fleet Driver Documents ─────────────────────────────────────────────────────
+// fleet-drivers.json is a flexible blob (no schema to migrate), so the only
+// new backend surface the driver/staff unification actually needs is file
+// handling — every other new field (staffId, fuelCardNumber, document
+// metadata) just flows through the existing POST/PATCH Object.assign(...)
+// untouched.
+//
+// Two categories, matching the staff-fillable / manager-fillable split:
+// licenceCopy/cpcCard/medicalCert are what the driver already holds — no
+// visibility toggle, there's nothing to hide from someone about their own
+// licence. tachoCard/dbsCheck/assessmentReport are company-assigned or
+// company-conducted — same "uploads hidden until you choose to reveal"
+// pattern as the credit-check/social-media-check documents elsewhere.
+var DRIVER_DOCS_DIR = path.join(BASE, 'driver-documents');
+if (!fs.existsSync(DRIVER_DOCS_DIR)) fs.mkdirSync(DRIVER_DOCS_DIR, { recursive: true });
+var DRIVER_DOC_TYPES = ['licenceCopy', 'cpcCard', 'medicalCert', 'tachoCard', 'dbsCheck', 'assessmentReport'];
+var DRIVER_MANAGER_ONLY_DOC_TYPES = ['tachoCard', 'dbsCheck', 'assessmentReport'];
+var DRIVER_DOCS_META_FILE = path.join(BASE, 'driver-documents-meta.json');
+
+function loadDriverDocsMeta() { return loadJsonFile(DRIVER_DOCS_META_FILE, {}); }
+function saveDriverDocsMeta(meta) { fs.writeFileSync(DRIVER_DOCS_META_FILE, JSON.stringify(meta, null, 2), 'utf8'); }
+
+function findDriverDocFile(driverId, docType) {
+  var exts = ['.pdf', '.jpg', '.jpeg', '.png', '.webp'];
+  for (var i = 0; i < exts.length; i++) {
+    var fp = path.join(DRIVER_DOCS_DIR, driverId + '_' + docType + exts[i]);
+    if (fs.existsSync(fp)) return fp;
+  }
+  return null;
+}
+
+app.get('/api/fleet-drivers/:id/documents', requireLogin, requirePermission('fleet'), function(req, res) {
+  var meta = loadDriverDocsMeta();
+  res.json({ ok: true, documents: meta[req.params.id] || {} });
+});
+
+app.get('/api/fleet-drivers/:id/documents/:docType', requireLogin, requirePermission('fleet'), function(req, res) {
+  var docType = req.params.docType;
+  if (DRIVER_DOC_TYPES.indexOf(docType) === -1) return res.status(400).end();
+  var fp = findDriverDocFile(req.params.id, docType);
+  if (!fp) return res.status(404).end();
+  var ext = path.extname(fp).toLowerCase();
+  var mime = ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(fs.readFileSync(fp));
+});
+
+app.post('/api/fleet-drivers/:id/documents/:docType', requireLogin, requirePermission('fleet'), function(req, res) {
+  var docType = req.params.docType;
+  if (DRIVER_DOC_TYPES.indexOf(docType) === -1) return res.status(400).json({ ok: false, error: 'Invalid document type.' });
+  var driverId = path.basename(req.params.id);
+  var chunks = [];
+  req.on('data', function(c) { chunks.push(c); });
+  req.on('end', function() {
+    try {
+      var buf = Buffer.concat(chunks);
+      var ext = '.pdf';
+      if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
+      else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
+      ['.pdf', '.jpg', '.jpeg', '.png', '.webp'].forEach(function(e) {
+        var old = path.join(DRIVER_DOCS_DIR, driverId + '_' + docType + e);
+        if (fs.existsSync(old)) fs.unlinkSync(old);
+      });
+      fs.writeFileSync(path.join(DRIVER_DOCS_DIR, driverId + '_' + docType + ext), buf);
+
+      var meta = loadDriverDocsMeta();
+      if (!meta[driverId]) meta[driverId] = {};
+      var today = new Date().toISOString().split('T')[0];
+      var visibleToStaff = DRIVER_MANAGER_ONLY_DOC_TYPES.indexOf(docType) !== -1
+        ? req.query.visibleToStaff === 'true'
+        : true;
+      meta[driverId][docType] = { uploaded: true, date: today, visibleToStaff: visibleToStaff };
+      saveDriverDocsMeta(meta);
+      res.json({ ok: true, date: today });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+});
+
+app.patch('/api/fleet-drivers/:id/documents/:docType/visibility', requireLogin, requirePermission('fleet'), function(req, res) {
+  var docType = req.params.docType;
+  if (DRIVER_MANAGER_ONLY_DOC_TYPES.indexOf(docType) === -1) {
+    return res.status(400).json({ ok: false, error: 'Visibility is not configurable for this document type.' });
+  }
+  try {
+    var meta = loadDriverDocsMeta();
+    var driverMeta = meta[req.params.id];
+    if (!driverMeta || !driverMeta[docType]) return res.status(404).json({ ok: false, error: 'Document not found.' });
+    driverMeta[docType].visibleToStaff = !!(req.body && req.body.visibleToStaff);
+    saveDriverDocsMeta(meta);
+    res.json({ ok: true, visibleToStaff: driverMeta[docType].visibleToStaff });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -3458,6 +3751,11 @@ app.post('/api/agencies/:agencyId/staff', requireLogin, requireOwnAgencyOrPermis
     var jobRole = String(b.job_role || '').trim();
     if (!name)    return res.status(400).json({ ok: false, error: 'Guard name is required.' });
     if (!jobRole) return res.status(400).json({ ok: false, error: 'Job role is required.' });
+    // Attestation, not the guard's own click (no login exists for guards to
+    // click anything themselves) — the agency confirms it has informed the
+    // guard and obtained their consent before this record can be created.
+    if (!b.consent_credit_check)       return res.status(400).json({ ok: false, error: 'You must confirm the guard has consented to a credit check.' });
+    if (!b.consent_social_media_check) return res.status(400).json({ ok: false, error: 'You must confirm the guard has consented to a social media check.' });
 
     var email       = String(b.email       || '').trim().toLowerCase();
     var phone       = String(b.phone       || '').trim();
@@ -3467,8 +3765,8 @@ app.post('/api/agencies/:agencyId/staff', requireLogin, requireOwnAgencyOrPermis
     var dbsExpiry   = b.dbs_expiry ? String(b.dbs_expiry).trim() : null;
 
     var r = await pgPool.query(
-      `INSERT INTO agency_staff (agency_id, name, email, phone, nationality, job_role, custom_role, badge_type, dbs_expiry)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      `INSERT INTO agency_staff (agency_id, name, email, phone, nationality, job_role, custom_role, badge_type, dbs_expiry, consent_credit_check, consent_social_media_check)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE,TRUE) RETURNING *`,
       [agencyId, name, email, phone, nationality, jobRole, customRole || null, badgeType || null, dbsExpiry]
     );
     var staff = r.rows[0];
@@ -3718,12 +4016,223 @@ app.post('/api/agencies/:agencyId/staff/:id/documents/:docType', requireLogin, r
   }
 });
 
+// ── Agency Staff: Custom Certificate Documents ────────────────────────────────
+// Unlimited custom-labeled certs per guard, on top of (never replacing) the
+// fixed 5 types above — a separate child table + flat directory because the
+// column-per-type design above has no room for arbitrary new labels. Same
+// path.basename()-every-segment discipline as the fixed-cert routes above.
+var AGENCY_STAFF_CUSTOM_DOCS_DIR = path.join(BASE, 'agency-staff-custom-documents');
+if (!fs.existsSync(AGENCY_STAFF_CUSTOM_DOCS_DIR)) fs.mkdirSync(AGENCY_STAFF_CUSTOM_DOCS_DIR, { recursive: true });
+
+app.post('/api/agencies/:agencyId/staff/:id/custom-documents', requireLogin, requireOwnAgencyOrPermission('staff'), async function(req, res) {
+  var agencyId = path.basename(req.params.agencyId);
+  var staffId  = path.basename(req.params.id);
+  var label = String(req.query.label || '').trim();
+  if (!label) return res.status(400).json({ ok: false, error: 'Label is required.' });
+  try {
+    var r = await pgPool.query('SELECT id FROM agency_staff WHERE id = $1 AND agency_id = $2', [staffId, agencyId]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Guard not found.' });
+
+    var chunks = [];
+    req.on('data', function(c) { chunks.push(c); });
+    req.on('end', async function() {
+      try {
+        var buf = Buffer.concat(chunks);
+        // Detect file type from magic bytes — same convention as the fixed-cert routes above.
+        var ext = '.pdf';
+        if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
+        else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
+
+        var docId = crypto.randomUUID();
+        var filename = docId + ext;
+        fs.writeFileSync(path.join(AGENCY_STAFF_CUSTOM_DOCS_DIR, filename), buf);
+
+        var ins = await pgPool.query(
+          `INSERT INTO agency_staff_custom_documents (id, agency_staff_id, label, filename, uploaded_by)
+           VALUES ($1,$2,$3,$4,$5)
+           RETURNING id, label, uploaded_at`,
+          [docId, staffId, label, filename, req.user.id]
+        );
+        console.log('[AGENCY DOCS] Saved custom document "' + label + '" for agency_staff', staffId);
+        res.json({ ok: true, document: ins.rows[0] });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: e.message });
+      }
+    });
+    req.on('error', function() {
+      res.status(500).json({ ok: false, error: 'Upload failed.' });
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/agencies/:agencyId/staff/:id/custom-documents', requireLogin, requireOwnAgencyOrPermission('staff'), async function(req, res) {
+  var agencyId = path.basename(req.params.agencyId);
+  var staffId  = path.basename(req.params.id);
+  try {
+    var r = await pgPool.query('SELECT id FROM agency_staff WHERE id = $1 AND agency_id = $2', [staffId, agencyId]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Guard not found.' });
+    var docs = await pgPool.query(
+      'SELECT id, label, uploaded_at FROM agency_staff_custom_documents WHERE agency_staff_id = $1 ORDER BY uploaded_at ASC',
+      [staffId]
+    );
+    res.json({ ok: true, documents: docs.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/agencies/:agencyId/staff/:id/custom-documents/:docId', requireLogin, requireOwnAgencyOrPermission('staff'), async function(req, res) {
+  var agencyId = path.basename(req.params.agencyId);
+  var staffId  = path.basename(req.params.id);
+  var docId    = path.basename(req.params.docId);
+  try {
+    var r = await pgPool.query(
+      `SELECT d.filename FROM agency_staff_custom_documents d
+       JOIN agency_staff s ON s.id = d.agency_staff_id
+       WHERE d.id = $1 AND d.agency_staff_id = $2 AND s.agency_id = $3`,
+      [docId, staffId, agencyId]
+    );
+    if (!r.rows.length) return res.status(404).end();
+    var fp = path.join(AGENCY_STAFF_CUSTOM_DOCS_DIR, path.basename(r.rows[0].filename));
+    if (!fs.existsSync(fp)) return res.status(404).end();
+    var ext = path.extname(fp).toLowerCase();
+    var mime = ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', 'inline; filename="' + docId + ext + '"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(fp));
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+app.delete('/api/agencies/:agencyId/staff/:id/custom-documents/:docId', requireLogin, requireOwnAgencyOrPermission('staff'), async function(req, res) {
+  var agencyId = path.basename(req.params.agencyId);
+  var staffId  = path.basename(req.params.id);
+  var docId    = path.basename(req.params.docId);
+  try {
+    var r = await pgPool.query(
+      `SELECT d.filename FROM agency_staff_custom_documents d
+       JOIN agency_staff s ON s.id = d.agency_staff_id
+       WHERE d.id = $1 AND d.agency_staff_id = $2 AND s.agency_id = $3`,
+      [docId, staffId, agencyId]
+    );
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Document not found.' });
+    var fp = path.join(AGENCY_STAFF_CUSTOM_DOCS_DIR, path.basename(r.rows[0].filename));
+    if (fs.existsSync(fp)) fs.unlinkSync(fp);
+    await pgPool.query('DELETE FROM agency_staff_custom_documents WHERE id = $1', [docId]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── Agency Staff: Profile Photo ───────────────────────────────────────────────
 // Flat, ID-keyed directory — mirrors USER_PHOTOS_DIR/findUserPhoto exactly,
 // since agency_staff (a Postgres table) has no per-person folder the way
 // regular staff do. One photo per guard, delete-then-write on reupload.
 var AGENCY_STAFF_PHOTOS_DIR = path.join(BASE, 'agency-staff-photos');
 if (!fs.existsSync(AGENCY_STAFF_PHOTOS_DIR)) fs.mkdirSync(AGENCY_STAFF_PHOTOS_DIR, { recursive: true });
+
+// Credit/social-media check results — admin-only in both directions (upload
+// AND read), since a guard has no login to view anything through, and
+// visibility here means "visible to the agency admin", not the guard.
+var AGENCY_STAFF_DOCS_DIR = path.join(BASE, 'agency-staff-confidential-docs');
+if (!fs.existsSync(AGENCY_STAFF_DOCS_DIR)) fs.mkdirSync(AGENCY_STAFF_DOCS_DIR, { recursive: true });
+var AGENCY_STAFF_DOC_TYPES = ['creditCheckReport', 'socialMediaCheckReport'];
+
+function findAgencyStaffDocFile(staffId, docType) {
+  var exts = ['.pdf', '.jpg', '.jpeg', '.png', '.webp'];
+  for (var i = 0; i < exts.length; i++) {
+    var fp = path.join(AGENCY_STAFF_DOCS_DIR, staffId + '_' + docType + exts[i]);
+    if (fs.existsSync(fp)) return fp;
+  }
+  return null;
+}
+
+app.get('/api/agencies/:agencyId/staff/:id/checks', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var r = await pgPool.query(
+      'SELECT doc_type, uploaded_at, visible_to_agency FROM agency_staff_documents WHERE agency_staff_id = $1',
+      [req.params.id]
+    );
+    res.json({ ok: true, checks: r.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/agencies/:agencyId/staff/:id/checks/:docType', requireLogin, requirePermission('staff'), function(req, res) {
+  var docType = req.params.docType;
+  if (AGENCY_STAFF_DOC_TYPES.indexOf(docType) === -1) return res.status(400).end();
+  var staffId = path.basename(req.params.id);
+  var fp = findAgencyStaffDocFile(staffId, docType);
+  if (!fp) return res.status(404).end();
+  var ext = path.extname(fp).toLowerCase();
+  var mime = ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(fs.readFileSync(fp));
+});
+
+app.post('/api/agencies/:agencyId/staff/:id/checks/:docType', requireLogin, requirePermission('staff'), async function(req, res) {
+  var docType = req.params.docType;
+  if (AGENCY_STAFF_DOC_TYPES.indexOf(docType) === -1) return res.status(400).json({ ok: false, error: 'Invalid document type.' });
+  try {
+    var staffId = path.basename(req.params.id);
+    var check = await pgPool.query('SELECT id FROM agency_staff WHERE id = $1 AND agency_id = $2', [staffId, path.basename(req.params.agencyId)]);
+    if (!check.rows.length) return res.status(404).json({ ok: false, error: 'Guard not found.' });
+
+    var chunks = [];
+    req.on('data', function(c) { chunks.push(c); });
+    req.on('end', async function() {
+      try {
+        var buf = Buffer.concat(chunks);
+        var ext = '.pdf';
+        if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
+        else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
+        ['.pdf', '.jpg', '.jpeg', '.png', '.webp'].forEach(function(e) {
+          var old = path.join(AGENCY_STAFF_DOCS_DIR, staffId + '_' + docType + e);
+          if (fs.existsSync(old)) fs.unlinkSync(old);
+        });
+        var filename = staffId + '_' + docType + ext;
+        fs.writeFileSync(path.join(AGENCY_STAFF_DOCS_DIR, filename), buf);
+        // Always lands hidden — same "upload never implies reveal" rule as
+        // the staff-side ConfidentialDocManagerRow; the visibility toggle
+        // below is a deliberate, separate action.
+        await pgPool.query(
+          `INSERT INTO agency_staff_documents (agency_staff_id, doc_type, filename, uploaded_by, visible_to_agency)
+           VALUES ($1,$2,$3,$4,FALSE)
+           ON CONFLICT (agency_staff_id, doc_type) DO UPDATE SET filename = $3, uploaded_by = $4, uploaded_at = NOW(), visible_to_agency = FALSE`,
+          [staffId, docType, filename, req.user.id]
+        );
+        res.json({ ok: true });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: e.message });
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.patch('/api/agencies/:agencyId/staff/:id/checks/:docType/visibility', requireLogin, requirePermission('staff'), async function(req, res) {
+  var docType = req.params.docType;
+  if (AGENCY_STAFF_DOC_TYPES.indexOf(docType) === -1) return res.status(400).json({ ok: false, error: 'Invalid document type.' });
+  try {
+    var visible = !!(req.body && req.body.visibleToStaff);
+    var r = await pgPool.query(
+      'UPDATE agency_staff_documents SET visible_to_agency = $1 WHERE agency_staff_id = $2 AND doc_type = $3 RETURNING id',
+      [visible, req.params.id, docType]
+    );
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Document not found.' });
+    res.json({ ok: true, visibleToStaff: visible });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 function findAgencyStaffPhoto(staffId) { return findFileByExts(AGENCY_STAFF_PHOTOS_DIR, String(staffId)); }
 
@@ -3868,14 +4377,33 @@ function getSiteById(siteId) {
 // if any is EXPIRED compliance, rejects if any is unavailable on event_date.
 // Returns the fetched staff rows (used to resolve names for error messages)
 // or throws an object { status, error } the caller turns into a response.
+// "10:00" -> 600 minutes since midnight. Returns null for anything that
+// isn't a plain HH:MM 24-hour string, so callers can treat null as invalid.
+function timeStringToMinutes(t) {
+  var m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(t || '').trim());
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
 async function validateDeploymentStaff(agencyId, staffReq, eventDate) {
   var staffIds = staffReq.map(function(s) { return String(s.agency_staff_id || ''); });
   if (staffIds.some(function(id) { return !id; })) {
     throw { status: 400, error: 'Every staff entry needs an agency_staff_id.' };
   }
+  // scheduled_hours is derived from start_time/end_time, not typed directly
+  // — the user wants a shift entered as a time range (e.g. 10:00 to 18:00 on
+  // the deployment's single event_date), matching how a real shift is
+  // described, rather than a raw hours count.
   for (var i = 0; i < staffReq.length; i++) {
-    var hrs = Number(staffReq[i].scheduled_hours);
-    if (!hrs || hrs <= 0) throw { status: 400, error: 'scheduled_hours must be a positive number for every guard.' };
+    var startMin = timeStringToMinutes(staffReq[i].start_time);
+    var endMin = timeStringToMinutes(staffReq[i].end_time);
+    if (startMin === null || endMin === null) {
+      throw { status: 400, error: 'Every guard needs a start_time and end_time in HH:MM format.' };
+    }
+    if (endMin <= startMin) {
+      throw { status: 400, error: 'end_time must be after start_time for every guard (shifts are within a single day).' };
+    }
+    staffReq[i].scheduled_hours = Math.round(((endMin - startMin) / 60) * 100) / 100;
   }
   if (!staffIds.length) return [];
 
@@ -3916,9 +4444,11 @@ app.post('/api/agencies/:agencyId/deployments', requireLogin, requireOwnAgencyOr
     if (!agencyCheck.rows.length) return res.status(404).json({ ok: false, error: 'Agency not found.' });
 
     var b = req.body || {};
-    var siteId    = String(b.site_id    || '').trim();
-    var eventDate = String(b.event_date || '').trim();
-    var staffReq  = Array.isArray(b.staff) ? b.staff : [];
+    var siteId     = String(b.site_id     || '').trim();
+    var eventDate  = String(b.event_date  || '').trim();
+    var staffReq   = Array.isArray(b.staff) ? b.staff : [];
+    var informedBy = b.informed_by ? String(b.informed_by).trim() : null;
+    var approvedBy = b.approved_by ? String(b.approved_by).trim() : null;
 
     if (!siteId)    return res.status(400).json({ ok: false, error: 'site_id is required.' });
     if (!eventDate) return res.status(400).json({ ok: false, error: 'event_date is required.' });
@@ -3936,14 +4466,14 @@ app.post('/api/agencies/:agencyId/deployments', requireLogin, requireOwnAgencyOr
     try {
       await client.query('BEGIN');
       var depResult = await client.query(
-        'INSERT INTO agency_deployments (agency_id, site_id, event_date) VALUES ($1,$2,$3) RETURNING *',
-        [agencyId, siteId, eventDate]
+        'INSERT INTO agency_deployments (agency_id, site_id, event_date, informed_by, approved_by) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+        [agencyId, siteId, eventDate, informedBy, approvedBy]
       );
       var deployment = depResult.rows[0];
       for (var j = 0; j < staffReq.length; j++) {
         await client.query(
-          'INSERT INTO deployment_attendance (deployment_id, agency_staff_id, scheduled_hours) VALUES ($1,$2,$3)',
-          [deployment.id, staffReq[j].agency_staff_id, Number(staffReq[j].scheduled_hours)]
+          'INSERT INTO deployment_attendance (deployment_id, agency_staff_id, scheduled_hours, start_time, end_time) VALUES ($1,$2,$3,$4,$5)',
+          [deployment.id, staffReq[j].agency_staff_id, Number(staffReq[j].scheduled_hours), staffReq[j].start_time, staffReq[j].end_time]
         );
       }
       await client.query('COMMIT');
@@ -4018,9 +4548,9 @@ app.patch('/api/agencies/:agencyId/deployments/:id', requireLogin, requireOwnAge
         );
         for (var j = 0; j < staffReq.length; j++) {
           await client.query(
-            'INSERT INTO deployment_attendance (deployment_id, agency_staff_id, scheduled_hours) VALUES ($1,$2,$3) ' +
-            'ON CONFLICT (deployment_id, agency_staff_id) DO UPDATE SET scheduled_hours = EXCLUDED.scheduled_hours',
-            [depId, staffReq[j].agency_staff_id, Number(staffReq[j].scheduled_hours)]
+            'INSERT INTO deployment_attendance (deployment_id, agency_staff_id, scheduled_hours, start_time, end_time) VALUES ($1,$2,$3,$4,$5) ' +
+            'ON CONFLICT (deployment_id, agency_staff_id) DO UPDATE SET scheduled_hours = EXCLUDED.scheduled_hours, start_time = EXCLUDED.start_time, end_time = EXCLUDED.end_time',
+            [depId, staffReq[j].agency_staff_id, Number(staffReq[j].scheduled_hours), staffReq[j].start_time, staffReq[j].end_time]
           );
         }
         await client.query('COMMIT');
@@ -4034,6 +4564,17 @@ app.patch('/api/agencies/:agencyId/deployments/:id', requireLogin, requireOwnAge
 
     if (status) {
       await pgPool.query('UPDATE agency_deployments SET status = $1, updated_at = NOW() WHERE id = $2', [status, depId]);
+    }
+    // Built per-field rather than with COALESCE — COALESCE would make it
+    // impossible to ever clear one of these back to blank (sending "" would
+    // just fall through to the existing value instead of clearing it).
+    var deploymentUpdates = [];
+    var deploymentParams = [];
+    if (b.informed_by !== undefined) { deploymentParams.push(String(b.informed_by).trim() || null); deploymentUpdates.push('informed_by = $' + deploymentParams.length); }
+    if (b.approved_by !== undefined) { deploymentParams.push(String(b.approved_by).trim() || null); deploymentUpdates.push('approved_by = $' + deploymentParams.length); }
+    if (deploymentUpdates.length) {
+      deploymentParams.push(depId);
+      await pgPool.query('UPDATE agency_deployments SET ' + deploymentUpdates.join(', ') + ', updated_at = NOW() WHERE id = $' + deploymentParams.length, deploymentParams);
     }
 
     var updated = await pgPool.query('SELECT * FROM agency_deployments WHERE id = $1', [depId]);
@@ -4228,6 +4769,28 @@ app.get('/api/admin/deployments', requireLogin, requirePermission('staff'), asyn
   }
 });
 
+// Narrow manager-directory lookup for the "Manager" audience picker (Stage
+// 2) — deliberately NOT a reuse of GET /api/users (requireRole('director'),
+// backs the director-only Team Access user-administration page and returns
+// full rows including role/email/is_active). This route is scoped to just
+// {id, full_name} for active, manager-tier users so it can't be used to
+// enumerate or expose anything beyond a name to pick from a list.
+// "Manager-tier" = every role except 'staff' (self-service) and 'agency'
+// (external guard-agency logins) — everything else in this app's role
+// system (director, ops_manager, hr_manager, office_manager, accounts,
+// media, supervisor, fleet_manager, and any future custom role) is some
+// flavor of internal management.
+app.get('/api/manager-directory', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var result = await pgPool.query(
+      "SELECT id, full_name FROM users WHERE is_active = TRUE AND role NOT IN ('staff', 'agency') ORDER BY full_name"
+    );
+    res.json({ ok: true, managers: result.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── EVENT INSTRUCTIONS & ACKNOWLEDGMENT FORMS (Feature 2) ─────────────────────
 // Covers BOTH agency cover guards and GuardTec's own staff — one consolidated
 // acknowledgment_forms table, one link-generation mechanism, two respondent
@@ -4242,9 +4805,16 @@ app.get('/api/admin/deployments', requireLogin, requirePermission('staff'), asyn
 // source of truth for both: the ?expires= query param on the returned URL is
 // DISPLAY ONLY (a client-side countdown) — validation never reads anything
 // from the URL itself, only link_expires_at from the DB (debug note #9).
+// Kept in sync with the acknowledgment_forms.respondent_type CHECK constraint
+// (widened in ensureEventInstructionsSchema to add driver/manager) — found via
+// testing that the DB accepted the wider set while this function still
+// silently rejected two of them, making Driver/Manager audience selection a
+// dead end at the API layer despite compiling and looking correct end to end.
+var VALID_RESPONDENT_TYPES = ['agency_staff', 'employee', 'driver', 'manager'];
+
 async function generateFormLink(instructionId, respondentType, respondentId, deploymentId) {
-  if (respondentType !== 'agency_staff' && respondentType !== 'employee') {
-    throw { status: 400, error: 'respondentType must be agency_staff or employee.' };
+  if (VALID_RESPONDENT_TYPES.indexOf(respondentType) === -1) {
+    throw { status: 400, error: 'respondentType must be one of: ' + VALID_RESPONDENT_TYPES.join(', ') + '.' };
   }
 
   var versionResult = await pgPool.query('SELECT version FROM event_instructions WHERE id = $1', [instructionId]);
@@ -4308,7 +4878,16 @@ app.get('/api/event-instructions', requireLogin, requirePermission('staff'), asy
     var conditions = [];
     var params = [];
     if (req.query.site_id) { params.push(req.query.site_id); conditions.push('site_id = $' + params.length); }
-    if (req.query.status)  { params.push(req.query.status);  conditions.push('status = $' + params.length); }
+    if (req.query.status) {
+      params.push(req.query.status); conditions.push('status = $' + params.length);
+    } else {
+      // No explicit status filter -> exclude archived by default, same as
+      // every other list endpoint in this app (agencies, agency_staff).
+      // Found via testing: a caller with no filters at all was getting
+      // archived instructions back, relying entirely on the frontend to
+      // filter them out client-side rather than having a sane default here.
+      conditions.push("status != 'archived'");
+    }
 
     var sql = 'SELECT * FROM event_instructions' +
       (conditions.length ? ' WHERE ' + conditions.join(' AND ') : '') +
@@ -4382,6 +4961,106 @@ app.patch('/api/event-instructions/:id', requireLogin, requirePermission('staff'
     res.json({ ok: true, instruction: r.rows[0] });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Dedicated soft-delete for event instructions (Stage 2). Never a hard
+// DELETE: acknowledgment_forms rows can point at an instruction via
+// instruction_id, and a signed acknowledgment form is compliance/audit proof
+// that must survive — same reasoning this file already applies to agencies
+// and agency_staff (archived, never hard-deleted). status already accepts
+// 'archived' via the generic PATCH above; this route exists purely so the
+// frontend has a clear, discoverable "delete" action instead of reaching for
+// PATCH with a magic status string.
+app.post('/api/event-instructions/:id/archive', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var r = await pgPool.query(
+      "UPDATE event_instructions SET status = 'archived' WHERE id = $1 RETURNING *",
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Instruction not found.' });
+    res.json({ ok: true, instruction: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── EVENT INSTRUCTIONS: DOCUMENT ATTACHMENT ───────────────────────────────────
+// Flat dir keyed by instruction id (one attached document per instruction,
+// mirroring document_file_url being a single column, not a list) — same
+// magic-byte extension detection and path.basename()-every-segment
+// discipline as the agency staff document routes above. document_file_url is
+// stored as this same GET route's own path so "is a document attached" and
+// "where do I fetch it from" are the same fact, and document_mime_type
+// records what GET should serve it as.
+var EVENT_INSTRUCTIONS_DOCS_DIR = path.join(BASE, 'event-instructions-documents');
+if (!fs.existsSync(EVENT_INSTRUCTIONS_DOCS_DIR)) fs.mkdirSync(EVENT_INSTRUCTIONS_DOCS_DIR, { recursive: true });
+
+function findEventInstructionDoc(instructionId) {
+  var exts = ['.pdf', '.jpg', '.jpeg', '.png', '.webp'];
+  for (var e of exts) {
+    var fp = path.join(EVENT_INSTRUCTIONS_DOCS_DIR, instructionId + e);
+    if (fs.existsSync(fp)) return fp;
+  }
+  return null;
+}
+
+app.post('/api/event-instructions/:id/document', requireLogin, requirePermission('staff'), async function(req, res) {
+  var instructionId = path.basename(req.params.id);
+  try {
+    var check = await pgPool.query('SELECT id FROM event_instructions WHERE id = $1', [instructionId]);
+    if (!check.rows.length) return res.status(404).json({ ok: false, error: 'Instruction not found.' });
+
+    var chunks = [];
+    req.on('data', function(c) { chunks.push(c); });
+    req.on('end', async function() {
+      try {
+        var buf = Buffer.concat(chunks);
+        // Detect file type from magic bytes — same convention as the agency document routes above.
+        var ext = '.pdf';
+        var mime = 'application/pdf';
+        if (buf[0] === 0x89 && buf[1] === 0x50) { ext = '.png'; mime = 'image/png'; }
+        else if (buf[0] === 0xFF && buf[1] === 0xD8) { ext = '.jpg'; mime = 'image/jpeg'; }
+
+        // Remove any existing file for this instruction before writing the new one.
+        ['.pdf', '.jpg', '.jpeg', '.png', '.webp'].forEach(function(e) {
+          var old = path.join(EVENT_INSTRUCTIONS_DOCS_DIR, instructionId + e);
+          if (fs.existsSync(old)) fs.unlinkSync(old);
+        });
+        fs.writeFileSync(path.join(EVENT_INSTRUCTIONS_DOCS_DIR, instructionId + ext), buf);
+
+        var documentUrl = '/api/event-instructions/' + instructionId + '/document';
+        var r = await pgPool.query(
+          'UPDATE event_instructions SET document_file_url = $1, document_mime_type = $2 WHERE id = $3 RETURNING *',
+          [documentUrl, mime, instructionId]
+        );
+        console.log('[EVENT INSTRUCTIONS] Saved document for instruction', instructionId);
+        res.json({ ok: true, instruction: r.rows[0] });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: e.message });
+      }
+    });
+    req.on('error', function() {
+      res.status(500).json({ ok: false, error: 'Upload failed.' });
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/event-instructions/:id/document', requireLogin, requirePermission('staff'), function(req, res) {
+  var instructionId = path.basename(req.params.id);
+  try {
+    var fp = findEventInstructionDoc(instructionId);
+    if (!fp) return res.status(404).end();
+    var ext = path.extname(fp).toLowerCase();
+    var mime = ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', 'inline; filename="' + instructionId + ext + '"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(fs.readFileSync(fp));
+  } catch (e) {
+    res.status(500).end();
   }
 });
 
@@ -5346,6 +6025,7 @@ app.post('/api/agencies/:agencyId/messages', requireLogin, requireOwnAgencyOrPer
         actorName: agencyRow.rows.length ? agencyRow.rows[0].name : 'Agency',
         summary: 'sent you a message',
         linkTab: 'messages',
+        linkAgencyId: agencyId,
       });
     }
     res.json({ ok: true, message: r.rows[0] });
@@ -5643,7 +6323,7 @@ app.get('/api/internal/fleet', requireN8nToken, function(req, res) {
 app.get('/api/notifications', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
     var result = await pgPool.query(
-      `SELECT id, type, actor_name, summary, link_staff_id, link_tab, link_incident_id, created_at
+      `SELECT id, type, actor_name, summary, link_staff_id, link_tab, link_incident_id, link_agency_id, created_at
        FROM notifications WHERE seen_at IS NULL ORDER BY created_at DESC LIMIT 50`
     );
     res.json({ ok: true, notifications: result.rows });

@@ -242,95 +242,89 @@ export default function AgencyPortalDeploymentsPage({ agencyId: agencyIdProp }: 
 
       {/* ── Create / Edit deployment panel ── */}
       {formOpen && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/40" onClick={() => setFormOpen(false)} />
-          <div className="flex h-full w-full max-w-md flex-col bg-background shadow-2xl">
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <h2 className="text-lg font-semibold">{formDeployment ? "Edit deployment" : "New deployment"}</h2>
-              <button onClick={() => setFormOpen(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <DeploymentForm
-              agencyId={agencyId}
-              sites={sites}
-              roster={roster}
-              deployment={formDeployment}
-              initialAssignments={formDeployment ? assignmentsCache[formDeployment.id] ?? [] : []}
-              initialDate={formInitialDate}
-              onSaved={handleFormSaved}
-              onCancel={() => setFormOpen(false)}
-            />
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          <div className="flex items-center justify-between border-b px-6 py-4">
+            <h2 className="text-lg font-semibold">{formDeployment ? "Edit deployment" : "New deployment"}</h2>
+            <button onClick={() => setFormOpen(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+              <X className="h-5 w-5" />
+            </button>
           </div>
+          <DeploymentForm
+            agencyId={agencyId}
+            sites={sites}
+            roster={roster}
+            deployment={formDeployment}
+            initialAssignments={formDeployment ? assignmentsCache[formDeployment.id] ?? [] : []}
+            initialDate={formInitialDate}
+            onSaved={handleFormSaved}
+            onCancel={() => setFormOpen(false)}
+          />
         </div>
       )}
 
       {/* ── Deployment detail drawer ── */}
       {detail && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/40" onClick={() => setDetail(null)} />
-          <div className="flex h-full w-full max-w-lg flex-col bg-background shadow-2xl">
-            <div className="border-b px-6 py-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="flex items-center gap-1.5 text-lg font-semibold">
-                    <CalendarDays className="h-4 w-4 text-muted-foreground" />{siteName(detail)}
-                  </h2>
-                  <p className="text-xs text-muted-foreground">
-                    {detail.event_date.slice(0, 10)} · {detail.guard_count ?? 0} guard{detail.guard_count === 1 ? "" : "s"} · {detail.status}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1">
-                  <button onClick={() => openEdit(detail)} title="Edit assignment"
-                    className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
-                    <Pencil className="h-4 w-4" />
-                  </button>
-                  <button onClick={() => setDetail(null)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          <div className="border-b px-6 py-4">
+            <div className="mx-auto flex w-full max-w-2xl items-center justify-between">
+              <div>
+                <h2 className="flex items-center gap-1.5 text-lg font-semibold">
+                  <CalendarDays className="h-4 w-4 text-muted-foreground" />{siteName(detail)}
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  {detail.event_date.slice(0, 10)} · {detail.guard_count ?? 0} guard{detail.guard_count === 1 ? "" : "s"} · {detail.status}
+                </p>
               </div>
-              <div className="mt-3 flex gap-1 rounded-lg border bg-muted/40 p-1 w-fit">
-                {([
-                  { id: "ack", label: "Acknowledgment", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
-                  { id: "attendance", label: "Attendance", icon: <ClipboardCheck className="h-3.5 w-3.5" /> },
-                  { id: "notes", label: "Notes", icon: <MessageSquare className="h-3.5 w-3.5" /> },
-                ] as const).map(t => (
-                  <button key={t.id} onClick={() => setDetailTab(t.id)}
-                    className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
-                      detailTab === t.id ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
-                    }`}>
-                    {t.icon}{t.label}
-                  </button>
-                ))}
+              <div className="flex items-center gap-1">
+                <button onClick={() => openEdit(detail)} title="Edit assignment"
+                  className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button onClick={() => setDetail(null)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+                  <X className="h-5 w-5" />
+                </button>
               </div>
             </div>
+            <div className="mx-auto mt-3 flex w-full max-w-2xl gap-1 rounded-lg border bg-muted/40 p-1">
+              {([
+                { id: "ack", label: "Acknowledgment", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+                { id: "attendance", label: "Attendance", icon: <ClipboardCheck className="h-3.5 w-3.5" /> },
+                { id: "notes", label: "Notes", icon: <MessageSquare className="h-3.5 w-3.5" /> },
+              ] as const).map(t => (
+                <button key={t.id} onClick={() => setDetailTab(t.id)}
+                  className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
+                    detailTab === t.id ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}>
+                  {t.icon}{t.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-5">
-              {detailTab === "ack" && (
-                <DeploymentAcknowledgment agencyId={agencyId} deployment={detail}
-                  onAcknowledged={d => { setDetail(d); reloadDeployments() }} />
-              )}
-              {detailTab === "attendance" && (
-                <>
-                  {assignmentsUnavailable && (
-                    <p className="mb-3 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning">
-                      Guard list unavailable after a page reload — reopen this from an Edit right after creating,
-                      or add a GET assignments endpoint server-side (see notes to Asrar).
-                    </p>
-                  )}
-                  {/* AttendanceConfirmation persists each row itself (POST .../attendance) —
-                      it already owns its own display state, so the parent has nothing to
-                      merge back into assignmentsCache (which only ever tracks
-                      agency_staff_id + scheduled_hours, not attendance results). */}
-                  <AttendanceConfirmation agencyId={agencyId} deploymentId={detail.id}
-                    assignments={attendanceRows} onUpdated={() => {}} />
-                </>
-              )}
-              {detailTab === "notes" && (
-                <DeploymentNotes agencyId={agencyId} deploymentId={detail.id} currentUserId={user?.id} />
-              )}
-            </div>
+          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-6 py-5">
+            {detailTab === "ack" && (
+              <DeploymentAcknowledgment agencyId={agencyId} deployment={detail}
+                onAcknowledged={d => { setDetail(d); reloadDeployments() }} />
+            )}
+            {detailTab === "attendance" && (
+              <>
+                {assignmentsUnavailable && (
+                  <p className="mb-3 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning">
+                    Guard list unavailable after a page reload — reopen this from an Edit right after creating,
+                    or add a GET assignments endpoint server-side (see notes to Asrar).
+                  </p>
+                )}
+                {/* AttendanceConfirmation persists each row itself (POST .../attendance) —
+                    it already owns its own display state, so the parent has nothing to
+                    merge back into assignmentsCache (which only ever tracks
+                    agency_staff_id + scheduled_hours, not attendance results). */}
+                <AttendanceConfirmation agencyId={agencyId} deploymentId={detail.id}
+                  assignments={attendanceRows} onUpdated={() => {}} />
+              </>
+            )}
+            {detailTab === "notes" && (
+              <DeploymentNotes agencyId={agencyId} deploymentId={detail.id} currentUserId={user?.id} />
+            )}
           </div>
         </div>
       )}

@@ -62,7 +62,7 @@ export default function DashboardLayout() {
   const [alertCount, setAlertCount] = useState(0)
   const [notifications, setNotifications] = useState<{
     id: string; type: string; actor_name: string; summary: string
-    link_staff_id?: string; link_tab?: string; link_incident_id?: string; created_at: string
+    link_staff_id?: string; link_tab?: string; link_incident_id?: string; link_agency_id?: string; created_at: string
   }[]>([])
   const [showAlerts, setShowAlerts] = useState(false)
   const alertsRef = useRef<HTMLDivElement>(null)
@@ -113,11 +113,12 @@ export default function DashboardLayout() {
     return () => clearInterval(id)
   }, [])
 
-  function goToNotification(n: { id: string; type: string; link_staff_id?: string; link_tab?: string; link_incident_id?: string }) {
+  function goToNotification(n: { id: string; type: string; link_staff_id?: string; link_tab?: string; link_incident_id?: string; link_agency_id?: string }) {
     setNotifications(prev => prev.filter(x => x.id !== n.id))
     api.post(`/api/notifications/${n.id}/seen`).catch(() => {})
     setShowAlerts(false)
     if (n.type === "incident_report") navigate("/incident-reports")
+    else if (n.link_agency_id) navigate(`/admin/agencies/${n.link_agency_id}${n.link_tab ? `?tab=${n.link_tab}` : ""}`)
     else if (n.link_staff_id) navigate(`/staff/${n.link_staff_id}${n.link_tab ? `?tab=${n.link_tab}` : ""}`)
   }
 

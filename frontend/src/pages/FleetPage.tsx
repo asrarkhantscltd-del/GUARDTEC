@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { downloadExport, daysUntil, formatDate } from "@/lib/utils"
 import { api } from "@/lib/api"
+import { ConfidentialDocManagerRow } from "@/components/profile/ProfileShared"
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,12 @@ const BLANK_VEHICLE: Omit<Vehicle, "id"> = {
 
 interface FleetDriver {
   id: string
+  // Linking to an existing staff record is now how a NEW driver gets
+  // created — name/phone/email come from that staff member rather than
+  // being typed here (see the "Driver" section of the form). first_name/
+  // last_name/phone/email stay on the type only for older records created
+  // before this change, which never had a staffId at all.
+  staffId?: string
   first_name: string
   last_name: string
   phone?: string
@@ -53,6 +60,7 @@ interface FleetDriver {
   licenceCategories?: string[]
   cpcCard?: string
   cpcExpiry?: string
+  fuelCardNumber?: string
   tachoCard?: string
   tachoExpiry?: string
   medicalExpiry?: string
@@ -65,12 +73,19 @@ interface FleetDriver {
 }
 
 const BLANK_DRIVER: Omit<FleetDriver, "id"> = {
-  first_name: "", last_name: "", phone: "", email: "",
+  staffId: "", first_name: "", last_name: "", phone: "", email: "",
   licenceNumber: "", licenceExpiry: "", licenceCategories: [],
-  cpcCard: "", cpcExpiry: "", tachoCard: "", tachoExpiry: "",
+  cpcCard: "", cpcExpiry: "", fuelCardNumber: "", tachoCard: "", tachoExpiry: "",
   medicalExpiry: "", dbsNumber: "", dbsDate: "", lastAssessment: "",
   assignedVehicleId: "", status: "active", notes: "",
 }
+
+interface DriverDocMeta { uploaded?: boolean; date?: string; visibleToStaff?: boolean }
+const DRIVER_MANAGER_DOCS = [
+  { key: "tachoCard",        label: "Tachograph Card (scan)" },
+  { key: "dbsCheck",         label: "DBS Certificate" },
+  { key: "assessmentReport", label: "Driving Assessment Report" },
+] as const
 
 const LICENCE_CATS = ["B", "B+E", "C1", "C1+E", "C", "C+E", "D1", "D1+E", "D", "AM"]
 
@@ -155,12 +170,16 @@ export default function FleetPage() {
   const [selectedVehicleIds, setSelectedVehicleIds] = useState<Set<string>>(new Set())
   const [selectedDriverIds, setSelectedDriverIds] = useState<Set<string>>(new Set())
 
-  // Add/Delete state — drivers
+  // Add/Edit/Delete state — drivers
   const [showPanel, setShowPanel] = useState(false)
+  const [editingDriverId, setEditingDriverId] = useState<string | null>(null)
   const [editDriver, setEditDriver] = useState<Omit<FleetDriver, "id">>(BLANK_DRIVER)
   const [saving, setSaving] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [staffOptions, setStaffOptions] = useState<{ id: string; name: string }[]>([])
+  const [staffSearch, setStaffSearch] = useState("")
+  const [driverDocs, setDriverDocs] = useState<Record<string, DriverDocMeta>>({})
 
   // Add/Edit/Delete state — vehicles
   const [showVehiclePanel, setShowVehiclePanel] = useState(false)
@@ -233,9 +252,10 @@ export default function FleetPage() {
     let cancelled = false
     async function load() {
       try {
-        const [vRes, dRes] = await Promise.allSettled([
+        const [vRes, dRes, sRes] = await Promise.allSettled([
           api.get<Vehicle[] | { vehicles?: Vehicle[] }>("/api/vehicles"),
           api.get<FleetDriver[]>("/api/fleet-drivers"),
+          api.get<{ id: string; name: string }[]>("/api/staff"),
         ])
         if (cancelled) return
         if (vRes.status === "fulfilled") {
@@ -244,6 +264,9 @@ export default function FleetPage() {
         }
         if (dRes.status === "fulfilled") {
           setDrivers(Array.isArray(dRes.value) ? dRes.value : [])
+        }
+        if (sRes.status === "fulfilled") {
+          setStaffOptions(Array.isArray(sRes.value) ? sRes.value.map(s => ({ id: s.id, name: s.name })) : [])
         }
         if (vRes.status === "rejected" && dRes.status === "rejected") setApiError(true)
       } catch {
@@ -294,19 +317,76 @@ export default function FleetPage() {
     )
   }, [drivers, search])
 
-  // ── Add driver ────────────────────────────────────────────────────────────────
+  // ── Add / edit driver ────────────────────────────────────────────────────────
+
+  function openAddDriver() {
+    setEditingDriverId(null)
+    setEditDriver(BLANK_DRIVER)
+    setStaffSearch("")
+    setDriverDocs({})
+    setShowPanel(true)
+  }
+
+  async function openEditDriver(d: FleetDriver) {
+    setEditingDriverId(d.id)
+    setEditDriver({
+      staffId: d.staffId ?? "", first_name: d.first_name, last_name: d.last_name,
+      phone: d.phone ?? "", email: d.email ?? "",
+      licenceNumber: d.licenceNumber ?? "", licenceExpiry: d.licenceExpiry ?? "",
+      licenceCategories: d.licenceCategories ?? [],
+      cpcCard: d.cpcCard ?? "", cpcExpiry: d.cpcExpiry ?? "", fuelCardNumber: d.fuelCardNumber ?? "",
+      tachoCard: d.tachoCard ?? "", tachoExpiry: d.tachoExpiry ?? "",
+      medicalExpiry: d.medicalExpiry ?? "", dbsNumber: d.dbsNumber ?? "", dbsDate: d.dbsDate ?? "",
+      lastAssessment: d.lastAssessment ?? "", assignedVehicleId: d.assignedVehicleId ?? "",
+      status: d.status, notes: d.notes ?? "",
+    })
+    setStaffSearch("")
+    setShowPanel(true)
+    try {
+      const res = await api.get<{ ok: boolean; documents: Record<string, DriverDocMeta> }>(`/api/fleet-drivers/${d.id}/documents`)
+      setDriverDocs(res.documents ?? {})
+    } catch {
+      setDriverDocs({})
+    }
+  }
+
+  // Re-fetches just the document metadata for the driver currently open in
+  // the panel — used as the upload/visibility-toggle rows' onChanged, kept
+  // separate from openEditDriver so refreshing docs never clobbers whatever
+  // the manager is mid-typing in the rest of the form.
+  async function refreshDriverDocs() {
+    if (!editingDriverId) return
+    try {
+      const res = await api.get<{ ok: boolean; documents: Record<string, DriverDocMeta> }>(`/api/fleet-drivers/${editingDriverId}/documents`)
+      setDriverDocs(res.documents ?? {})
+    } catch {
+      // leave existing driverDocs in place — a failed refresh shouldn't erase what's already shown
+    }
+  }
+
+  function closeDriverPanel() {
+    setShowPanel(false)
+    setEditingDriverId(null)
+    setEditDriver(BLANK_DRIVER)
+    setDriverDocs({})
+  }
 
   async function handleAddDriver(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
     try {
-      const { driver } = await api.post<{ driver: FleetDriver }>("/api/fleet-drivers", editDriver)
-      setDrivers(prev => [...prev, driver])
-      setShowPanel(false)
-      setEditDriver(BLANK_DRIVER)
-      toast.success("Driver added successfully")
+      if (editingDriverId) {
+        const { driver } = await api.patch<{ driver: FleetDriver }>(`/api/fleet-drivers/${editingDriverId}`, editDriver)
+        setDrivers(prev => prev.map(d => d.id === editingDriverId ? driver : d))
+        toast.success("Driver updated")
+      } else {
+        const { driver } = await api.post<{ driver: FleetDriver }>("/api/fleet-drivers", editDriver)
+        setDrivers(prev => [...prev, driver])
+        toast.success("Driver added successfully")
+      }
+      closeDriverPanel()
     } catch {
-      toast.error("Failed to add driver")
+      toast.error(editingDriverId ? "Failed to update driver" : "Failed to add driver")
     } finally {
       setSaving(false)
     }
@@ -553,7 +633,7 @@ export default function FleetPage() {
           <p className="mt-0.5 text-sm text-muted-foreground">Vehicle compliance, driver records &amp; transport operations</p>
         </div>
         {activeTab === "drivers" && (
-          <Button size="sm" className="gap-1.5 shrink-0" onClick={() => { setEditDriver(BLANK_DRIVER); setShowPanel(true) }}>
+          <Button size="sm" className="gap-1.5 shrink-0" onClick={openAddDriver}>
             <Plus className="h-4 w-4" />Add Driver
           </Button>
         )}
@@ -705,7 +785,8 @@ export default function FleetPage() {
                     <DriverRow key={d.id} d={d} vehicles={vehicles}
                       selected={selectedDriverIds.has(d.id)}
                       onToggleSelect={() => toggleSelected(d.id, setSelectedDriverIds)}
-                      onDelete={() => setDeleteId(d.id)} />
+                      onDelete={() => setDeleteId(d.id)}
+                      onEdit={() => openEditDriver(d)} />
                   ))}
                 </tbody>
               </table>
@@ -845,30 +926,69 @@ export default function FleetPage() {
 
       {/* ── Add Driver slide-over panel ── */}
       {showPanel && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/40" onClick={() => setShowPanel(false)} />
-          <div className="flex h-full w-full max-w-lg flex-col overflow-y-auto bg-background shadow-2xl">
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <h2 className="text-lg font-semibold">Add Fleet Driver</h2>
-              <button onClick={() => setShowPanel(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+        <div className="fixed inset-0 z-50 flex flex-col overflow-y-auto bg-background">
+          <div className="flex items-center justify-between border-b px-6 py-4">
+            <h2 className="text-lg font-semibold">{editingDriverId ? "Edit Fleet Driver" : "Add Fleet Driver"}</h2>
+            <button onClick={closeDriverPanel} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
 
-            <form onSubmit={handleAddDriver} className="flex flex-1 flex-col gap-0 overflow-y-auto">
-              <div className="space-y-5 px-6 py-5">
+          <form onSubmit={handleAddDriver} className="flex flex-1 flex-col gap-0 overflow-y-auto">
+            <div className="mx-auto w-full max-w-2xl space-y-5 px-6 py-5">
 
-                {/* Personal Info */}
-                <Section title="Personal Information">
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="First Name *">
-                      <Input required value={editDriver.first_name}
-                        onChange={e => setEditDriver(p => ({ ...p, first_name: e.target.value }))} />
-                    </Field>
-                    <Field label="Last Name *">
-                      <Input required value={editDriver.last_name}
-                        onChange={e => setEditDriver(p => ({ ...p, last_name: e.target.value }))} />
-                    </Field>
+                {/* Driver — linked to an existing staff record rather than
+                    typed fresh, so a guard who's also a driver has one
+                    profile, not two disconnected ones. */}
+                <Section title="Driver">
+                  {editDriver.staffId ? (
+                    <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2">
+                      <span className="text-sm font-medium">
+                        {staffOptions.find(s => s.id === editDriver.staffId)?.name
+                          ?? ([editDriver.first_name, editDriver.last_name].filter(Boolean).join(" ") || "Selected staff member")}
+                      </span>
+                      <button type="button" onClick={() => setEditDriver(p => ({ ...p, staffId: "" }))}
+                        className="text-xs text-muted-foreground hover:text-foreground underline">Change</button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Input placeholder="Search staff by name…" value={staffSearch}
+                        onChange={e => setStaffSearch(e.target.value)} />
+                      {staffSearch.trim() && (
+                        <div className="max-h-40 overflow-y-auto rounded-md border">
+                          {staffOptions.filter(s => s.name.toLowerCase().includes(staffSearch.trim().toLowerCase())).slice(0, 8).map(s => (
+                            <button key={s.id} type="button"
+                              onClick={() => { setEditDriver(p => ({ ...p, staffId: s.id, first_name: s.name, last_name: "" })); setStaffSearch("") }}
+                              className="block w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors">
+                              {s.name}
+                            </button>
+                          ))}
+                          {staffOptions.filter(s => s.name.toLowerCase().includes(staffSearch.trim().toLowerCase())).length === 0 && (
+                            <p className="px-3 py-2 text-xs text-muted-foreground">No matching staff.</p>
+                          )}
+                        </div>
+                      )}
+                      {!editingDriverId && (
+                        <p className="text-xs text-muted-foreground">Select the staff member this driver record is for.</p>
+                      )}
+                    </div>
+                  )}
+                  {/* Legacy records created before this change have no
+                      staffId — keep their manual name editable rather than
+                      forcing a retroactive link. */}
+                  {editingDriverId && !editDriver.staffId && (
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <Field label="First Name *">
+                        <Input required value={editDriver.first_name}
+                          onChange={e => setEditDriver(p => ({ ...p, first_name: e.target.value }))} />
+                      </Field>
+                      <Field label="Last Name *">
+                        <Input required value={editDriver.last_name}
+                          onChange={e => setEditDriver(p => ({ ...p, last_name: e.target.value }))} />
+                      </Field>
+                    </div>
+                  )}
+                  <div className="mt-3 grid grid-cols-2 gap-3">
                     <Field label="Phone">
                       <Input type="tel" value={editDriver.phone ?? ""}
                         onChange={e => setEditDriver(p => ({ ...p, phone: e.target.value }))} />
@@ -880,8 +1000,10 @@ export default function FleetPage() {
                   </div>
                 </Section>
 
-                {/* Driving Licence */}
-                <Section title="Driving Licence">
+                {/* Provided by the driver — things a new starter already has
+                    and knows, whether or not they've driven for GuardTec
+                    before. */}
+                <Section title="Driving Licence &amp; Qualifications (provided by the driver)">
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Licence Number">
                       <Input className="font-mono uppercase" value={editDriver.licenceNumber ?? ""}
@@ -908,11 +1030,16 @@ export default function FleetPage() {
                       })}
                     </div>
                   </div>
-                </Section>
-
-                {/* Professional Certifications */}
-                <Section title="Professional Certifications">
-                  <div className="grid grid-cols-2 gap-3">
+                  {editingDriverId && (
+                    <div className="mt-3">
+                      <DriverDocUploadRow label="Driving Licence (scan)"
+                        uploadUrl={`/api/fleet-drivers/${editingDriverId}/documents/licenceCopy`}
+                        downloadUrl={`/api/fleet-drivers/${editingDriverId}/documents/licenceCopy`}
+                        uploaded={driverDocs.licenceCopy?.uploaded} date={driverDocs.licenceCopy?.date}
+                        onChanged={refreshDriverDocs} />
+                    </div>
+                  )}
+                  <div className="mt-3 grid grid-cols-2 gap-3">
                     <Field label="CPC Card Number">
                       <Input className="font-mono" value={editDriver.cpcCard ?? ""}
                         onChange={e => setEditDriver(p => ({ ...p, cpcCard: e.target.value }))} />
@@ -920,6 +1047,37 @@ export default function FleetPage() {
                     <Field label="CPC Expiry">
                       <Input type="date" value={editDriver.cpcExpiry ?? ""}
                         onChange={e => setEditDriver(p => ({ ...p, cpcExpiry: e.target.value }))} />
+                    </Field>
+                    <Field label="Medical Cert Expiry">
+                      <Input type="date" value={editDriver.medicalExpiry ?? ""}
+                        onChange={e => setEditDriver(p => ({ ...p, medicalExpiry: e.target.value }))} />
+                    </Field>
+                  </div>
+                  {editingDriverId && (
+                    <div className="mt-3 space-y-2">
+                      <DriverDocUploadRow label="CPC Card (scan)"
+                        uploadUrl={`/api/fleet-drivers/${editingDriverId}/documents/cpcCard`}
+                        downloadUrl={`/api/fleet-drivers/${editingDriverId}/documents/cpcCard`}
+                        uploaded={driverDocs.cpcCard?.uploaded} date={driverDocs.cpcCard?.date}
+                        onChanged={refreshDriverDocs} />
+                      <DriverDocUploadRow label="Medical Certificate"
+                        uploadUrl={`/api/fleet-drivers/${editingDriverId}/documents/medicalCert`}
+                        downloadUrl={`/api/fleet-drivers/${editingDriverId}/documents/medicalCert`}
+                        uploaded={driverDocs.medicalCert?.uploaded} date={driverDocs.medicalCert?.date}
+                        onChanged={refreshDriverDocs} />
+                    </div>
+                  )}
+                </Section>
+
+                {/* Company-assigned — a brand new driver won't have any of
+                    this yet (no fuel card, no tacho card issued, no in-house
+                    assessment done), so none of it belongs on the driver's
+                    side of the form. Manager fills this in once it exists. */}
+                <Section title="Company-Assigned">
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Fuel Card Number">
+                      <Input className="font-mono" value={editDriver.fuelCardNumber ?? ""}
+                        onChange={e => setEditDriver(p => ({ ...p, fuelCardNumber: e.target.value }))} />
                     </Field>
                     <Field label="Tachograph Card No.">
                       <Input className="font-mono" value={editDriver.tachoCard ?? ""}
@@ -929,20 +1087,6 @@ export default function FleetPage() {
                       <Input type="date" value={editDriver.tachoExpiry ?? ""}
                         onChange={e => setEditDriver(p => ({ ...p, tachoExpiry: e.target.value }))} />
                     </Field>
-                    <Field label="Medical Cert Expiry">
-                      <Input type="date" value={editDriver.medicalExpiry ?? ""}
-                        onChange={e => setEditDriver(p => ({ ...p, medicalExpiry: e.target.value }))} />
-                    </Field>
-                    <Field label="Last Assessment">
-                      <Input type="date" value={editDriver.lastAssessment ?? ""}
-                        onChange={e => setEditDriver(p => ({ ...p, lastAssessment: e.target.value }))} />
-                    </Field>
-                  </div>
-                </Section>
-
-                {/* Background Checks */}
-                <Section title="Background Checks">
-                  <div className="grid grid-cols-2 gap-3">
                     <Field label="DBS Certificate No.">
                       <Input className="font-mono" value={editDriver.dbsNumber ?? ""}
                         onChange={e => setEditDriver(p => ({ ...p, dbsNumber: e.target.value }))} />
@@ -951,7 +1095,28 @@ export default function FleetPage() {
                       <Input type="date" value={editDriver.dbsDate ?? ""}
                         onChange={e => setEditDriver(p => ({ ...p, dbsDate: e.target.value }))} />
                     </Field>
+                    <Field label="Last Assessment">
+                      <Input type="date" value={editDriver.lastAssessment ?? ""}
+                        onChange={e => setEditDriver(p => ({ ...p, lastAssessment: e.target.value }))} />
+                    </Field>
                   </div>
+                  {editingDriverId && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-xs text-muted-foreground">
+                        Uploads here always start hidden from the driver — use the toggle to reveal one only if you choose to.
+                      </p>
+                      {DRIVER_MANAGER_DOCS.map(doc => (
+                        <ConfidentialDocManagerRow key={doc.key} label={doc.label}
+                          uploadUrl={`/api/fleet-drivers/${editingDriverId}/documents/${doc.key}`}
+                          visibilityUrl={`/api/fleet-drivers/${editingDriverId}/documents/${doc.key}/visibility`}
+                          downloadUrl={`/api/fleet-drivers/${editingDriverId}/documents/${doc.key}`}
+                          uploaded={driverDocs[doc.key]?.uploaded} date={driverDocs[doc.key]?.date}
+                          visibleToSubject={driverDocs[doc.key]?.visibleToStaff}
+                          subjectLabel="the driver"
+                          onChanged={refreshDriverDocs} />
+                      ))}
+                    </div>
+                  )}
                 </Section>
 
                 {/* Assignment */}
@@ -1009,16 +1174,15 @@ export default function FleetPage() {
                 </Section>
               </div>
 
-              {/* Footer */}
-              <div className="sticky bottom-0 flex gap-3 border-t bg-background px-6 py-4">
-                <Button type="submit" disabled={saving} className="flex-1 gap-2">
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  {saving ? "Saving…" : "Save Driver"}
-                </Button>
-                <Button type="button" variant="outline" onClick={() => setShowPanel(false)}>Cancel</Button>
-              </div>
-            </form>
-          </div>
+            {/* Footer */}
+            <div className="sticky bottom-0 flex gap-3 border-t bg-background px-6 py-4">
+              <Button type="submit" disabled={saving} className="flex-1 gap-2">
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {saving ? "Saving…" : editingDriverId ? "Update Driver" : "Save Driver"}
+              </Button>
+              <Button type="button" variant="outline" onClick={closeDriverPanel}>Cancel</Button>
+            </div>
+          </form>
         </div>
       )}
 
@@ -1043,18 +1207,16 @@ export default function FleetPage() {
 
       {/* ── Add Vehicle slide-over panel ── */}
       {showVehiclePanel && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/40" onClick={closeVehiclePanel} />
-          <div className="flex h-full w-full max-w-lg flex-col overflow-y-auto bg-background shadow-2xl">
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <h2 className="text-lg font-semibold">{editingVehicleId ? "Edit Vehicle" : "Add Vehicle"}</h2>
-              <button onClick={closeVehiclePanel} className="rounded-md p-1.5 hover:bg-muted transition-colors">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+        <div className="fixed inset-0 z-50 flex flex-col overflow-y-auto bg-background">
+          <div className="flex items-center justify-between border-b px-6 py-4">
+            <h2 className="text-lg font-semibold">{editingVehicleId ? "Edit Vehicle" : "Add Vehicle"}</h2>
+            <button onClick={closeVehiclePanel} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
 
-            <form onSubmit={handleSaveVehicle} className="flex flex-1 flex-col gap-0 overflow-y-auto">
-              <div className="space-y-5 px-6 py-5">
+          <form onSubmit={handleSaveVehicle} className="flex flex-1 flex-col gap-0 overflow-y-auto">
+            <div className="mx-auto w-full max-w-2xl space-y-5 px-6 py-5">
 
                 {/* Photo upload */}
                 <Section title="Vehicle Photo">
@@ -1165,41 +1327,38 @@ export default function FleetPage() {
 
               </div>
 
-              {/* Footer */}
-              <div className="sticky bottom-0 flex gap-3 border-t bg-background px-6 py-4">
-                <Button type="submit" disabled={savingVehicle} className="flex-1 gap-2">
-                  {savingVehicle ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  {savingVehicle ? "Saving…" : editingVehicleId ? "Update Vehicle" : "Save Vehicle"}
-                </Button>
-                <Button type="button" variant="outline" onClick={closeVehiclePanel}>Cancel</Button>
-              </div>
-            </form>
-          </div>
+            {/* Footer */}
+            <div className="sticky bottom-0 flex gap-3 border-t bg-background px-6 py-4">
+              <Button type="submit" disabled={savingVehicle} className="flex-1 gap-2">
+                {savingVehicle ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {savingVehicle ? "Saving…" : editingVehicleId ? "Update Vehicle" : "Save Vehicle"}
+              </Button>
+              <Button type="button" variant="outline" onClick={closeVehiclePanel}>Cancel</Button>
+            </div>
+          </form>
         </div>
       )}
 
       {/* ── Vehicle Documents slide-over panel ── */}
       {docsVehicleId && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/40" onClick={closeDocsPanel} />
-          <div className="flex h-full w-full max-w-lg flex-col bg-background shadow-2xl">
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <div>
-                <h2 className="text-lg font-semibold">Vehicle Documents</h2>
-                <p className="text-xs text-muted-foreground">
-                  {docsVehicle?.registration ?? ""}
-                  {" · "}
-                  {docsVehicle?.make ?? ""}
-                  {" "}
-                  {docsVehicle?.model ?? ""}
-                </p>
-              </div>
-              <button onClick={closeDocsPanel} className="rounded-md p-1.5 hover:bg-muted transition-colors">
-                <X className="h-5 w-5" />
-              </button>
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          <div className="flex items-center justify-between border-b px-6 py-4">
+            <div>
+              <h2 className="text-lg font-semibold">Vehicle Documents</h2>
+              <p className="text-xs text-muted-foreground">
+                {docsVehicle?.registration ?? ""}
+                {" · "}
+                {docsVehicle?.make ?? ""}
+                {" "}
+                {docsVehicle?.model ?? ""}
+              </p>
             </div>
+            <button onClick={closeDocsPanel} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
 
-            <div className="flex-1 overflow-y-auto space-y-6 px-6 py-5">
+          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto space-y-6 px-6 py-5">
 
               {/* Upload section */}
               <div>
@@ -1275,7 +1434,6 @@ export default function FleetPage() {
                   </div>
                 )}
               </div>
-            </div>
           </div>
         </div>
       )}
@@ -1434,8 +1592,8 @@ function ComplianceCell({ label, dateStr }: { label: string; dateStr?: string })
 
 // ── Driver Row ────────────────────────────────────────────────────────────────
 
-function DriverRow({ d, vehicles, selected, onToggleSelect, onDelete }: {
-  d: FleetDriver; vehicles: Vehicle[]; selected: boolean; onToggleSelect: () => void; onDelete: () => void
+function DriverRow({ d, vehicles, selected, onToggleSelect, onDelete, onEdit }: {
+  d: FleetDriver; vehicles: Vehicle[]; selected: boolean; onToggleSelect: () => void; onDelete: () => void; onEdit: () => void
 }) {
   const assignedVehicle = d.assignedVehicleId ? vehicles.find(v => v.id === d.assignedVehicleId) : null
   const worst = worstDays([d.licenceExpiry, d.cpcExpiry, d.tachoExpiry, d.medicalExpiry])
@@ -1506,10 +1664,16 @@ function DriverRow({ d, vehicles, selected, onToggleSelect, onDelete }: {
         </span>
       </td>
       <td className="px-4 py-3">
-        <button onClick={onDelete}
-          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30">
-          <Trash2 className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-0.5">
+          <button onClick={onEdit} title="Edit"
+            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+            <Pencil className="h-4 w-4" />
+          </button>
+          <button onClick={onDelete} title="Delete"
+            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30">
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
       </td>
     </tr>
   )
@@ -1531,6 +1695,47 @@ function Field({ label, children, className }: { label: string; children: React.
     <div className={className}>
       <label className="mb-1 block text-xs font-medium text-muted-foreground">{label}</label>
       {children}
+    </div>
+  )
+}
+
+// Plain upload row for the driver-provided documents (licence/CPC/medical) —
+// no visibility toggle, since there's nothing to hide from a driver about
+// their own licence. The company-assigned side reuses ConfidentialDocManagerRow
+// from ProfileShared.tsx instead, same component the staff/agency confidential
+// checks use, since those DO need the hide/reveal choice.
+function DriverDocUploadRow({ label, uploadUrl, downloadUrl, uploaded, date, onChanged }: {
+  label: string; uploadUrl: string; downloadUrl: string; uploaded?: boolean; date?: string; onChanged: () => void
+}) {
+  const [uploading, setUploading] = useState(false)
+  return (
+    <div className="flex items-center gap-3 rounded-lg border bg-muted/20 px-3 py-2.5">
+      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium">{label}</div>
+        <div className="text-xs text-muted-foreground">{uploaded ? `Uploaded${date ? ` · ${date}` : ""}` : "Not uploaded"}</div>
+      </div>
+      {uploaded && (
+        <a href={downloadUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">View</a>
+      )}
+      <label className={`inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-muted transition-colors ${uploading ? "pointer-events-none opacity-50" : ""}`}>
+        {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+        {uploaded ? "Replace" : "Upload"}
+        <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={async e => {
+          const f = e.target.files?.[0]
+          if (!f) return
+          setUploading(true)
+          try {
+            await api.post(uploadUrl, f)
+            toast.success(`${label} uploaded`)
+            onChanged()
+          } catch {
+            toast.error("Upload failed")
+          } finally {
+            setUploading(false)
+          }
+        }} />
+      </label>
     </div>
   )
 }

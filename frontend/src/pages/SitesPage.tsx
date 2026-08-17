@@ -614,17 +614,15 @@ export default function SitesPage() {
           SITE ADD / EDIT PANEL
       ═════════════════════════════════════════════════════════════════════════ */}
       {sitePanel && (
-        <div className="fixed inset-0 z-40 flex">
-          <div className="flex-1 bg-black/40" onClick={closeSitePanel} />
-          <div className="flex w-full max-w-md flex-col bg-background shadow-xl">
-            <div className="flex items-center justify-between border-b px-5 py-4">
-              <h3 className="text-base font-semibold">{editingSite ? "Edit site" : "Add new site"}</h3>
-              <button onClick={closeSitePanel} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+        <div className="fixed inset-0 z-40 flex flex-col bg-background">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <h3 className="text-base font-semibold">{editingSite ? "Edit site" : "Add new site"}</h3>
+            <button onClick={closeSitePanel} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
+          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-5 py-5 space-y-4">
               {siteError && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{siteError}</p>}
 
               <div className="space-y-1.5">
@@ -737,14 +735,13 @@ export default function SitesPage() {
                   placeholder="Any additional info about this site…" rows={3}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-none" />
               </div>
-            </div>
+          </div>
 
-            <div className="flex gap-2 border-t px-5 py-4">
-              <Button variant="outline" className="flex-1" onClick={closeSitePanel}>Cancel</Button>
-              <Button className="flex-1" onClick={saveSite} disabled={siteSaving}>
-                {siteSaving ? "Saving…" : editingSite ? "Save changes" : "Add site"}
-              </Button>
-            </div>
+          <div className="flex gap-2 border-t px-5 py-4">
+            <Button variant="outline" className="flex-1" onClick={closeSitePanel}>Cancel</Button>
+            <Button className="flex-1" onClick={saveSite} disabled={siteSaving}>
+              {siteSaving ? "Saving…" : editingSite ? "Save changes" : "Add site"}
+            </Button>
           </div>
         </div>
       )}
@@ -753,22 +750,20 @@ export default function SitesPage() {
           STAFF ON SITE PANEL
       ═════════════════════════════════════════════════════════════════════════ */}
       {staffSite && (
-        <div className="fixed inset-0 z-40 flex">
-          <div className="flex-1 bg-black/40" onClick={closeStaffPanel} />
-          <div className="flex w-full max-w-lg flex-col bg-background shadow-xl">
-            <div className="border-b px-5 py-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-semibold">Staff on site</h3>
-                  <p className="text-xs text-muted-foreground">{staffSite.name} · {assignedStaff.length} assigned</p>
-                </div>
-                <button onClick={closeStaffPanel} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
-                  <X className="h-5 w-5" />
-                </button>
+        <div className="fixed inset-0 z-40 flex flex-col bg-background">
+          <div className="border-b px-5 py-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold">Staff on site</h3>
+                <p className="text-xs text-muted-foreground">{staffSite.name} · {assignedStaff.length} assigned</p>
               </div>
+              <button onClick={closeStaffPanel} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
+                <X className="h-5 w-5" />
+              </button>
             </div>
+          </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-5 py-5 space-y-5">
               {staffLoading ? (
                 <p className="text-sm text-muted-foreground">Loading staff…</p>
               ) : (
@@ -837,7 +832,6 @@ export default function SitesPage() {
                   </div>
                 </>
               )}
-            </div>
           </div>
         </div>
       )}
@@ -846,22 +840,20 @@ export default function SitesPage() {
           WELFARE & ASSETS PANEL
       ═════════════════════════════════════════════════════════════════════════ */}
       {welfareSite && (
-        <div className="fixed inset-0 z-40 flex">
-          <div className="flex-1 bg-black/40" onClick={closeWelfare} />
-          <div className="flex w-full max-w-lg flex-col bg-background shadow-xl">
-            <div className="border-b px-5 py-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-semibold">Welfare &amp; assets</h3>
-                  <p className="text-xs text-muted-foreground">{welfareSite.name}</p>
-                </div>
-                <button onClick={closeWelfare} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
-                  <X className="h-5 w-5" />
-                </button>
+        <div className="fixed inset-0 z-40 flex flex-col bg-background">
+          <div className="border-b px-5 py-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold">Welfare &amp; assets</h3>
+                <p className="text-xs text-muted-foreground">{welfareSite.name}</p>
               </div>
+              <button onClick={closeWelfare} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
+                <X className="h-5 w-5" />
+              </button>
             </div>
+          </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-5 py-5 space-y-5">
               {/* Quick add */}
               <div>
                 <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Quick add</p>
@@ -940,7 +932,6 @@ export default function SitesPage() {
                   </div>
                 )}
               </div>
-            </div>
           </div>
         </div>
       )}
@@ -949,22 +940,20 @@ export default function SitesPage() {
           SITE DOCUMENTATION PANEL
       ═════════════════════════════════════════════════════════════════════════ */}
       {docsSite && (
-        <div className="fixed inset-0 z-40 flex">
-          <div className="flex-1 bg-black/40" onClick={closeDocsPanel} />
-          <div className="flex w-full max-w-lg flex-col bg-background shadow-xl">
-            <div className="border-b px-5 py-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-base font-semibold">Site documentation</h3>
-                  <p className="text-xs text-muted-foreground">{docsSite.name}</p>
-                </div>
-                <button onClick={closeDocsPanel} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
-                  <X className="h-5 w-5" />
-                </button>
+        <div className="fixed inset-0 z-40 flex flex-col bg-background">
+          <div className="border-b px-5 py-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold">Site documentation</h3>
+                <p className="text-xs text-muted-foreground">{docsSite.name}</p>
               </div>
+              <button onClick={closeDocsPanel} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
+                <X className="h-5 w-5" />
+              </button>
             </div>
+          </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
+          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-5 py-5 space-y-6">
 
               {/* Upload section */}
               <div>
@@ -1061,7 +1050,6 @@ export default function SitesPage() {
                   </div>
                 )}
               </div>
-            </div>
           </div>
         </div>
       )}
@@ -1070,16 +1058,14 @@ export default function SitesPage() {
           ADD / EDIT ITEM PANEL
       ═════════════════════════════════════════════════════════════════════════ */}
       {itemPanel && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/20" onClick={closeItemPanel} />
-          <div className="flex w-full max-w-sm flex-col bg-background shadow-xl">
-            <div className="flex items-center justify-between border-b px-5 py-4">
-              <h3 className="text-base font-semibold">{editingItem ? "Edit item" : "Add item"}</h3>
-              <button onClick={closeItemPanel} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-4">
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <h3 className="text-base font-semibold">{editingItem ? "Edit item" : "Add item"}</h3>
+            <button onClick={closeItemPanel} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-5 py-5 space-y-4">
               {itemError && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{itemError}</p>}
               <div className="space-y-1.5">
                 <Label>Item name *</Label>
@@ -1167,13 +1153,12 @@ export default function SitesPage() {
                   </label>
                 )}
               </div>
-            </div>
-            <div className="flex gap-2 border-t px-5 py-4">
-              <Button variant="outline" className="flex-1" onClick={closeItemPanel}>Cancel</Button>
-              <Button className="flex-1" onClick={saveItem} disabled={itemSaving}>
-                {itemSaving ? "Saving…" : editingItem ? "Save changes" : "Add item"}
-              </Button>
-            </div>
+          </div>
+          <div className="flex gap-2 border-t px-5 py-4">
+            <Button variant="outline" className="flex-1" onClick={closeItemPanel}>Cancel</Button>
+            <Button className="flex-1" onClick={saveItem} disabled={itemSaving}>
+              {itemSaving ? "Saving…" : editingItem ? "Save changes" : "Add item"}
+            </Button>
           </div>
         </div>
       )}

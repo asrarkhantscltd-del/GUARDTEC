@@ -73,25 +73,23 @@ export default function CreateAgencyModal({ open, onClose, onCreated }: CreateAg
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex">
-      <div className="flex-1 bg-black/40" onClick={handleClose} />
-      <div className="flex h-full w-full max-w-md flex-col bg-background shadow-2xl">
-        <div className="flex items-center justify-between border-b px-6 py-4">
-          <div>
-            <h2 className="flex items-center gap-2 text-lg font-semibold">
-              <Building2 className="h-4 w-4 text-muted-foreground" />
-              {result ? "Agency created" : "Create agency"}
-            </h2>
-            {!result && (
-              <p className="text-xs text-muted-foreground">Sets up the agency record and its login account</p>
-            )}
-          </div>
-          <button onClick={handleClose} className="rounded-md p-1.5 hover:bg-muted transition-colors">
-            <X className="h-5 w-5" />
-          </button>
+    <div className="fixed inset-0 z-50 flex flex-col bg-background">
+      <div className="flex items-center justify-between border-b px-6 py-4">
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-semibold">
+            <Building2 className="h-4 w-4 text-muted-foreground" />
+            {result ? "Agency created" : "Create agency"}
+          </h2>
+          {!result && (
+            <p className="text-xs text-muted-foreground">Sets up the agency record and its login account</p>
+          )}
         </div>
+        <button onClick={handleClose} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+          <X className="h-5 w-5" />
+        </button>
+      </div>
 
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+      <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-6 py-5 space-y-4">
           {error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
 
           {result ? (
@@ -154,7 +152,6 @@ export default function CreateAgencyModal({ open, onClose, onCreated }: CreateAg
             </>
           )}
         </div>
-      </div>
     </div>
   )
 }

@@ -6,8 +6,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import {
-  Section, Field, DocUploadRow, TrainingCertRow, ManagerDocRow,
-  DOC_UPLOADS, TRAINING_CERT_UPLOADS, MANAGER_UPLOADED_DOCS,
+  Section, Field, DocUploadRow, TrainingCertRow, ManagerDocRow, ConfidentialDocRow,
+  DOC_UPLOADS, TRAINING_CERT_UPLOADS, MANAGER_UPLOADED_DOCS, CONFIDENTIAL_STAFF_DOCS,
 } from "@/components/profile/ProfileShared"
 import type {
   AddressHistoryEntry, EmploymentHistoryEntry, CriminalHistoryEntry,
@@ -246,6 +246,8 @@ export default function OnboardingWizard({ profile: p, set, photo, photoPreview,
       req(!!d.fraudActAcknowledged, "You must acknowledge the Fraud Act 2006 notice.")
       req(!!d.conductPolicyAccepted, "You must accept the Workplace Conduct Policy.")
       req(!!d.dataProtectionAccepted, "You must accept the Data Protection notice.")
+      req(!!d.creditCheckConsent, "You must consent to a credit check to proceed.")
+      req(!!d.socialMediaCheckConsent, "You must consent to a social media check to proceed.")
     }
     return errs
   }
@@ -806,6 +808,13 @@ function DocumentsPhase({ p, photo, photoPreview, pickPhoto }: {
             <ManagerDocRow key={doc.key} label={doc.label} staffId={p.id} docKey={doc.key}
               uploaded={!!p.documents?.[doc.key]?.uploaded} date={p.documents?.[doc.key]?.date} />
           ))}
+          {/* Only rendered when the entry is actually present — the backend
+              already omits it entirely from this profile fetch unless a
+              manager has explicitly made it visible, so absence here means
+              nothing to show, not "not yet provided" (see ConfidentialDocRow). */}
+          {CONFIDENTIAL_STAFF_DOCS.filter(doc => p.documents?.[doc.key]?.uploaded).map(doc => (
+            <ConfidentialDocRow key={doc.key} label={doc.label} staffId={p.id} docKey={doc.key} date={p.documents?.[doc.key]?.date} />
+          ))}
         </div>
       </Section>
     </>
@@ -837,6 +846,12 @@ function DeclarationsPhase({ p, set }: { p: WizardProfile; set: WizardProps["set
         </CheckRow>
         <CheckRow checked={!!d.dataProtectionAccepted} onChange={v => upd({ dataProtectionAccepted: v })}>
           I acknowledge GuardTec processes my personal data under UK GDPR and the Data Protection Act 2018, for employment vetting, payroll, and legal compliance purposes.
+        </CheckRow>
+        <CheckRow checked={!!d.creditCheckConsent} onChange={v => upd({ creditCheckConsent: v })}>
+          I consent to GuardTec conducting a credit check as part of pre-employment screening.
+        </CheckRow>
+        <CheckRow checked={!!d.socialMediaCheckConsent} onChange={v => upd({ socialMediaCheckConsent: v })}>
+          I consent to GuardTec reviewing my publicly available social media profiles as part of pre-employment screening.
         </CheckRow>
       </div>
     </Section>
@@ -936,6 +951,8 @@ function ReviewPhase({ p, goToPhase }: { p: WizardProfile; goToPhase: (i: number
       <ReviewSection title="DBS & Criminal History" phaseIndex={7} goToPhase={goToPhase}>
         <div className="grid grid-cols-2 gap-x-6 gap-y-2">
           <ReviewRow label="DBS consent" value={p.declarations?.dbsConsent ? "Given" : "Not given"} />
+          <ReviewRow label="Credit check consent" value={p.declarations?.creditCheckConsent ? "Given" : "Not given"} />
+          <ReviewRow label="Social media check consent" value={p.declarations?.socialMediaCheckConsent ? "Given" : "Not given"} />
           <ReviewRow label="Criminal history declared" value={p.hasCriminalHistory === undefined ? undefined : p.hasCriminalHistory ? "Yes — see details" : "None declared"} />
           <ReviewRow label="Cautions declared" value={p.hasCautions === undefined ? undefined : p.hasCautions ? "Yes — see details" : "None declared"} />
         </div>

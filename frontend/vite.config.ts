@@ -39,6 +39,15 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        // Default precache limit is 2 MiB — today's session pushed the main
+        // bundle to ~2.2 MB (agency/acknowledgment/custom-forms pages all
+        // land in one chunk, no route-level code-splitting yet), which made
+        // the Docker build fail outright rather than just warn. Raised with
+        // headroom rather than set to the current size, so the next feature
+        // added doesn't hit this same wall immediately again. Proper fix
+        // later is route-based code-splitting (dynamic import()) to keep
+        // individual chunks small — this is the stopgap.
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         // Without this, the SPA navigation fallback intercepts top-level
         // navigations to /api/* (e.g. window.open, <a href="/api/...">
         // target="_blank") and serves the cached index.html instead of

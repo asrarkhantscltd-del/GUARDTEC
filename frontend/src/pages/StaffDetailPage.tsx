@@ -19,8 +19,9 @@ import {
   MapPin, Contact, BadgeAlert, Pencil, Trash2, Plus, X as XIcon,
   KeyRound, Copy, RefreshCw, Check, UserX,
   MessageSquare, Package, Send,
-  Paperclip, FileVideo, Image as ImageIcon, Download, Landmark,
+  Paperclip, FileVideo, Image as ImageIcon, Download, Landmark, ShieldAlert,
 } from "lucide-react"
+import { ConfidentialDocManagerRow, CONFIDENTIAL_STAFF_DOCS } from "@/components/profile/ProfileShared"
 
 // ── Shared UI pieces ──────────────────────────────────────────────────────────
 
@@ -1260,6 +1261,33 @@ export default function StaffDetailPage() {
                 onEdit={canEdit ? () => openDocEdit("assignmentInstructions") : undefined} {...docDeleteProps("assignmentInstructions")} />
             </CardContent>
           </Card>
+
+          {canEdit && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4" />Confidential Checks
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-4 space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Upload results here after you've reviewed them yourself. Uploads always start hidden from{" "}
+                  {staff.name} — use the visibility toggle to reveal one only if you choose to.
+                </p>
+                {CONFIDENTIAL_STAFF_DOCS.map(doc => {
+                  const meta = docs[doc.key as keyof typeof docs] as { uploaded?: boolean; date?: string; visibleToStaff?: boolean } | undefined
+                  return (
+                    <ConfidentialDocManagerRow key={doc.key} label={doc.label}
+                      uploadUrl={`/api/staff/${id}/documents/${doc.key}`}
+                      visibilityUrl={`/api/staff/${id}/documents/${doc.key}/visibility`}
+                      downloadUrl={`/api/staff/${id}/documents/${doc.key}`}
+                      uploaded={meta?.uploaded} date={meta?.date} visibleToSubject={meta?.visibleToStaff}
+                      subjectLabel={staff.name} onChanged={refreshStaffRecord} />
+                  )
+                })}
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 
@@ -2207,18 +2235,16 @@ export default function StaffDetailPage() {
 
       {/* ── Edit Profile slide-over ── */}
       {editOpen && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/40" onClick={() => setEditOpen(false)} />
-          <div className="flex w-full max-w-md flex-col bg-background shadow-xl overflow-hidden">
-            <div className="flex items-center justify-between border-b px-5 py-4">
-              <h3 className="text-base font-semibold">Edit Profile — {staff.name}</h3>
-              <button onClick={() => setEditOpen(false)}
-                className="rounded-md p-1 text-muted-foreground hover:bg-muted transition-colors">
-                <XIcon className="h-5 w-5" />
-              </button>
-            </div>
+        <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-background">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <h3 className="text-base font-semibold">Edit Profile — {staff.name}</h3>
+            <button onClick={() => setEditOpen(false)}
+              className="rounded-md p-1 text-muted-foreground hover:bg-muted transition-colors">
+              <XIcon className="h-5 w-5" />
+            </button>
+          </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
+          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-5 py-5 space-y-6">
               {editError && (
                 <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{editError}</p>
               )}
@@ -2402,14 +2428,13 @@ export default function StaffDetailPage() {
                   </div>
                 </div>
               </section>
-            </div>
+          </div>
 
-            <div className="flex gap-2 border-t px-5 py-4">
-              <Button variant="outline" className="flex-1" onClick={() => setEditOpen(false)}>Cancel</Button>
-              <Button className="flex-1" onClick={saveEdit} disabled={editSaving}>
-                {editSaving ? "Saving…" : "Save changes"}
-              </Button>
-            </div>
+          <div className="flex gap-2 border-t px-5 py-4">
+            <Button variant="outline" className="flex-1" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button className="flex-1" onClick={saveEdit} disabled={editSaving}>
+              {editSaving ? "Saving…" : "Save changes"}
+            </Button>
           </div>
         </div>
       )}

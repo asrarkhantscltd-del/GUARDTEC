@@ -284,20 +284,18 @@ export default function CustomFormsPage() {
 
       {/* ── Create/Edit panel ── */}
       {panelOpen && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/40" onClick={() => setPanelOpen(false)} />
-          <div className="flex h-full w-full max-w-lg flex-col bg-background shadow-2xl">
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <div>
-                <h2 className="text-lg font-semibold">{editingId ? "Edit form" : "New custom form"}</h2>
-                <p className="text-xs text-muted-foreground">Build the fields respondents will fill in</p>
-              </div>
-              <button onClick={() => setPanelOpen(false)} className="rounded-md p-1.5 transition-colors hover:bg-muted">
-                <X className="h-5 w-5" />
-              </button>
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          <div className="flex items-center justify-between border-b px-6 py-4">
+            <div>
+              <h2 className="text-lg font-semibold">{editingId ? "Edit form" : "New custom form"}</h2>
+              <p className="text-xs text-muted-foreground">Build the fields respondents will fill in</p>
             </div>
+            <button onClick={() => setPanelOpen(false)} className="rounded-md p-1.5 transition-colors hover:bg-muted">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
 
-            <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+          <div className="mx-auto w-full max-w-2xl flex-1 space-y-4 overflow-y-auto px-6 py-5">
               {error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
 
               <Field label="Form name *">
@@ -370,14 +368,13 @@ export default function CustomFormsPage() {
                   mappingEnabled={draft.formType === "staff_info" && draft.autoMapToProfile}
                 />
               </Section>
-            </div>
+          </div>
 
-            <div className="flex gap-2 border-t px-6 py-4">
-              <Button variant="outline" className="flex-1" onClick={() => setPanelOpen(false)}>Cancel</Button>
-              <Button className="flex-1" onClick={save} disabled={saving}>
-                {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : editingId ? "Save changes" : "Create form"}
-              </Button>
-            </div>
+          <div className="flex gap-2 border-t px-6 py-4">
+            <Button variant="outline" className="flex-1" onClick={() => setPanelOpen(false)}>Cancel</Button>
+            <Button className="flex-1" onClick={save} disabled={saving}>
+              {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : editingId ? "Save changes" : "Create form"}
+            </Button>
           </div>
         </div>
       )}
