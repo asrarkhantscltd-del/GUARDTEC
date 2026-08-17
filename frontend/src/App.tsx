@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext"
 import { ThemeProvider } from "@/contexts/ThemeContext"
 import DashboardLayout from "@/layouts/DashboardLayout"
 import StaffLayout from "@/layouts/StaffLayout"
+import AgencyLayout from "@/layouts/AgencyLayout"
 import LoginPage from "@/pages/LoginPage"
 import RegisterPage from "@/pages/RegisterPage"
 import DashboardPage from "@/pages/DashboardPage"
@@ -18,6 +19,19 @@ import ManageRolesPage from "@/pages/ManageRolesPage"
 import PendingReviewPage from "@/pages/PendingReviewPage"
 import IncidentReportsPage from "@/pages/IncidentReportsPage"
 import MyProfilePage from "@/pages/MyProfilePage"
+import AgenciesListPage from "@/pages/AgenciesListPage"
+import AgencyDetailPage from "@/pages/AgencyDetailPage"
+import AgenciesDashboardPage from "@/pages/AgenciesDashboardPage"
+import DeploymentsPage from "@/pages/DeploymentsPage"
+import EventInstructionsPanel from "@/pages/EventInstructionsPanel"
+import CustomFormsPage from "@/pages/CustomFormsPage"
+import CustomFormResponsesPage from "@/pages/CustomFormResponsesPage"
+import AgencyPortalDashboardPage from "@/pages/AgencyPortalDashboardPage"
+import AgencyPortalStaffPage from "@/pages/AgencyPortalStaffPage"
+import AgencyPortalDeploymentsPage from "@/pages/AgencyPortalDeploymentsPage"
+import AgencyPortalMessagesPage from "@/pages/AgencyPortalMessagesPage"
+import AcknowledgmentFormPage from "@/pages/AcknowledgmentFormPage"
+import CustomFormFillPage from "@/pages/CustomFormFillPage"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import type { ReactNode } from "react"
 
@@ -45,7 +59,9 @@ function GuestOnly({ children }: { children: ReactNode }) {
 }
 
 // Staff members get a stripped-down self-service shell — just their own
-// profile — everyone else gets the full management dashboard.
+// profile. Agency accounts get their own four-page portal (Dashboard/Staff/
+// Deployments/Messages), structurally separate from GuardTec's internal
+// modules. Everyone else gets the full management dashboard.
 function AuthenticatedApp() {
   const { user } = useAuth()
 
@@ -54,6 +70,20 @@ function AuthenticatedApp() {
       <Routes>
         <Route element={<StaffLayout />}>
           <Route index element={<MyProfilePage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    )
+  }
+
+  if (user?.role === "agency") {
+    return (
+      <Routes>
+        <Route element={<AgencyLayout />}>
+          <Route index element={<AgencyPortalDashboardPage />} />
+          <Route path="staff" element={<AgencyPortalStaffPage />} />
+          <Route path="deployments" element={<AgencyPortalDeploymentsPage />} />
+          <Route path="messages" element={<AgencyPortalMessagesPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
@@ -73,6 +103,13 @@ function AuthenticatedApp() {
         <Route path="roles" element={<ManageRolesPage />} />
         <Route path="pending-review" element={<PendingReviewPage />} />
         <Route path="incident-reports" element={<IncidentReportsPage />} />
+        <Route path="admin/agencies" element={<AgenciesListPage />} />
+        <Route path="admin/agencies/:id" element={<AgencyDetailPage />} />
+        <Route path="admin/agencies-dashboard" element={<AgenciesDashboardPage />} />
+        <Route path="admin/deployments" element={<DeploymentsPage />} />
+        <Route path="admin/event-instructions" element={<EventInstructionsPanel />} />
+        <Route path="custom-forms" element={<CustomFormsPage />} />
+        <Route path="custom-forms/:id/responses" element={<CustomFormResponsesPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
@@ -116,6 +153,13 @@ export default function App() {
               </GuestOnly>
             }
           />
+          {/* Genuinely public — no login, no GuestOnly redirect either (a
+              logged-in manager must still be able to open a shared link and
+              see it render, e.g. to check what a respondent sees). Neither
+              page ever assumes req.user; see each component's own header
+              comment on why. */}
+          <Route path="/acknowledge/:token" element={<AcknowledgmentFormPage />} />
+          <Route path="/custom-forms/:formId/fill" element={<CustomFormFillPage />} />
           <Route
             path="/*"
             element={

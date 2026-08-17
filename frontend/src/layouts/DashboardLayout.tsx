@@ -12,6 +12,7 @@ import {
   KeyRound, Bell, ClipboardCheck, Shield,
   Camera, Loader2, Sun, Moon, AlertTriangle, XCircle,
   ChevronDown, UserCog, Eye, EyeOff, FileSpreadsheet,
+  Building2, CalendarDays, FileText, ListChecks,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import AiChat from "@/components/AiChat"
@@ -40,6 +41,11 @@ const navItems: NavItem[] = [
   { label: "Compliance",       to: "/compliance",      icon: <ShieldCheck className="h-4 w-4" />,      permission: "compliance",     group: "compliance" },
   { label: "Pending Review",   to: "/pending-review",  icon: <ClipboardCheck className="h-4 w-4" />,  permission: "pending_review", group: "compliance" },
   { label: "Incident Reports", to: "/incident-reports",icon: <AlertTriangle className="h-4 w-4" />,    permission: "staff",          group: "compliance" },
+  { label: "Agencies",         to: "/admin/agencies",           icon: <Building2 className="h-4 w-4" />,     permission: "staff",  group: "operations" },
+  { label: "Deployments",      to: "/admin/deployments",         icon: <CalendarDays className="h-4 w-4" />, permission: "staff",  group: "operations" },
+  { label: "Agency Performance", to: "/admin/agencies-dashboard", icon: <ShieldCheck className="h-4 w-4" />, permission: "staff",  group: "compliance" },
+  { label: "Event Instructions", to: "/admin/event-instructions", icon: <ListChecks className="h-4 w-4" />,  permission: "staff",  group: "compliance" },
+  { label: "Custom Forms",     to: "/custom-forms",              icon: <FileText className="h-4 w-4" />,     permission: "staff",  group: "admin" },
   { label: "Team Access",      to: "/users",           icon: <KeyRound className="h-4 w-4" />,         directorOnly: true,           group: "admin" },
   { label: "Manage Roles",     to: "/roles",           icon: <Shield className="h-4 w-4" />,           directorOnly: true,           group: "admin" },
 ]
