@@ -2409,9 +2409,19 @@ app.post('/api/staff', requireLogin, requirePermission('staff'), function(req, r
     // they'd disappeared, per the Abu Baker incident) silently overwrites
     // that person's existing staff_data.json — destroying their real SIA/
     // CSCS/RTW data with whatever bare fields were in this new submission,
-    // with no warning. Check the disk directly rather than loadAllStaff()
-    // so this can't be bypassed by whatever caused them to seem hidden.
-    if (fs.existsSync(folderForEmp(emp))) {
+    // with no warning. Matched by NAME ONLY (ignoring the emoji compliance-
+    // status prefix), not folderForEmp(emp) directly — emp.overall isn't
+    // calculated yet at this point (that happens inside saveStaff), so a
+    // brand-new submission's default/incomplete status almost never matches
+    // the existing person's actual emoji, which let the very first version
+    // of this check miss the exact collision it was meant to catch. Checked
+    // against the disk directly rather than loadAllStaff() so this can't be
+    // bypassed by whatever caused them to seem hidden in the first place.
+    var addTargetName = safeName(emp.name).toUpperCase();
+    var addCollision = fs.existsSync(ACTIVE_DIR) && fs.readdirSync(ACTIVE_DIR).some(function(d) {
+      return d.replace(/^[^\p{L}A-Za-z]+/u, '').trim().toUpperCase() === addTargetName;
+    });
+    if (addCollision) {
       return res.status(409).json({ ok: false, error: 'A staff member named "' + emp.name + '" already has an active profile. Open their existing profile from the Staff list to edit it — Add Staff only creates brand new records.' });
     }
 
