@@ -16,7 +16,7 @@ import {
 } from "lucide-react"
 import { StatusBadge } from "@/components/ui/status-badge"
 import { makeStagger } from "@/lib/motion"
-import { api } from "@/lib/api"
+import { api, ApiError } from "@/lib/api"
 import { runBulk, reportBulk } from "@/lib/bulk"
 import { RoleChipPicker, parseRoles } from "@/components/ui/role-picker"
 
@@ -38,6 +38,11 @@ interface ExStaffMember {
 
 type ViewMode = "details" | "tiles"
 type SortKey = "name" | "sia" | "cscs" | "rtw"
+
+interface SameNameConflict {
+  error: string
+  existing: { id: string; name: string; phone: string | null; email: string | null; nationality: string | null; jobRole: string | null } | null
+}
 
 function normDeploy(raw?: string): "onsite" | "available" | "offduty" | "unknown" {
   const v = (raw ?? "").toLowerCase().replace(/[\s_-]/g, "")
@@ -310,6 +315,11 @@ export default function StaffPage() {
   const [addForm, setAddForm]     = useState({ name: "", jobRole: "", email: "", phone: "", nationality: "" })
   const [addSaving, setAddSaving] = useState(false)
   const [addError, setAddError]   = useState("")
+  // Set when the backend finds an active profile with the exact same name —
+  // two different people CAN genuinely share a name, so this isn't a hard
+  // block: it shows a side-by-side comparison and lets the admin either open
+  // the existing profile (the usual case) or confirm it's someone else.
+  const [sameNameConflict, setSameNameConflict] = useState<SameNameConflict | null>(null)
 
   // Row selection for Excel export + bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -381,10 +391,11 @@ export default function StaffPage() {
   function openAddStaff() {
     setAddForm({ name: "", jobRole: "", email: "", phone: "", nationality: "" })
     setAddError("")
+    setSameNameConflict(null)
     setAddPanel(true)
   }
 
-  async function handleAddStaff() {
+  async function handleAddStaff(confirmDifferentPerson = false) {
     if (!addForm.name.trim()) { setAddError("Full name is required."); return }
     setAddSaving(true); setAddError("")
     try {
@@ -395,12 +406,21 @@ export default function StaffPage() {
         phone:       addForm.phone.trim() || undefined,
         nationality: addForm.nationality.trim() || undefined,
         overall:     "unknown",
+        confirmDifferentPerson: confirmDifferentPerson || undefined,
       })
       await reloadStaff()
       setAddPanel(false)
+      setSameNameConflict(null)
       toast.success("Staff member added successfully")
-    } catch {
-      setAddError("Network error.")
+    } catch (err) {
+      const data = err instanceof ApiError
+        ? (err.data as { sameNameConflict?: boolean; error?: string; existing?: SameNameConflict["existing"] } | undefined)
+        : undefined
+      if (err instanceof ApiError && err.status === 409 && data?.sameNameConflict) {
+        setSameNameConflict({ error: data.error ?? err.message, existing: data.existing ?? null })
+      } else {
+        setAddError(err instanceof ApiError ? err.message : "Network error.")
+      }
     } finally {
       setAddSaving(false)
     }
@@ -940,87 +960,142 @@ export default function StaffPage() {
         <div className="fixed inset-0 z-50 flex flex-col bg-background">
           <div className="flex items-center justify-between border-b px-6 py-4">
             <div>
-              <h2 className="text-lg font-semibold">Add new staff member</h2>
-              <p className="text-xs text-muted-foreground">Basic details — full compliance data is added from their profile page</p>
+              <h2 className="text-lg font-semibold">{sameNameConflict ? "Same name already on file" : "Add new staff member"}</h2>
+              <p className="text-xs text-muted-foreground">
+                {sameNameConflict ? "Confirm whether this is the same person or someone else" : "Basic details — full compliance data is added from their profile page"}
+              </p>
             </div>
-            <button onClick={() => setAddPanel(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+            <button onClick={() => { setAddPanel(false); setSameNameConflict(null) }} className="rounded-md p-1.5 hover:bg-muted transition-colors">
               <X className="h-5 w-5" />
             </button>
           </div>
 
-          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-6 py-5 space-y-4">
-              {addError && (
-                <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{addError}</p>
-              )}
+          {sameNameConflict ? (
+            <>
+              <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                <p className="rounded-lg bg-warning/10 px-3 py-2 text-sm text-warning">{sameNameConflict.error}</p>
 
-              <div className="space-y-1.5">
-                <Label>Full name *</Label>
-                <Input
-                  value={addForm.name}
-                  onChange={(e) => setAddForm((p) => ({ ...p, name: e.target.value }))}
-                  placeholder="e.g. James Okafor"
-                />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1 rounded-lg border p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Existing profile</p>
+                    <p className="text-sm font-medium">{sameNameConflict.existing?.name ?? addForm.name}</p>
+                    <p className="text-xs text-muted-foreground">{sameNameConflict.existing?.jobRole || "No role set"}</p>
+                    <p className="text-xs text-muted-foreground">{sameNameConflict.existing?.email || "No email on file"}</p>
+                    <p className="text-xs text-muted-foreground">{sameNameConflict.existing?.phone || "No phone on file"}</p>
+                    <p className="text-xs text-muted-foreground">{sameNameConflict.existing?.nationality || "No nationality on file"}</p>
+                  </div>
+                  <div className="space-y-1 rounded-lg border border-primary/30 p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">What you just entered</p>
+                    <p className="text-sm font-medium">{addForm.name}</p>
+                    <p className="text-xs text-muted-foreground">{addForm.jobRole || "No role set"}</p>
+                    <p className="text-xs text-muted-foreground">{addForm.email || "No email"}</p>
+                    <p className="text-xs text-muted-foreground">{addForm.phone || "No phone"}</p>
+                    <p className="text-xs text-muted-foreground">{addForm.nationality || "No nationality"}</p>
+                  </div>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  If the email or phone above are different, this is very likely a different person who just happens to share a name — not the person you already have on file.
+                </p>
               </div>
 
-              <div className="space-y-1.5">
-                <Label className="flex items-center gap-1.5">
-                  <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
-                  Job role
-                </Label>
-                <RoleChipPicker
-                  value={addForm.jobRole}
-                  onChange={v => setAddForm(p => ({ ...p, jobRole: v }))}
-                />
-                {addForm.jobRole && (
-                  <p className="text-[11px] text-muted-foreground">
-                    Selected: <span className="font-medium text-foreground">{addForm.jobRole}</span>
+              <div className="mx-auto flex w-full max-w-2xl flex-col gap-2 border-t px-6 py-4">
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1" onClick={() => setSameNameConflict(null)}>
+                    Back
+                  </Button>
+                  {sameNameConflict.existing && (
+                    <Button variant="outline" className="flex-1" onClick={() => {
+                      const id = sameNameConflict.existing!.id
+                      setAddPanel(false); setSameNameConflict(null)
+                      navigate(`/staff/${id}`)
+                    }}>
+                      Open existing profile
+                    </Button>
+                  )}
+                </div>
+                <Button className="w-full gap-2" onClick={() => handleAddStaff(true)} disabled={addSaving}>
+                  {addSaving ? <><Loader2 className="h-4 w-4 animate-spin" />Creating…</> : "Yes — different person, create anyway"}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                  {addError && (
+                    <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{addError}</p>
+                  )}
+
+                  <div className="space-y-1.5">
+                    <Label>Full name *</Label>
+                    <Input
+                      value={addForm.name}
+                      onChange={(e) => setAddForm((p) => ({ ...p, name: e.target.value }))}
+                      placeholder="e.g. James Okafor"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="flex items-center gap-1.5">
+                      <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
+                      Job role
+                    </Label>
+                    <RoleChipPicker
+                      value={addForm.jobRole}
+                      onChange={v => setAddForm(p => ({ ...p, jobRole: v }))}
+                    />
+                    {addForm.jobRole && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Selected: <span className="font-medium text-foreground">{addForm.jobRole}</span>
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>Email</Label>
+                      <Input
+                        type="email"
+                        value={addForm.email}
+                        onChange={(e) => setAddForm((p) => ({ ...p, email: e.target.value }))}
+                        placeholder="email@example.com"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Phone</Label>
+                      <Input
+                        type="tel"
+                        value={addForm.phone}
+                        onChange={(e) => setAddForm((p) => ({ ...p, phone: e.target.value }))}
+                        placeholder="+44 7700 000000"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Nationality</Label>
+                    <Input
+                      value={addForm.nationality}
+                      onChange={(e) => setAddForm((p) => ({ ...p, nationality: e.target.value }))}
+                      placeholder="e.g. British"
+                    />
+                  </div>
+
+                  <p className="rounded-lg bg-muted/50 px-3 py-2.5 text-xs text-muted-foreground">
+                    SIA licence, CSCS, Right to Work, documents and training are added from the staff member's profile page after creation.
                   </p>
-                )}
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Email</Label>
-                  <Input
-                    type="email"
-                    value={addForm.email}
-                    onChange={(e) => setAddForm((p) => ({ ...p, email: e.target.value }))}
-                    placeholder="email@example.com"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Phone</Label>
-                  <Input
-                    type="tel"
-                    value={addForm.phone}
-                    onChange={(e) => setAddForm((p) => ({ ...p, phone: e.target.value }))}
-                    placeholder="+44 7700 000000"
-                  />
-                </div>
+              <div className="mx-auto flex w-full max-w-2xl gap-2 border-t px-6 py-4">
+                <Button variant="outline" className="flex-1" onClick={() => setAddPanel(false)}>
+                  Cancel
+                </Button>
+                <Button className="flex-1" onClick={() => handleAddStaff()} disabled={addSaving}>
+                  {addSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Adding…</> : "Add staff member"}
+                </Button>
               </div>
-
-              <div className="space-y-1.5">
-                <Label>Nationality</Label>
-                <Input
-                  value={addForm.nationality}
-                  onChange={(e) => setAddForm((p) => ({ ...p, nationality: e.target.value }))}
-                  placeholder="e.g. British"
-                />
-              </div>
-
-              <p className="rounded-lg bg-muted/50 px-3 py-2.5 text-xs text-muted-foreground">
-                SIA licence, CSCS, Right to Work, documents and training are added from the staff member's profile page after creation.
-              </p>
-          </div>
-
-          <div className="mx-auto flex w-full max-w-2xl gap-2 border-t px-6 py-4">
-            <Button variant="outline" className="flex-1" onClick={() => setAddPanel(false)}>
-              Cancel
-            </Button>
-            <Button className="flex-1" onClick={handleAddStaff} disabled={addSaving}>
-              {addSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Adding…</> : "Add staff member"}
-            </Button>
-          </div>
+            </>
+          )}
         </div>
       )}
 

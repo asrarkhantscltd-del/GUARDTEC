@@ -1254,8 +1254,33 @@ function calcOverall(emp) {
 function overallEmoji(s) { return s==='green'?'🟢':s==='amber'?'🟡':s==='red'?'🔴':'⚪'; }
 function safeName(n) { return String(n).replace(/[<>:"/\\|?*]/g,'').trim(); }
 
+// emp._nameSuffix disambiguates two DIFFERENT people who happen to share a
+// name (see nextFreeNameSuffix below) — it only ever affects storage
+// (folder name / id), never the displayed emp.name, so two "John Smith"s
+// each keep their real name everywhere in the UI while living in separate
+// folders on disk.
 function folderForEmp(emp) {
-  return path.join(ACTIVE_DIR, overallEmoji(emp.overall) + ' ' + safeName(emp.name));
+  return path.join(ACTIVE_DIR, overallEmoji(emp.overall) + ' ' + safeName(emp.name) + (emp._nameSuffix || ''));
+}
+
+function cleanFolderName(d) {
+  return d.replace(/^[^\p{L}A-Za-z]+/u, '').trim().toUpperCase();
+}
+
+// Finds the lowest " (2)", " (3)"... suffix not already taken by an
+// existing Active Staff folder whose cleaned name matches. Used when an
+// admin explicitly confirms a same-name "Add Staff" submission is a
+// genuinely different person, not the duplicate-creation mistake the
+// collision check normally exists to catch.
+function nextFreeNameSuffix(name) {
+  var base = safeName(name).toUpperCase();
+  for (var n = 2; ; n++) {
+    var target = base + ' (' + n + ')';
+    var taken = fs.existsSync(ACTIVE_DIR) && fs.readdirSync(ACTIVE_DIR).some(function(d) {
+      return cleanFolderName(d) === target;
+    });
+    if (!taken) return n;
+  }
 }
 
 // ── EXCEL HELPERS ─────────────────────────────────────────────────────────────
@@ -1418,7 +1443,7 @@ function loadAllStaff() {
   if (fs.existsSync(exDir)) {
     fs.readdirSync(exDir).forEach(function(d) {
       if (!fs.existsSync(path.join(exDir, d, 'staff_data.json'))) return;
-      var clean = d.replace(/^[^\p{L}A-Za-z]+/u, '').trim().toUpperCase();
+      var clean = cleanFolderName(d);
       if (clean) exNames.add(clean);
     });
   }
@@ -1430,7 +1455,7 @@ function loadAllStaff() {
       var jp = path.join(fp, 'staff_data.json');
       if (!fs.existsSync(jp)) return;
       // Skip if this person is also in Ex-Staff
-      var clean = d.replace(/^[^\p{L}A-Za-z]+/u, '').trim().toUpperCase();
+      var clean = cleanFolderName(d);
       if (exNames.has(clean)) return;
       var emp = JSON.parse(fs.readFileSync(jp,'utf8'));
       emp._folderPath = fp;
@@ -2401,6 +2426,8 @@ app.put('/api/staff/:id', requireLogin, requirePermission('staff'), function(req
 app.post('/api/staff', requireLogin, requirePermission('staff'), function(req, res) {
   try {
     var emp = req.body;
+    var confirmDifferentPerson = !!emp.confirmDifferentPerson;
+    delete emp.confirmDifferentPerson;
     if (!emp.id) emp.id = emp.name.toLowerCase().replace(/[^a-z0-9]/g,'-');
 
     // "Add Staff" must only ever create a NEW record. saveStaff() writes to
@@ -2419,10 +2446,35 @@ app.post('/api/staff', requireLogin, requirePermission('staff'), function(req, r
     // bypassed by whatever caused them to seem hidden in the first place.
     var addTargetName = safeName(emp.name).toUpperCase();
     var addCollision = fs.existsSync(ACTIVE_DIR) && fs.readdirSync(ACTIVE_DIR).some(function(d) {
-      return d.replace(/^[^\p{L}A-Za-z]+/u, '').trim().toUpperCase() === addTargetName;
+      return cleanFolderName(d) === addTargetName;
     });
-    if (addCollision) {
-      return res.status(409).json({ ok: false, error: 'A staff member named "' + emp.name + '" already has an active profile. Open their existing profile from the Staff list to edit it — Add Staff only creates brand new records.' });
+
+    if (addCollision && !confirmDifferentPerson) {
+      // Two different people can genuinely share a name — don't just block
+      // outright. Send back the existing person's basic details so the UI
+      // can show a side-by-side comparison and let the admin decide: edit
+      // the existing profile (the usual case, and what the original bug
+      // used to do by accident), or confirm this really is someone else.
+      var existing = loadAllStaff().find(function(e){ return safeName(e.name).toUpperCase() === addTargetName; });
+      return res.status(409).json({
+        ok: false,
+        sameNameConflict: true,
+        error: 'A staff member named "' + emp.name + '" already has an active profile.',
+        existing: existing ? {
+          id: existing.id, name: existing.name, phone: existing.phone || null,
+          email: existing.email || null, nationality: existing.nationality || null,
+          jobRole: existing.jobRole || null,
+        } : null,
+      });
+    }
+
+    if (addCollision && confirmDifferentPerson) {
+      // Confirmed as a different person with the same name — disambiguate
+      // where they're STORED, never the name displayed anywhere in the UI,
+      // so the two never collide on folder or id again.
+      var suffixN = nextFreeNameSuffix(emp.name);
+      emp._nameSuffix = ' (' + suffixN + ')';
+      emp.id = emp.id + '-' + suffixN;
     }
 
     saveStaff(emp, null);
