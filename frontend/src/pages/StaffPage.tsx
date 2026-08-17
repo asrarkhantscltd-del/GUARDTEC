@@ -544,7 +544,7 @@ export default function StaffPage() {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Staff</h2>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Staff</h2>
           <p className="text-muted-foreground text-sm">{staff.length} active staff members</p>
         </div>
         <div className="flex items-center gap-2">
@@ -1013,7 +1013,7 @@ export default function StaffPage() {
               </p>
           </div>
 
-          <div className="flex gap-2 border-t px-6 py-4">
+          <div className="mx-auto flex w-full max-w-2xl gap-2 border-t px-6 py-4">
             <Button variant="outline" className="flex-1" onClick={() => setAddPanel(false)}>
               Cancel
             </Button>

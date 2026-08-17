@@ -526,7 +526,7 @@ export default function AgencyDetailPage() {
                 <Input type="tel" value={editForm.phone} onChange={e => setEditForm(p => ({ ...p, phone: e.target.value }))} />
               </div>
             </div>
-            <div className="flex gap-2 border-t px-6 py-4">
+            <div className="mx-auto flex w-full max-w-2xl gap-2 border-t px-6 py-4">
               <Button variant="outline" className="flex-1" onClick={() => setEditOpen(false)}>Cancel</Button>
               <Button className="flex-1" onClick={saveAgency} disabled={editSaving}>
                 {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save changes"}

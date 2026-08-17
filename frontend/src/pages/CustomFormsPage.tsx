@@ -370,7 +370,7 @@ export default function CustomFormsPage() {
               </Section>
           </div>
 
-          <div className="flex gap-2 border-t px-6 py-4">
+          <div className="mx-auto flex w-full max-w-2xl gap-2 border-t px-6 py-4">
             <Button variant="outline" className="flex-1" onClick={() => setPanelOpen(false)}>Cancel</Button>
             <Button className="flex-1" onClick={save} disabled={saving}>
               {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : editingId ? "Save changes" : "Create form"}

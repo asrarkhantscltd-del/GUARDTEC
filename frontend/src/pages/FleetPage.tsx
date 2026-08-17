@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react"
 import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import {
-  Truck, AlertTriangle, CheckCircle2, Search, Plus,
+  Truck, AlertTriangle, CheckCircle2, Search, Plus, ArrowUpRight,
   Car, Trash2, X, Save, Loader2, Camera, ImageOff,
   FileText, Download, Upload, Pencil, MapPin, CircleParking, KeyRound, Route,
 } from "lucide-react"
@@ -463,7 +463,7 @@ export default function FleetPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Fleet Management</h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">Fleet Management</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">Vehicle compliance, driver records &amp; transport operations</p>
         </div>
         {activeTab === "vehicles" && (
@@ -483,13 +483,12 @@ export default function FleetPage() {
       {/* Stats */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <StatCard icon={<Truck className="h-5 w-5" />} label="Total Vehicles" value={stats.total}
-          colorClass="bg-blue-50 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400" onClick={goToAllVehicles} />
+          colorClass="bg-blue-500/10 text-blue-500" strip="#3b82f6" onClick={goToAllVehicles} />
         <StatCard icon={<CheckCircle2 className="h-5 w-5" />} label="Active Vehicles" value={stats.active}
-          colorClass="bg-green-50 text-green-600 dark:bg-green-950/30 dark:text-green-400" onClick={goToActiveVehicles} />
+          colorClass="bg-success/10 text-success" strip="#22c55e" onClick={goToActiveVehicles} />
         <StatCard icon={<AlertTriangle className="h-5 w-5" />} label="Compliance Alerts" value={stats.alerts}
-          colorClass={stats.alerts > 0
-            ? "bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400"
-            : "bg-green-50 text-green-600 dark:bg-green-950/30 dark:text-green-400"} onClick={goToAlertVehicles} />
+          colorClass={stats.alerts > 0 ? "bg-destructive/10 text-destructive" : "bg-success/10 text-success"}
+          strip={stats.alerts > 0 ? "#ef4444" : "#22c55e"} onClick={goToAlertVehicles} />
       </div>
 
       {/* Tabs */}
@@ -838,7 +837,7 @@ export default function FleetPage() {
               </div>
 
             {/* Footer */}
-            <div className="sticky bottom-0 flex gap-3 border-t bg-background px-6 py-4">
+            <div className="sticky bottom-0 mx-auto flex w-full max-w-2xl gap-3 border-t bg-background px-6 py-4">
               <Button type="submit" disabled={savingVehicle} className="flex-1 gap-2">
                 {savingVehicle ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 {savingVehicle ? "Saving…" : editingVehicleId ? "Update Vehicle" : "Save Vehicle"}
@@ -1120,15 +1119,18 @@ function Field({ label, children, className }: { label: string; children: React.
   )
 }
 
-function StatCard({ icon, label, value, colorClass, onClick }: {
-  icon: React.ReactNode; label: string; value: number; colorClass: string; onClick?: () => void
+function StatCard({ icon, label, value, colorClass, strip, onClick }: {
+  icon: React.ReactNode; label: string; value: number; colorClass: string; strip: string; onClick?: () => void
 }) {
   return (
-    <div onClick={onClick}
-      className={`rounded-xl border bg-card p-4 shadow-sm ${onClick ? "cursor-pointer transition-colors hover:bg-muted/40" : ""}`}>
-      <div className={`inline-flex h-10 w-10 items-center justify-center rounded-lg ${colorClass}`}>{icon}</div>
-      <div className="mt-3 text-2xl font-bold">{value}</div>
-      <div className="mt-0.5 text-xs text-muted-foreground">{label}</div>
+    <div onClick={onClick} className={`surface relative overflow-hidden p-4 pl-5 ${onClick ? "surface-hover cursor-pointer" : ""}`}>
+      <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl" style={{ background: strip }} />
+      <div className="mb-3 flex items-center justify-between">
+        <div className={`icon-badge ${colorClass}`}>{icon}</div>
+        {onClick && <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground/40" />}
+      </div>
+      <p className="font-display text-3xl font-black tracking-tight tabular-nums">{value}</p>
+      <p className="mt-0.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
     </div>
   )
 }

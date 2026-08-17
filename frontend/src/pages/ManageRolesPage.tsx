@@ -232,7 +232,7 @@ export default function ManageRolesPage() {
               </div>
           </div>
 
-          <div className="flex gap-2 border-t px-5 py-4">
+          <div className="mx-auto flex w-full max-w-2xl gap-2 border-t px-5 py-4">
             <Button variant="outline" className="flex-1" onClick={closePanel}>Cancel</Button>
             <Button className="flex-1" onClick={save} disabled={saving || isLocked}>
               {saving ? "Saving…" : editing ? "Save changes" : "Create role"}

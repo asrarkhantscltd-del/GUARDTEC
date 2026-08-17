@@ -441,7 +441,7 @@ export default function SitesPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold tracking-tight">Sites</h2>
+          <h2 className="font-display text-xl font-bold tracking-tight">Sites</h2>
           <p className="text-sm text-muted-foreground">{activeCt} active · {inactiveCt} inactive</p>
         </div>
         <Button onClick={openAdd} size="sm" className="gap-1.5">
@@ -737,7 +737,7 @@ export default function SitesPage() {
               </div>
           </div>
 
-          <div className="flex gap-2 border-t px-5 py-4">
+          <div className="mx-auto flex w-full max-w-2xl gap-2 border-t px-5 py-4">
             <Button variant="outline" className="flex-1" onClick={closeSitePanel}>Cancel</Button>
             <Button className="flex-1" onClick={saveSite} disabled={siteSaving}>
               {siteSaving ? "Saving…" : editingSite ? "Save changes" : "Add site"}
@@ -1154,7 +1154,7 @@ export default function SitesPage() {
                 )}
               </div>
           </div>
-          <div className="flex gap-2 border-t px-5 py-4">
+          <div className="mx-auto flex w-full max-w-2xl gap-2 border-t px-5 py-4">
             <Button variant="outline" className="flex-1" onClick={closeItemPanel}>Cancel</Button>
             <Button className="flex-1" onClick={saveItem} disabled={itemSaving}>
               {itemSaving ? "Saving…" : editingItem ? "Save changes" : "Add item"}

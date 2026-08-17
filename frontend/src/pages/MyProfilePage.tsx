@@ -374,7 +374,7 @@ export default function MyProfilePage() {
             : <UserIcon className="h-7 w-7 opacity-60" />}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="font-bold text-lg leading-tight truncate">{profile.name}</p>
+          <p className="font-display font-bold text-lg leading-tight truncate">{profile.name}</p>
           <p className="text-sm opacity-60 truncate">{profile.email}</p>
           <div className="flex gap-2 flex-wrap mt-2">
             {[
@@ -440,7 +440,7 @@ export default function MyProfilePage() {
             ].map(c => (
               <div key={c.label} className={`rounded-xl border p-3 space-y-1 ${statusCfg[c.status].cls}`}>
                 <p className="text-[11px] font-semibold uppercase tracking-wide opacity-70">{c.label}</p>
-                <p className="text-sm font-bold">{statusCfg[c.status].label}</p>
+                <p className="font-display text-sm font-bold">{statusCfg[c.status].label}</p>
                 <p className="text-[11px] opacity-70 truncate">{c.detail}</p>
               </div>
             ))}

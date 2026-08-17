@@ -140,7 +140,7 @@ export default function CreateAgencyModal({ open, onClose, onCreated }: CreateAg
           )}
         </div>
 
-        <div className="flex gap-2 border-t px-6 py-4">
+        <div className="mx-auto flex w-full max-w-2xl gap-2 border-t px-6 py-4">
           {result ? (
             <Button className="flex-1" onClick={handleClose}>Done</Button>
           ) : (
