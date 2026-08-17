@@ -1406,11 +1406,18 @@ function loadAllStaff() {
   var staff = [];
   if (!fs.existsSync(ACTIVE_DIR)) return staff;
 
-  // Build set of ex-staff names to exclude (OneDrive may restore deleted folders)
+  // Build set of ex-staff names to exclude (OneDrive may restore deleted
+  // folders as a stray duplicate active copy). Only counts an ex-staff
+  // entry that still has a real staff_data.json — a folder with no data
+  // file isn't proof of an actual duplicate person, and must never be
+  // allowed to silently hide an unrelated active profile of the same name
+  // (this exact gap hid a live, fully-documented staff member's record —
+  // see the Abu Baker incident).
   var exDir = path.join(BASE, '02 - Vetting & Screening', 'Ex-Staff');
   var exNames = new Set();
   if (fs.existsSync(exDir)) {
     fs.readdirSync(exDir).forEach(function(d) {
+      if (!fs.existsSync(path.join(exDir, d, 'staff_data.json'))) return;
       var clean = d.replace(/^[^\p{L}A-Za-z]+/u, '').trim().toUpperCase();
       if (clean) exNames.add(clean);
     });
@@ -2395,6 +2402,19 @@ app.post('/api/staff', requireLogin, requirePermission('staff'), function(req, r
   try {
     var emp = req.body;
     if (!emp.id) emp.id = emp.name.toLowerCase().replace(/[^a-z0-9]/g,'-');
+
+    // "Add Staff" must only ever create a NEW record. saveStaff() writes to
+    // folderForEmp(emp) unconditionally, so without this check, submitting
+    // the same name again (e.g. someone re-adding a person who looked like
+    // they'd disappeared, per the Abu Baker incident) silently overwrites
+    // that person's existing staff_data.json — destroying their real SIA/
+    // CSCS/RTW data with whatever bare fields were in this new submission,
+    // with no warning. Check the disk directly rather than loadAllStaff()
+    // so this can't be bypassed by whatever caused them to seem hidden.
+    if (fs.existsSync(folderForEmp(emp))) {
+      return res.status(409).json({ ok: false, error: 'A staff member named "' + emp.name + '" already has an active profile. Open their existing profile from the Staff list to edit it — Add Staff only creates brand new records.' });
+    }
+
     saveStaff(emp, null);
     updateComplianceTracker(emp);
     updateReferenceTracker(emp);
