@@ -226,17 +226,9 @@ export default function PendingReviewPage() {
                   <CompareField label="Reference 2 — company" current={s.references?.ref2?.company} proposed={p.references?.ref2?.company} />
                   <CompareField label="Reference 2 — phone" current={s.references?.ref2?.phone} proposed={p.references?.ref2?.phone} />
 
-                  <CompareField label="Driving licence number" current={s.driverLicence?.licenceNumber} proposed={p.driverLicence?.licenceNumber} />
-                  <CompareField label="Driving licence expiry" current={s.driverLicence?.licenceExpiry} proposed={p.driverLicence?.licenceExpiry} />
-                  <CompareField label="Driving licence categories"
-                    current={s.driverLicence?.licenceCategories?.join(", ")}
-                    proposed={p.driverLicence?.licenceCategories?.join(", ")} />
-                  <CompareField label="Driver CPC card" current={s.driverLicence?.cpcCard} proposed={p.driverLicence?.cpcCard} />
-                  <CompareField label="Driver CPC expiry" current={s.driverLicence?.cpcExpiry} proposed={p.driverLicence?.cpcExpiry} />
-                  <CompareField label="Driver medical expiry" current={s.driverLicence?.medicalExpiry} proposed={p.driverLicence?.medicalExpiry} />
-
                   {p.driverLicence && (
-                    <DriverDocLinks staffId={s.id} documents={s.documents} />
+                    <DriverLicenceReviewForm staffId={s.id} documents={s.documents}
+                      current={s.driverLicence} proposed={p.driverLicence} />
                   )}
 
                   <CompareField label="Criminal history declared"
@@ -361,6 +353,73 @@ function DeclarationsCompare({ declarations }: { declarations: OnboardingDeclara
           {notConfirmed.map(([key]) => <li key={key}>Not confirmed: {DECLARATION_LABELS[key] ?? key}</li>)}
         </ul>
       )}
+    </div>
+  )
+}
+
+const LICENCE_CATS = ["B", "B+E", "C1", "C1+E", "C", "C+E", "D1", "D1+E", "D", "AM"]
+
+// Mirrors the exact field layout of the driver-licence form on
+// MyProfilePage.tsx (same labels, same order, same category chip set) —
+// so a manager reviewing a submission sees the same shape they'd recognise
+// from the input form, not an abstract list of "label: old → new" pills.
+// Each text/date field still highlights a change where there is one.
+function DriverLicenceReviewForm({ current, proposed, staffId, documents }: {
+  current?: DriverLicenceInfo; proposed?: DriverLicenceInfo; staffId: string
+  documents?: Record<string, { uploaded?: boolean; date?: string } | undefined>
+}) {
+  const currentCats = current?.licenceCategories ?? []
+  const proposedCats = proposed?.licenceCategories ?? currentCats
+  return (
+    <div className="sm:col-span-2 space-y-3 rounded-lg border bg-background p-4">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Driving Licence &amp; Qualifications — as submitted</p>
+      <div className="grid sm:grid-cols-2 gap-3">
+        <ReviewField label="Licence Number" current={current?.licenceNumber} proposed={proposed?.licenceNumber} />
+        <ReviewField label="Licence Expiry" current={current?.licenceExpiry} proposed={proposed?.licenceExpiry} />
+      </div>
+      <div>
+        <p className="mb-1.5 text-xs font-medium text-muted-foreground">Licence Categories</p>
+        <div className="flex flex-wrap gap-2">
+          {LICENCE_CATS.map(cat => {
+            const wasSelected = currentCats.includes(cat)
+            const isSelected = proposedCats.includes(cat)
+            const added = isSelected && !wasSelected
+            const removed = !isSelected && wasSelected
+            return (
+              <span key={cat} title={added ? "Newly added" : removed ? "Removed" : undefined}
+                className={`rounded-md border px-3 py-1 text-xs font-bold ${
+                  added   ? "border-success bg-success/15 text-success" :
+                  removed ? "border-destructive/40 bg-destructive/5 text-destructive/70 line-through" :
+                  isSelected ? "border-primary bg-primary text-primary-foreground" :
+                  "border-border bg-background text-muted-foreground/40"
+                }`}>
+                {cat}
+              </span>
+            )
+          })}
+        </div>
+      </div>
+      <div className="grid sm:grid-cols-3 gap-3">
+        <ReviewField label="CPC Card Number" current={current?.cpcCard} proposed={proposed?.cpcCard} />
+        <ReviewField label="CPC Expiry" current={current?.cpcExpiry} proposed={proposed?.cpcExpiry} />
+        <ReviewField label="Medical Cert Expiry" current={current?.medicalExpiry} proposed={proposed?.medicalExpiry} />
+      </div>
+      <DriverDocLinks staffId={staffId} documents={documents} />
+    </div>
+  )
+}
+
+// A single form field shown as it would appear on the input form — value
+// filled in, with the previous value struck through above it only when it
+// actually changed, instead of a separate compact "compare pill".
+function ReviewField({ label, current, proposed }: { label: string; current?: string; proposed?: string }) {
+  const changed = proposed !== undefined && proposed !== current && proposed !== ""
+  const display = proposed !== undefined ? proposed : current
+  return (
+    <div>
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      {changed && <p className="text-xs text-muted-foreground line-through opacity-60">{current || "—"}</p>}
+      <p className={`text-sm ${changed ? "font-semibold text-primary" : "text-foreground"}`}>{display || "—"}</p>
     </div>
   )
 }
