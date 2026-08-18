@@ -932,7 +932,7 @@ export default function StaffDetailPage() {
                 onChange={e => handlePhotoUpload(e.target.files?.[0] ?? null)} />
             </label>
             <div className="flex-1 min-w-0">
-              <h2 className="text-xl font-bold truncate">{staff.name}</h2>
+              <h2 className="font-display text-xl font-bold truncate">{staff.name}</h2>
               {staff.jobRole && (
                 <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                   <Briefcase className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />

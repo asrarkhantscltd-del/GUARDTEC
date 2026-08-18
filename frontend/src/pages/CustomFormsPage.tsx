@@ -177,7 +177,7 @@ export default function CustomFormsPage() {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Custom Forms</h2>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Custom Forms</h2>
           <p className="text-sm text-muted-foreground">{forms.length} form{forms.length === 1 ? "" : "s"}</p>
         </div>
         {canManage && (

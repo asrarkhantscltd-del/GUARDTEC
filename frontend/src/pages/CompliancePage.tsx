@@ -3,7 +3,7 @@ import { api, ApiError } from "@/lib/api"
 import { daysUntil, formatDate } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import {
-  Search, ArrowUpDown, ArrowUp, ArrowDown,
+  Search, ArrowUpDown, ArrowUp, ArrowDown, ArrowUpRight,
   CheckCircle2, AlertTriangle, XCircle, FileQuestion,
   Users, ShieldX, ShieldAlert, ShieldCheck,
 } from "lucide-react"
@@ -179,7 +179,7 @@ export default function CompliancePage() {
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-2xl font-bold tracking-tight">Compliance Overview</h2>
+        <h2 className="font-display text-2xl font-bold tracking-tight">Compliance Overview</h2>
         <p className="mt-0.5 text-sm text-muted-foreground">
           SIA licences · CSCS cards · Right to Work — {stats.total} staff
         </p>
@@ -187,10 +187,16 @@ export default function CompliancePage() {
 
       {/* Stats row */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard icon={<Users className="h-5 w-5" />}    label="Total Staff"     value={stats.total}      iconCls="bg-blue-100 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400" />
-        <StatCard icon={<ShieldX className="h-5 w-5" />}  label="Expired"         value={stats.expired}    iconCls={stats.expired > 0 ? "bg-red-100 text-red-600 dark:bg-red-950/40 dark:text-red-400" : "bg-muted text-muted-foreground"} />
-        <StatCard icon={<ShieldAlert className="h-5 w-5" />} label="Expiring (30d)" value={stats.expiring} iconCls={stats.expiring > 0 ? "bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400" : "bg-muted text-muted-foreground"} />
-        <StatCard icon={<ShieldCheck className="h-5 w-5" />} label="Fully Compliant" value={stats.good}   iconCls="bg-green-100 text-green-600 dark:bg-green-950/40 dark:text-green-400" />
+        <StatCard icon={<Users className="h-5 w-5" />}    label="Total Staff"     value={stats.total}
+          colorClass="bg-blue-500/10 text-blue-500" strip="#3b82f6" />
+        <StatCard icon={<ShieldX className="h-5 w-5" />}  label="Expired"         value={stats.expired}
+          colorClass={stats.expired > 0 ? "bg-destructive/10 text-destructive" : "bg-muted text-muted-foreground"}
+          strip={stats.expired > 0 ? "#ef4444" : "var(--color-border)"} />
+        <StatCard icon={<ShieldAlert className="h-5 w-5" />} label="Expiring (30d)" value={stats.expiring}
+          colorClass={stats.expiring > 0 ? "bg-warning/10 text-warning" : "bg-muted text-muted-foreground"}
+          strip={stats.expiring > 0 ? "#f59e0b" : "var(--color-border)"} />
+        <StatCard icon={<ShieldCheck className="h-5 w-5" />} label="Fully Compliant" value={stats.good}
+          colorClass="bg-success/10 text-success" strip="#22c55e" />
       </div>
 
       {/* Filter tabs + search */}
@@ -296,16 +302,18 @@ function Th({ onClick, label, sortKey, activeSortKey, sortDir }: {
   )
 }
 
-function StatCard({ icon, label, value, iconCls }: {
-  icon: React.ReactNode; label: string; value: number; iconCls: string
+function StatCard({ icon, label, value, colorClass, strip, onClick }: {
+  icon: React.ReactNode; label: string; value: number; colorClass: string; strip: string; onClick?: () => void
 }) {
   return (
-    <div className="rounded-xl border bg-card p-4 shadow-sm">
-      <div className={`inline-flex h-10 w-10 items-center justify-center rounded-lg ${iconCls}`}>
-        {icon}
+    <div onClick={onClick} className={`surface relative overflow-hidden p-4 pl-5 ${onClick ? "surface-hover cursor-pointer" : ""}`}>
+      <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl" style={{ background: strip }} />
+      <div className="mb-3 flex items-center justify-between">
+        <div className={`icon-badge ${colorClass}`}>{icon}</div>
+        {onClick && <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground/40" />}
       </div>
-      <div className="mt-3 text-2xl font-bold tabular-nums">{value}</div>
-      <div className="mt-0.5 text-xs text-muted-foreground">{label}</div>
+      <p className="font-display text-3xl font-black tracking-tight tabular-nums">{value}</p>
+      <p className="mt-0.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
     </div>
   )
 }

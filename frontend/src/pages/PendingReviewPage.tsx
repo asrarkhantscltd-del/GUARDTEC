@@ -89,7 +89,7 @@ export default function PendingReviewPage() {
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-xl font-bold tracking-tight">Pending Review</h2>
+        <h2 className="font-display text-xl font-bold tracking-tight">Pending Review</h2>
         <p className="text-sm text-muted-foreground">
           Staff-submitted profile changes waiting for approval — {list.length} pending
         </p>

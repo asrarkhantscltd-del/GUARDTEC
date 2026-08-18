@@ -81,7 +81,7 @@ export default function DeploymentsPage() {
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Deployments</h2>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Deployments</h2>
           <p className="text-sm text-muted-foreground">Cross-agency cover guard bookings, filterable by site, agency and date</p>
         </div>
         <Button onClick={() => setCreateOpen(true)} size="sm" className="gap-1.5">

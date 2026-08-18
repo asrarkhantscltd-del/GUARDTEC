@@ -4,7 +4,7 @@ import { toast } from "sonner"
 import {
   ChevronLeft, Building2, Mail, Phone, Pencil, Archive, RotateCcw, Plus, X,
   Loader2, Users, CalendarDays, MapPin, ShieldCheck, AlertTriangle, UserX,
-  BarChart3, MessageSquare, Paperclip,
+  BarChart3, MessageSquare, Paperclip, ArrowUpRight,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -58,12 +58,16 @@ const DEPLOYMENT_STATUS_STYLE: Record<string, string> = {
   cancelled: "bg-destructive/15 text-destructive border-destructive/30",
 }
 
-function StatTile({ icon, label, value, colorClass }: { icon: React.ReactNode; label: string; value: string | number; colorClass: string }) {
+function StatTile({ icon, label, value, colorClass, strip, onClick }: { icon: React.ReactNode; label: string; value: string | number; colorClass: string; strip: string; onClick?: () => void }) {
   return (
-    <div className="rounded-xl border bg-card p-4 shadow-sm">
-      <div className={`inline-flex h-10 w-10 items-center justify-center rounded-lg ${colorClass}`}>{icon}</div>
-      <div className="mt-3 text-2xl font-bold">{value}</div>
-      <div className="mt-0.5 text-xs text-muted-foreground">{label}</div>
+    <div onClick={onClick} className={`surface relative overflow-hidden p-4 pl-5 ${onClick ? "surface-hover cursor-pointer" : ""}`}>
+      <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl" style={{ background: strip }} />
+      <div className="mb-3 flex items-center justify-between">
+        <div className={`icon-badge ${colorClass}`}>{icon}</div>
+        {onClick && <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground/40" />}
+      </div>
+      <p className="font-display text-3xl font-black tracking-tight tabular-nums">{value}</p>
+      <p className="mt-0.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
     </div>
   )
 }
@@ -277,7 +281,7 @@ export default function AgencyDetailPage() {
         <div>
           <div className="flex items-center gap-2">
             <Building2 className="h-5 w-5 text-muted-foreground" />
-            <h2 className="text-2xl font-bold tracking-tight">{agency.name}</h2>
+            <h2 className="font-display text-2xl font-bold tracking-tight">{agency.name}</h2>
             <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium border ${
               agency.status === "active" ? "bg-success/15 text-success border-success/30" : "bg-muted text-muted-foreground border-border"
             }`}>
@@ -429,15 +433,14 @@ export default function AgencyDetailPage() {
         performance ? (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatTile icon={<ShieldCheck className="h-5 w-5" />} label="Compliance rate" value={`${performance.compliance_pct}%`}
-              colorClass="bg-green-50 text-green-600 dark:bg-green-950/30 dark:text-green-400" />
+              colorClass="bg-success/10 text-success" strip="#22c55e" />
             <StatTile icon={<AlertTriangle className="h-5 w-5" />} label="No-show rate" value={`${performance.no_show_rate}%`}
-              colorClass={performance.no_show_rate > 0
-                ? "bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400"
-                : "bg-green-50 text-green-600 dark:bg-green-950/30 dark:text-green-400"} />
+              colorClass={performance.no_show_rate > 0 ? "bg-destructive/10 text-destructive" : "bg-success/10 text-success"}
+              strip={performance.no_show_rate > 0 ? "#ef4444" : "#22c55e"} />
             <StatTile icon={<AlertTriangle className="h-5 w-5" />} label="Logged incidents" value={performance.incident_count}
-              colorClass="bg-amber-50 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400" />
+              colorClass="bg-warning/10 text-warning" strip="#f59e0b" />
             <StatTile icon={<CalendarDays className="h-5 w-5" />} label="Total deployments" value={performance.deployments_count}
-              colorClass="bg-blue-50 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400" />
+              colorClass="bg-blue-500/10 text-blue-500" strip="#3b82f6" />
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">Performance data unavailable.</p>

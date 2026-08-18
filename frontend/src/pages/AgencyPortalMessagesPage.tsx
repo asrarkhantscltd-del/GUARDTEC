@@ -139,7 +139,7 @@ export default function AgencyPortalMessagesPage() {
       <div className="flex items-center gap-3">
         <MessageSquare className="h-5 w-5 text-primary" />
         <div>
-          <h1 className="text-xl font-semibold">Messages</h1>
+          <h1 className="font-display text-xl font-semibold">Messages</h1>
           <p className="text-sm text-muted-foreground">Direct line to GuardTec's admin team. Private to your agency.</p>
         </div>
       </div>

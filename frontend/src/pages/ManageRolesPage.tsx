@@ -105,7 +105,7 @@ export default function ManageRolesPage() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold tracking-tight">Manage Roles</h2>
+          <h2 className="font-display text-xl font-bold tracking-tight">Manage Roles</h2>
           <p className="text-sm text-muted-foreground">
             Decide which pages each role can see — {roles.length} roles
           </p>

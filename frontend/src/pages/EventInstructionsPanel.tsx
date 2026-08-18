@@ -396,7 +396,7 @@ export default function EventInstructionsPanel() {
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Event Instructions</h2>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Event Instructions</h2>
           <p className="text-sm text-muted-foreground">Publish compliance instructions and send acknowledgment links to cover guards or GuardTec staff</p>
         </div>
         <Button onClick={openCreate} size="sm" className="gap-1.5"><Plus className="h-4 w-4" />New instruction</Button>

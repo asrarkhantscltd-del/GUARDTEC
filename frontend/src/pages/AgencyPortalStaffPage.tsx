@@ -205,7 +205,7 @@ export default function AgencyPortalStaffPage() {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Cover Guards</h2>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Cover Guards</h2>
           <p className="text-muted-foreground text-sm">{staff.length} active guard{staff.length === 1 ? "" : "s"}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -386,7 +386,7 @@ export default function AgencyPortalStaffPage() {
               ) : (
                 <div className="space-y-2">
                   {archivedStaff.map(s => (
-                    <div key={s.id} className="rounded-lg border bg-card px-4 py-3">
+                    <div key={s.id} className="surface rounded-lg border bg-card px-4 py-3">
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium">{s.name}</p>

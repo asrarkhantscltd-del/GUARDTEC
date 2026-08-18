@@ -7,7 +7,7 @@ import { useAuth } from "@/contexts/AuthContext"
 import {
   Plus, Pencil, Trash2, X, KeyRound, ShieldCheck,
   ShieldOff, UserCog, Mail, Eye, EyeOff, User,
-  Search, Users, Shield, Activity, Filter,
+  Search, Users, Shield, Activity, Filter, ArrowUpRight,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -72,6 +72,24 @@ function UserPhotoCircle({ userId, name, colorClass, onClick }: {
         ? <img src={src} alt={name} className="h-8 w-8 rounded-full object-cover" />
         : initials(name)}
     </button>
+  )
+}
+
+function StatCard({ icon, label, value, colorClass, strip, onClick, active }: {
+  icon: React.ReactNode; label: string; value: number; colorClass: string; strip: string; onClick?: () => void; active?: boolean
+}) {
+  return (
+    <div onClick={onClick} className={`surface relative overflow-hidden p-4 pl-5 ${onClick ? "surface-hover cursor-pointer" : ""}`}>
+      <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl" style={{ background: strip }} />
+      <div className="mb-3 flex items-center justify-between">
+        <div className={`icon-badge ${colorClass}`}>{icon}</div>
+        {active
+          ? <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${colorClass}`}>Filtered</span>
+          : onClick && <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground/40" />}
+      </div>
+      <p className="font-display text-3xl font-black tracking-tight tabular-nums">{value}</p>
+      <p className="mt-0.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+    </div>
   )
 }
 
@@ -235,7 +253,7 @@ export default function UsersPage() {
       {/* ── Header ── */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold tracking-tight">Account Control Panel</h2>
+          <h2 className="font-display text-xl font-bold tracking-tight">Account Control Panel</h2>
           <p className="text-sm text-muted-foreground">
             Manage all portal accounts, roles, and access from one place
           </p>
@@ -255,57 +273,25 @@ export default function UsersPage() {
           animate="show"
           variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08 } } }}
         >
-          <motion.div
-            variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16,1,0.3,1] } } }}
-            className="surface relative overflow-hidden p-4 pl-5">
-            <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl bg-primary" />
-            <div className="mb-2 flex items-center justify-between">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10">
-                <Users className="h-4 w-4 text-primary" />
-              </div>
-            </div>
-            <p className="text-3xl font-black tabular-nums">{users.length}</p>
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total accounts</p>
+          <motion.div variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16,1,0.3,1] } } }}>
+            <StatCard icon={<Users className="h-5 w-5" />} label="Total accounts" value={users.length}
+              colorClass="bg-primary/10 text-primary" strip="var(--color-primary)" />
           </motion.div>
-          <motion.div
-            variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16,1,0.3,1] } } }}
-            className="surface relative overflow-hidden p-4 pl-5 cursor-pointer hover:border-success/40 transition-colors"
-            onClick={() => setFilterStatus(f => f === "active" ? "all" : "active")}>
-            <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl bg-success" />
-            <div className="mb-2 flex items-center justify-between">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-success/10">
-                <ShieldCheck className="h-4 w-4 text-success" />
-              </div>
-              {filterStatus === "active" && <span className="text-[10px] font-medium text-success bg-success/10 rounded-full px-2 py-0.5">Filtered</span>}
-            </div>
-            <p className="text-3xl font-black tabular-nums text-success">{activeCount}</p>
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Active</p>
+          <motion.div variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16,1,0.3,1] } } }}>
+            <StatCard icon={<ShieldCheck className="h-5 w-5" />} label="Active" value={activeCount}
+              colorClass="bg-success/10 text-success" strip="#22c55e"
+              active={filterStatus === "active"}
+              onClick={() => setFilterStatus(f => f === "active" ? "all" : "active")} />
           </motion.div>
-          <motion.div
-            variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16,1,0.3,1] } } }}
-            className="surface relative overflow-hidden p-4 pl-5 cursor-pointer hover:border-muted-foreground/30 transition-colors"
-            onClick={() => setFilterStatus(f => f === "suspended" ? "all" : "suspended")}>
-            <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl bg-muted-foreground/40" />
-            <div className="mb-2 flex items-center justify-between">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-muted">
-                <ShieldOff className="h-4 w-4 text-muted-foreground" />
-              </div>
-              {filterStatus === "suspended" && <span className="text-[10px] font-medium text-muted-foreground bg-muted rounded-full px-2 py-0.5">Filtered</span>}
-            </div>
-            <p className="text-3xl font-black tabular-nums">{suspendedCount}</p>
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Suspended</p>
+          <motion.div variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16,1,0.3,1] } } }}>
+            <StatCard icon={<ShieldOff className="h-5 w-5" />} label="Suspended" value={suspendedCount}
+              colorClass="bg-muted text-muted-foreground" strip="var(--color-muted-foreground)"
+              active={filterStatus === "suspended"}
+              onClick={() => setFilterStatus(f => f === "suspended" ? "all" : "suspended")} />
           </motion.div>
-          <motion.div
-            variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16,1,0.3,1] } } }}
-            className="surface relative overflow-hidden p-4 pl-5">
-            <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl bg-purple-500" />
-            <div className="mb-2 flex items-center justify-between">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-purple-500/10">
-                <Shield className="h-4 w-4 text-purple-500" />
-              </div>
-            </div>
-            <p className="text-3xl font-black tabular-nums">{rolesUsed}</p>
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Roles in use</p>
+          <motion.div variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16,1,0.3,1] } } }}>
+            <StatCard icon={<Shield className="h-5 w-5" />} label="Roles in use" value={rolesUsed}
+              colorClass="bg-purple-500/10 text-purple-500" strip="#a855f7" />
           </motion.div>
         </motion.div>
       )}

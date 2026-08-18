@@ -109,7 +109,7 @@ export default function CustomFormResponsesPage() {
             className="mb-1 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
             <ArrowLeft className="h-3.5 w-3.5" /> All forms
           </button>
-          <h2 className="text-2xl font-bold tracking-tight">{form.name}</h2>
+          <h2 className="font-display text-2xl font-bold tracking-tight">{form.name}</h2>
           <p className="text-sm text-muted-foreground">{responses.length} response{responses.length === 1 ? "" : "s"}</p>
         </div>
         <button onClick={exportCsv} disabled={exporting}

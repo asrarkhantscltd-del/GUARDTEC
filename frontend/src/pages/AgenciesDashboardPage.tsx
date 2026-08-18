@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import {
   Building2, Users, ShieldCheck, AlertTriangle, Loader2, ChevronRight,
-  TrendingDown, CalendarDays, FileWarning,
+  TrendingDown, CalendarDays, FileWarning, ArrowUpRight,
 } from "lucide-react"
 import { api } from "@/lib/api"
 
@@ -36,12 +36,16 @@ interface AgencyPerformanceRow extends AgencyRow {
   deployments_count?: number
 }
 
-function StatCard({ icon, label, value, colorClass }: { icon: React.ReactNode; label: string; value: number; colorClass: string }) {
+function StatCard({ icon, label, value, colorClass, strip, onClick }: { icon: React.ReactNode; label: string; value: number; colorClass: string; strip: string; onClick?: () => void }) {
   return (
-    <div className="rounded-xl border bg-card p-4 shadow-sm">
-      <div className={`inline-flex h-10 w-10 items-center justify-center rounded-lg ${colorClass}`}>{icon}</div>
-      <div className="mt-3 text-2xl font-bold">{value}</div>
-      <div className="mt-0.5 text-xs text-muted-foreground">{label}</div>
+    <div onClick={onClick} className={`surface relative overflow-hidden p-4 pl-5 ${onClick ? "surface-hover cursor-pointer" : ""}`}>
+      <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl" style={{ background: strip }} />
+      <div className="mb-3 flex items-center justify-between">
+        <div className={`icon-badge ${colorClass}`}>{icon}</div>
+        {onClick && <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground/40" />}
+      </div>
+      <p className="font-display text-3xl font-black tracking-tight tabular-nums">{value}</p>
+      <p className="mt-0.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
     </div>
   )
 }
@@ -106,21 +110,20 @@ export default function AgenciesDashboardPage() {
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-2xl font-bold tracking-tight">Agencies Dashboard</h2>
+        <h2 className="font-display text-2xl font-bold tracking-tight">Agencies Dashboard</h2>
         <p className="text-sm text-muted-foreground">Cross-agency compliance and deployment performance</p>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard icon={<Building2 className="h-5 w-5" />} label="Active agencies" value={overview?.total_agencies ?? 0}
-          colorClass="bg-blue-50 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400" />
+          colorClass="bg-blue-500/10 text-blue-500" strip="#3b82f6" />
         <StatCard icon={<Users className="h-5 w-5" />} label="Total cover guards" value={overview?.total_staff ?? 0}
-          colorClass="bg-purple-50 text-purple-600 dark:bg-purple-950/30 dark:text-purple-400" />
+          colorClass="bg-purple-500/10 text-purple-500" strip="#a855f7" />
         <StatCard icon={<ShieldCheck className="h-5 w-5" />} label="Compliant" value={breakdown?.COMPLIANT ?? 0}
-          colorClass="bg-green-50 text-green-600 dark:bg-green-950/30 dark:text-green-400" />
+          colorClass="bg-success/10 text-success" strip="#22c55e" />
         <StatCard icon={<AlertTriangle className="h-5 w-5" />} label="Needs attention" value={needsAttention}
-          colorClass={needsAttention > 0
-            ? "bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400"
-            : "bg-green-50 text-green-600 dark:bg-green-950/30 dark:text-green-400"} />
+          colorClass={needsAttention > 0 ? "bg-destructive/10 text-destructive" : "bg-success/10 text-success"}
+          strip={needsAttention > 0 ? "#ef4444" : "#22c55e"} />
       </div>
 
       {breakdown && (

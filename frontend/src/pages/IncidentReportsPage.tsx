@@ -119,7 +119,7 @@ export default function IncidentReportsPage() {
       <div className="flex items-center gap-3">
         <Flag className="h-5 w-5 text-destructive" />
         <div>
-          <h1 className="text-xl font-semibold">Incident Reports</h1>
+          <h1 className="font-display text-xl font-semibold">Incident Reports</h1>
           <p className="text-sm text-muted-foreground">
             {reports.length} total — {open.length} new, {under_review.length} pending, {closed.length} closed
           </p>
@@ -167,7 +167,7 @@ function ReportCard({ rep, isOpen, updating, onToggle, onUpdate }: {
   const cfg = STATUS_CFG[rep.status] ?? STATUS_CFG.open
 
   return (
-    <div className="rounded-lg border bg-card shadow-sm overflow-hidden">
+    <div className="surface rounded-lg border bg-card shadow-sm overflow-hidden">
       {/* Header row */}
       <button
         onClick={onToggle}

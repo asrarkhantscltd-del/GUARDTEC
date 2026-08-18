@@ -174,7 +174,7 @@ export default function AgencyPortalDeploymentsPage({ agencyId: agencyIdProp }: 
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Deployments</h2>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Deployments</h2>
           <p className="text-sm text-muted-foreground">{deployments.length} deployment{deployments.length !== 1 ? "s" : ""} this month</p>
         </div>
         <Button onClick={() => openCreate()} size="sm" className="gap-1.5">
