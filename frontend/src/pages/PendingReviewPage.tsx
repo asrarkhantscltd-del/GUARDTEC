@@ -243,7 +243,11 @@ export default function PendingReviewPage() {
 
                   <CompareField label="Driving licence number" current={s.driverLicence?.licenceNumber} proposed={p.driverLicence?.licenceNumber} />
                   <CompareField label="Driving licence expiry" current={s.driverLicence?.licenceExpiry} proposed={p.driverLicence?.licenceExpiry} />
+                  <CompareField label="Driving licence categories"
+                    current={s.driverLicence?.licenceCategories?.join(", ")}
+                    proposed={p.driverLicence?.licenceCategories?.join(", ")} />
                   <CompareField label="Driver CPC card" current={s.driverLicence?.cpcCard} proposed={p.driverLicence?.cpcCard} />
+                  <CompareField label="Driver CPC expiry" current={s.driverLicence?.cpcExpiry} proposed={p.driverLicence?.cpcExpiry} />
                   <CompareField label="Driver medical expiry" current={s.driverLicence?.medicalExpiry} proposed={p.driverLicence?.medicalExpiry} />
 
                   <CompareField label="Criminal history declared"
