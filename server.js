@@ -1916,6 +1916,14 @@ app.post('/api/my-profile', requireLogin, requireRole('staff'), function(req, re
 
     applyPendingProfileFields(emp, req.body || {});
     saveStaff(emp, emp._folderPath);
+    // Without this, a submission landed in pending_submission with no signal
+    // anywhere that a manager needed to look — the bell never rang, so it
+    // only ever got noticed if someone happened to open Pending Review.
+    createNotification({
+      type: 'profile_submission', actorName: emp.name,
+      summary: 'submitted profile changes for review',
+      linkStaffId: emp.id, linkTab: 'pending-review',
+    });
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });

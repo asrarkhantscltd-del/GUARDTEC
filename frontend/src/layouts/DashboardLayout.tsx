@@ -118,6 +118,7 @@ export default function DashboardLayout() {
     api.post(`/api/notifications/${n.id}/seen`).catch(() => {})
     setShowAlerts(false)
     if (n.type === "incident_report") navigate("/incident-reports")
+    else if (n.type === "profile_submission") navigate("/pending-review")
     else if (n.link_agency_id) navigate(`/admin/agencies/${n.link_agency_id}${n.link_tab ? `?tab=${n.link_tab}` : ""}`)
     else if (n.link_staff_id) navigate(`/staff/${n.link_staff_id}${n.link_tab ? `?tab=${n.link_tab}` : ""}`)
   }
