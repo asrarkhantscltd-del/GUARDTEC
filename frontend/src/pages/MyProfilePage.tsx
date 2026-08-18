@@ -604,6 +604,19 @@ export default function MyProfilePage() {
                 {driverSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
                 {driverSaving ? "Saving…" : "Save Driver Details"}
               </Button>
+
+              <div className="space-y-2 border-t pt-3">
+                <p className="text-[11px] font-medium text-muted-foreground">Scans — so your manager can check them against what you entered above</p>
+                <SelfUploadDocRow label="Driving licence (scan)" docKey="driverLicenceCopy" staffId={profile.id}
+                  uploaded={profile.documents?.driverLicenceCopy?.uploaded} date={profile.documents?.driverLicenceCopy?.date}
+                  onChanged={load} />
+                <SelfUploadDocRow label="CPC card (scan)" docKey="driverCpcCard" staffId={profile.id}
+                  uploaded={profile.documents?.driverCpcCard?.uploaded} date={profile.documents?.driverCpcCard?.date}
+                  onChanged={load} />
+                <SelfUploadDocRow label="Medical certificate" docKey="driverMedicalCert" staffId={profile.id}
+                  uploaded={profile.documents?.driverMedicalCert?.uploaded} date={profile.documents?.driverMedicalCert?.date}
+                  onChanged={load} />
+              </div>
                 </>
               )}
             </div>
@@ -892,3 +905,45 @@ export default function MyProfilePage() {
 
 // Section, Field, DocUploadRow, TrainingCertRow, DOC_UPLOADS, TRAINING_CERT_UPLOADS
 // moved to @/components/profile/ProfileShared — shared with OnboardingWizard.
+
+// Lets a driver upload their own licence/CPC/medical scans straight from
+// their profile — the backend already allowed this (requireOwnStaffOrPermission
+// on the upload route), the only thing missing was somewhere on this page to
+// do it. Always-visible docs (not confidential), so no visibility toggle —
+// same as cscsCard/siaPhysical elsewhere in the app.
+function SelfUploadDocRow({ label, docKey, staffId, uploaded, date, onChanged }: {
+  label: string; docKey: string; staffId: string; uploaded?: boolean; date?: string; onChanged: () => void
+}) {
+  const [uploading, setUploading] = useState(false)
+  return (
+    <div className="flex items-center gap-3 rounded-lg border bg-background px-3 py-2">
+      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-medium">{label}</div>
+        <div className="text-[11px] text-muted-foreground">{uploaded ? `Uploaded${date ? ` · ${date}` : ""}` : "Not uploaded"}</div>
+      </div>
+      {uploaded && (
+        <a href={`/api/staff/${staffId}/documents/${docKey}`} target="_blank" rel="noopener noreferrer"
+          className="shrink-0 text-xs text-primary hover:underline">View</a>
+      )}
+      <label className={`inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border bg-background px-2.5 py-1.5 text-[11px] font-medium hover:bg-muted transition-colors ${uploading ? "pointer-events-none opacity-50" : ""}`}>
+        {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+        {uploaded ? "Replace" : "Upload"}
+        <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={async e => {
+          const f = e.target.files?.[0]
+          if (!f) return
+          setUploading(true)
+          try {
+            await api.post(`/api/staff/${staffId}/documents/${docKey}`, f)
+            toast.success(`${label} uploaded`)
+            onChanged()
+          } catch {
+            toast.error("Upload failed — please try again.")
+          } finally {
+            setUploading(false)
+          }
+        }} />
+      </label>
+    </div>
+  )
+}

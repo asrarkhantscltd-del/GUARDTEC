@@ -182,6 +182,7 @@ export interface StaffMember {
     assignmentInstructions?: { uploaded?: boolean; date?: string }
     creditCheckReport?:      { uploaded?: boolean; date?: string; visibleToStaff?: boolean }
     socialMediaCheckReport?: { uploaded?: boolean; date?: string; visibleToStaff?: boolean }
+    driverLicenceCopy?:      { uploaded?: boolean; date?: string }
     driverCpcCard?:          { uploaded?: boolean; date?: string }
     driverMedicalCert?:      { uploaded?: boolean; date?: string }
     driverTachoCard?:        { uploaded?: boolean; date?: string; visibleToStaff?: boolean }

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { api } from "@/lib/api"
 import {
-  ClipboardCheck, Check, X, Loader2, Clock, Camera, ChevronDown, ChevronUp, AlertTriangle,
+  ClipboardCheck, Check, X, Loader2, Clock, Camera, ChevronDown, ChevronUp, AlertTriangle, FileText, Download,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type {
@@ -51,6 +51,13 @@ interface ProfileSnapshot {
 interface PendingStaff extends ProfileSnapshot {
   id: string
   name: string
+  // Document scans upload straight to the live record the moment they're
+  // submitted (same as every other doc type in this app — cscsCard,
+  // siaPhysical, etc. — there's no separate pending/approved state for a
+  // file). So these always reflect "whatever's on file right now", not a
+  // proposed change to compare — that's why this lives at the top level,
+  // not inside pending_submission below.
+  documents?: Record<string, { uploaded?: boolean; date?: string } | undefined>
   pending_submission?: ProfileSnapshot & { submitted_at?: string; photo_pending?: boolean }
 }
 
@@ -159,45 +166,23 @@ export default function PendingReviewPage() {
 
             return (
               <div key={s.id} className="surface p-5">
-                <div className="mb-4 flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-semibold">{s.name}</p>
-                    <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <Clock className="h-3 w-3" />Submitted {fmtDateTime(p.submitted_at)}
-                      {p.photo_pending && (
-                        <span className="ml-2 flex items-center gap-1 text-primary">
-                          <Camera className="h-3 w-3" />New photo
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="outline" className="gap-1.5 text-destructive hover:bg-destructive/10"
-                      disabled={busyId === s.id}
-                      onClick={() => { setRejectingId(rejectingId === s.id ? null : s.id); setReason("") }}>
-                      <X className="h-3.5 w-3.5" />Reject
-                    </Button>
-                    <Button size="sm" className="gap-1.5" disabled={busyId === s.id} onClick={() => approve(s.id)}>
-                      {busyId === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                      Approve
-                    </Button>
-                  </div>
+                <div className="mb-4">
+                  <p className="font-semibold">{s.name}</p>
+                  <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Clock className="h-3 w-3" />Submitted {fmtDateTime(p.submitted_at)}
+                    {p.photo_pending && (
+                      <span className="ml-2 flex items-center gap-1 text-primary">
+                        <Camera className="h-3 w-3" />New photo submitted — see their profile photo to review it
+                      </span>
+                    )}
+                  </p>
                 </div>
 
-                {rejectingId === s.id && (
-                  <div className="mb-4 rounded-lg border bg-muted/30 p-3">
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Reason (shown to staff member)</label>
-                    <textarea rows={2} value={reason} onChange={e => setReason(e.target.value)}
-                      placeholder="e.g. Please re-upload a clearer photo of your SIA card"
-                      className="w-full rounded-md border bg-background px-3 py-2 text-sm resize-none" />
-                    <div className="mt-2 flex justify-end gap-2">
-                      <Button size="sm" variant="outline" onClick={() => { setRejectingId(null); setReason("") }}>Cancel</Button>
-                      <Button size="sm" variant="destructive" disabled={busyId === s.id} onClick={() => reject(s.id)}>
-                        Confirm reject
-                      </Button>
-                    </div>
-                  </div>
-                )}
+                {/* Everything below this line is what they submitted — read it
+                    before deciding, not just the two buttons at the very bottom. */}
+                <p className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <ClipboardCheck className="h-3.5 w-3.5" />What they submitted — review before deciding
+                </p>
 
                 {nothingToShow && !p.photo_pending && (
                   <p className="mb-3 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
@@ -250,6 +235,10 @@ export default function PendingReviewPage() {
                   <CompareField label="Driver CPC expiry" current={s.driverLicence?.cpcExpiry} proposed={p.driverLicence?.cpcExpiry} />
                   <CompareField label="Driver medical expiry" current={s.driverLicence?.medicalExpiry} proposed={p.driverLicence?.medicalExpiry} />
 
+                  {p.driverLicence && (
+                    <DriverDocLinks staffId={s.id} documents={s.documents} />
+                  )}
+
                   <CompareField label="Criminal history declared"
                     current={s.hasCriminalHistory ? "Yes" : "No"}
                     proposed={p.hasCriminalHistory !== undefined ? (p.hasCriminalHistory ? "Yes" : "No") : undefined} />
@@ -271,6 +260,36 @@ export default function PendingReviewPage() {
                     render={e => `${e.type} — ${e.date}${e.outcome ? " · " + e.outcome : ""}`} />
 
                   {p.declarations && <DeclarationsCompare declarations={p.declarations} />}
+                </div>
+
+                {/* Decision — deliberately below everything submitted, not above it */}
+                <div className="mt-4 border-t pt-4">
+                  {rejectingId === s.id ? (
+                    <div className="rounded-lg border bg-muted/30 p-3">
+                      <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Reason (shown to staff member)</label>
+                      <textarea rows={2} value={reason} onChange={e => setReason(e.target.value)}
+                        placeholder="e.g. Please re-upload a clearer photo of your SIA card"
+                        className="w-full rounded-md border bg-background px-3 py-2 text-sm resize-none" />
+                      <div className="mt-2 flex justify-end gap-2">
+                        <Button size="sm" variant="outline" onClick={() => { setRejectingId(null); setReason("") }}>Cancel</Button>
+                        <Button size="sm" variant="destructive" disabled={busyId === s.id} onClick={() => reject(s.id)}>
+                          Confirm reject
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex justify-end gap-2">
+                      <Button size="sm" variant="outline" className="gap-1.5 text-destructive hover:bg-destructive/10"
+                        disabled={busyId === s.id}
+                        onClick={() => { setRejectingId(s.id); setReason("") }}>
+                        <X className="h-3.5 w-3.5" />Reject
+                      </Button>
+                      <Button size="sm" className="gap-1.5" disabled={busyId === s.id} onClick={() => approve(s.id)}>
+                        {busyId === s.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                        Approve
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
             )
@@ -342,6 +361,36 @@ function DeclarationsCompare({ declarations }: { declarations: OnboardingDeclara
           {notConfirmed.map(([key]) => <li key={key}>Not confirmed: {DECLARATION_LABELS[key] ?? key}</li>)}
         </ul>
       )}
+    </div>
+  )
+}
+
+const DRIVER_DOC_KEYS = [
+  { key: "driverLicenceCopy", label: "Licence scan" },
+  { key: "driverCpcCard",     label: "CPC card" },
+  { key: "driverMedicalCert", label: "Medical certificate" },
+] as const
+
+// Scans upload straight to the live record (see the `documents` comment on
+// PendingStaff above), so this shows whatever's currently on file — not a
+// proposed change — right alongside the licence field diff, so a manager
+// reviewing a category/number change can also open the actual scan instead
+// of taking the typed values on trust.
+function DriverDocLinks({ staffId, documents }: { staffId: string; documents?: Record<string, { uploaded?: boolean; date?: string } | undefined> }) {
+  const uploaded = DRIVER_DOC_KEYS.filter(d => documents?.[d.key]?.uploaded)
+  if (uploaded.length === 0) return null
+  return (
+    <div className="rounded-lg bg-muted/40 px-3 py-2 sm:col-span-2">
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Scans on file</p>
+      <div className="flex flex-wrap gap-2">
+        {uploaded.map(d => (
+          <a key={d.key} href={`/api/staff/${staffId}/documents/${d.key}`} target="_blank" rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-md border bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-muted transition-colors">
+            <FileText className="h-3.5 w-3.5 text-muted-foreground" />{d.label}
+            <Download className="h-3 w-3 text-muted-foreground" />
+          </a>
+        ))}
+      </div>
     </div>
   )
 }

@@ -875,7 +875,7 @@ var ALLOWED_DOC_KEYS = [
   'siaPhysical','passport','drivingLicenceDoc','brpCard','proofOfAddress1','proofOfAddress2',
   'p45','bankLetter','application','assignmentInstructions','cscsCard',
   'creditCheckReport','socialMediaCheckReport',
-  'driverCpcCard','driverMedicalCert','driverTachoCard','driverDbsCheck','driverAssessmentReport'
+  'driverLicenceCopy','driverCpcCard','driverMedicalCert','driverTachoCard','driverDbsCheck','driverAssessmentReport'
 ];
 
 // Uploaded by management only, and hidden from the staff member by default —
@@ -895,6 +895,7 @@ var DOC_KEY_LABELS = {
   p45: 'P45/P60', bankLetter: 'Bank Letter', application: 'Application Form',
   assignmentInstructions: 'Assignment Instructions', cscsCard: 'CSCS Card',
   creditCheckReport: 'Credit Check Report', socialMediaCheckReport: 'Social Media Check Report',
+  driverLicenceCopy: 'Driving Licence (scan)',
   driverCpcCard: 'Driver CPC Card', driverMedicalCert: 'Driver Medical Certificate',
   driverTachoCard: 'Tachograph Card', driverDbsCheck: 'Driver DBS Certificate',
   driverAssessmentReport: 'Driving Assessment Report',
