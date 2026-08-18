@@ -38,7 +38,7 @@ interface Profile {
   cscs?: { number?: string; expiry?: string; cardType?: string }
   visa?: { type?: string; expiry?: string }
   references?: { ref1?: Ref; ref2?: Ref }
-  pending_submission?: { submitted_at?: string; photo_pending?: boolean }
+  pending_submission?: { submitted_at?: string; photo_pending?: boolean; driverLicence?: DriverLicenceInfo }
   rejection_reason?: string
   documents?: Record<string, { uploaded?: boolean; date?: string; docType?: string } | undefined>
   training?: TrainingRecord
@@ -124,13 +124,19 @@ export default function MyProfilePage() {
   const [driverDraft, setDriverDraft]     = useState<DriverLicenceInfo>({})
   const [driverSaving, setDriverSaving]   = useState(false)
   const [driverSuccess, setDriverSuccess] = useState(false)
+  // Mirrors formExpanded's collapse-after-submit behaviour below — without
+  // this, saving just showed a small banner while the same editable fields
+  // sat there unchanged, which read as "did that actually do anything?".
+  // Defaults to collapsed whenever a submission is already awaiting review;
+  // "Edit" (which sets this true) lets them revise it before it's actioned.
+  const [driverEditOverride, setDriverEditOverride] = useState(false)
 
   async function load() {
     setLoading(true)
     try {
       const d = await api.get<{ profile: Profile }>("/api/my-profile")
       setProfile(d.profile)
-      setDriverDraft(d.profile.driverLicence ?? {})
+      setDriverDraft(d.profile.pending_submission?.driverLicence ?? d.profile.driverLicence ?? {})
     } catch {
     } finally {
       setLoading(false)
@@ -151,6 +157,7 @@ export default function MyProfilePage() {
       await api.post("/api/my-profile", { driverLicence: driverDraft })
       await load()
       setDriverSuccess(true)
+      setDriverEditOverride(false)
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Failed to save — please try again.")
     } finally {
@@ -528,15 +535,26 @@ export default function MyProfilePage() {
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
                 <ShieldCheck className="h-3.5 w-3.5" /> Driving Licence &amp; Qualifications
               </p>
-              <p className="text-xs text-muted-foreground">
-                Fill in what's on your own licence — your office handles fuel cards, tachograph, DBS and assessments separately.
-              </p>
-              {driverSuccess && (
-                <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-success">
-                  <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
-                  Submitted — your manager will review these changes shortly.
+
+              {profile.pending_submission?.driverLicence && !driverEditOverride ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/8 px-3 py-2.5">
+                  <p className="text-xs text-warning">Submitted — your manager will review these changes shortly.</p>
+                  <button onClick={() => setDriverEditOverride(true)}
+                    className="shrink-0 rounded-md border bg-background px-2.5 py-1 text-[11px] font-medium hover:bg-muted transition-colors">
+                    Edit
+                  </button>
                 </div>
-              )}
+              ) : (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Fill in what's on your own licence — your office handles fuel cards, tachograph, DBS and assessments separately.
+                  </p>
+                  {driverSuccess && (
+                    <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-success">
+                      <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                      Submitted — your manager will review these changes shortly.
+                    </div>
+                  )}
               <div className="grid sm:grid-cols-2 gap-3">
                 <Field label="Licence Number">
                   <input className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-mono uppercase focus:outline-none focus:ring-1 focus:ring-ring"
@@ -586,6 +604,8 @@ export default function MyProfilePage() {
                 {driverSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
                 {driverSaving ? "Saving…" : "Save Driver Details"}
               </Button>
+                </>
+              )}
             </div>
           )}
         </div>
