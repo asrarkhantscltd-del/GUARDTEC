@@ -82,6 +82,12 @@ function DocRow({
               <Eye className="h-3.5 w-3.5" />
             </a>
           )}
+          {viewUrl && (
+            <a href={viewUrl} download
+              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Download document">
+              <Download className="h-3.5 w-3.5" />
+            </a>
+          )}
           {onEdit && (
             <button onClick={onEdit}
               className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Edit / Upload">
@@ -1358,6 +1364,10 @@ export default function StaffDetailPage() {
                       <p className="mt-0.5">{staff.driverLicence?.medicalExpiry ? fmtDate(staff.driverLicence.medicalExpiry) : "—"}</p>
                     </div>
                   </div>
+                  <DocRow icon={<FileText className="h-4 w-4" />} label="Driving Licence (scan)"
+                    status={docStatusOf(docs.driverLicenceCopy?.uploaded)} uploadedDate={docs.driverLicenceCopy?.date}
+                    viewUrl={docs.driverLicenceCopy?.uploaded ? `/api/staff/${id}/documents/driverLicenceCopy` : undefined}
+                    onEdit={canEdit ? () => openDocEdit("driverLicenceCopy") : undefined} {...docDeleteProps("driverLicenceCopy")} />
                   <DocRow icon={<FileText className="h-4 w-4" />} label="Driver CPC Card (scan)"
                     status={docStatusOf(docs.driverCpcCard?.uploaded)} uploadedDate={docs.driverCpcCard?.date}
                     viewUrl={docs.driverCpcCard?.uploaded ? `/api/staff/${id}/documents/driverCpcCard` : undefined}

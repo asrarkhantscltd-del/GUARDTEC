@@ -131,6 +131,8 @@ export function ConfidentialDocManagerRow({ label, uploadUrl, visibilityUrl, dow
         <>
           <a href={downloadUrl} target="_blank" rel="noopener noreferrer"
             className="inline-flex shrink-0 items-center gap-1 text-xs text-primary hover:underline">View</a>
+          <a href={downloadUrl} download
+            className="inline-flex shrink-0 items-center gap-1 text-xs text-primary hover:underline">Download</a>
           <button type="button" onClick={toggleVisibility} disabled={togglingVisibility}
             className={`inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
               visibleToSubject

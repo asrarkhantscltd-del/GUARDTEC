@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { api } from "@/lib/api"
 import {
-  ClipboardCheck, Check, X, Loader2, Clock, Camera, ChevronDown, ChevronUp, AlertTriangle, FileText, Download,
+  ClipboardCheck, Check, X, Loader2, Clock, Camera, ChevronDown, ChevronUp, AlertTriangle, FileText, Download, Eye,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type {
@@ -443,11 +443,17 @@ function DriverDocLinks({ staffId, documents }: { staffId: string; documents?: R
       <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Scans on file</p>
       <div className="flex flex-wrap gap-2">
         {uploaded.map(d => (
-          <a key={d.key} href={`/api/staff/${staffId}/documents/${d.key}`} target="_blank" rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-md border bg-background px-2.5 py-1.5 text-xs font-medium hover:bg-muted transition-colors">
+          <span key={d.key} className="inline-flex items-center gap-1 rounded-md border bg-background pl-2.5 pr-1 py-1 text-xs font-medium">
             <FileText className="h-3.5 w-3.5 text-muted-foreground" />{d.label}
-            <Download className="h-3 w-3 text-muted-foreground" />
-          </a>
+            <a href={`/api/staff/${staffId}/documents/${d.key}`} target="_blank" rel="noopener noreferrer"
+              className="ml-1 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors" title="View">
+              <Eye className="h-3.5 w-3.5" />
+            </a>
+            <a href={`/api/staff/${staffId}/documents/${d.key}`} download
+              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors" title="Download">
+              <Download className="h-3.5 w-3.5" />
+            </a>
+          </span>
         ))}
       </div>
     </div>
