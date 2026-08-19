@@ -493,6 +493,13 @@ var deploymentsSchemaReady = (async function ensureDeploymentsSchema() {
 // cheap no-op once caught up (ON CONFLICT DO NOTHING per row).
 (async function backfillEmployeesFromStaffFiles() {
   try {
+    // loadAllStaff() reads ACTIVE_DIR, a `const` declared further down this
+    // file (module-load order, not call order) — calling it synchronously
+    // from an IIFE this early throws "Cannot access before initialization"
+    // (its temporal dead zone hasn't closed yet). Yielding once here lets
+    // the rest of the module's top-level consts finish evaluating first;
+    // by the time this resumes, ACTIVE_DIR is safely initialized.
+    await Promise.resolve();
     var staff = loadAllStaff();
     for (var i = 0; i < staff.length; i++) {
       var s = staff[i];
