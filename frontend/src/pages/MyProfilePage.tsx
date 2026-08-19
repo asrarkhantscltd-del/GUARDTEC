@@ -39,6 +39,7 @@ interface Profile {
   visa?: { type?: string; expiry?: string }
   references?: { ref1?: Ref; ref2?: Ref }
   pending_submission?: { submitted_at?: string; photo_pending?: boolean; driverLicence?: DriverLicenceInfo }
+  wizard_draft?: Partial<Profile>
   rejection_reason?: string
   documents?: Record<string, { uploaded?: boolean; date?: string; docType?: string } | undefined>
   training?: TrainingRecord
@@ -135,12 +136,42 @@ export default function MyProfilePage() {
     setLoading(true)
     try {
       const d = await api.get<{ profile: Profile }>("/api/my-profile")
-      setProfile(d.profile)
+      // wizard_draft holds whatever was typed but never got as far as a
+      // successful "Submit for Review" — merge it on top of the live/loaded
+      // profile so reopening the wizard resumes where they left off instead
+      // of showing blank/old fields again (see PUT /api/my-profile/draft).
+      setProfile(d.profile.wizard_draft ? { ...d.profile, ...d.profile.wizard_draft } : d.profile)
       setDriverDraft(d.profile.pending_submission?.driverLicence ?? d.profile.driverLicence ?? {})
     } catch {
     } finally {
       setLoading(false)
     }
+  }
+
+  // Fire-and-forget autosave of wizard progress, called on each step
+  // navigation (not every keystroke) — see PUT /api/my-profile/draft.
+  // Debounced so rapid Back/Next/tab clicking can't pile up requests.
+  const draftSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  function autosaveDraft(current: Profile) {
+    if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current)
+    draftSaveTimer.current = setTimeout(() => {
+      api.put("/api/my-profile/draft", {
+        phone: current.phone, address: current.address,
+        emergencyContact: current.emergencyContact,
+        bankDetails: current.bankDetails,
+        sia: current.sia, cscs: current.cscs, visa: current.visa,
+        references: current.references,
+        dateOfBirth: current.dateOfBirth, nationality: current.nationality,
+        ni: current.ni, uniqueTaxpayerReference: current.uniqueTaxpayerReference,
+        utrNotApplicable: current.utrNotApplicable,
+        previousNames: current.previousNames, yearsAtCurrentAddress: current.yearsAtCurrentAddress,
+        addressHistory: current.addressHistory, employmentHistoryDetail: current.employmentHistoryDetail,
+        otherQualifications: current.otherQualifications,
+        hasCriminalHistory: current.hasCriminalHistory, criminalHistory: current.criminalHistory,
+        hasCautions: current.hasCautions, cautionsAndInvestigations: current.cautionsAndInvestigations,
+        declarations: current.declarations,
+      }).catch(() => {})
+    }, 600)
   }
 
   function toggleDriverCat(cat: string) {
@@ -655,6 +686,7 @@ export default function MyProfilePage() {
           saving={saving}
           submitError={error}
           onSubmit={handleSubmit}
+          onAutosave={() => autosaveDraft(profile)}
         />
       )}  {/* end details tab */}
 

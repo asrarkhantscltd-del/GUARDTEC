@@ -4573,7 +4573,18 @@ app.patch('/api/agencies/:agencyId/deployments/:id/acknowledge', requireLogin, r
       [req.user.id, req.params.id, req.params.agencyId]
     );
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Deployment not found.' });
-    res.json({ ok: true, deployment: r.rows[0] });
+    // The plain RETURNING * above has no guard_count column — the frontend
+    // replaces its whole `detail` object with this response, so without it
+    // the modal briefly showed "0 guards" right after acknowledging (the
+    // real assignment was untouched; only this response was incomplete).
+    // Match the same COUNT(...) LEFT JOIN shape the list/detail queries use.
+    var withCount = await pgPool.query(
+      `SELECT d.*, COUNT(a.id) AS guard_count FROM agency_deployments d
+       LEFT JOIN deployment_attendance a ON a.deployment_id = d.id
+       WHERE d.id = $1 GROUP BY d.id`,
+      [req.params.id]
+    );
+    res.json({ ok: true, deployment: withCount.rows[0] });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

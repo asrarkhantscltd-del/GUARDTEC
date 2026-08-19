@@ -81,8 +81,8 @@ export default function DeploymentsPage() {
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="font-display text-2xl font-bold tracking-tight">Deployments</h2>
-          <p className="text-sm text-muted-foreground">Cross-agency cover guard bookings, filterable by site, agency and date</p>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Agency Deployments</h2>
+          <p className="text-sm text-muted-foreground">Cross-agency cover guard bookings — for agency guards, not GuardTec's own staff. Filterable by site, agency and date.</p>
         </div>
         <Button onClick={() => setCreateOpen(true)} size="sm" className="gap-1.5">
           <Plus className="h-4 w-4" /> New deployment

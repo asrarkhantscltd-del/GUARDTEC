@@ -1329,9 +1329,17 @@ export default function StaffDetailPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="px-4 space-y-3">
-                  <p className="text-xs text-muted-foreground">
-                    Submitted by {staff.name} via their own profile — subject to your approval on the Pending Review queue.
-                  </p>
+                  {/* This used to render unconditionally, so it kept claiming
+                      a submission was "subject to your approval" even after
+                      Pending Review genuinely showed 0 pending and the data
+                      below was already the approved, live version — confirmed
+                      via staff_data.json that pending_submission was null.
+                      Gate it on the submission actually still being there. */}
+                  {staff.pending_submission?.driverLicence && (
+                    <p className="text-xs text-muted-foreground">
+                      Submitted by {staff.name} via their own profile — subject to your approval on the Pending Review queue.
+                    </p>
+                  )}
                   <div className="grid sm:grid-cols-2 gap-3 text-sm">
                     <div>
                       <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Licence Number</p>

@@ -167,6 +167,7 @@ export interface StaffMember {
   training?: TrainingRecord
   driverLicence?: DriverLicenceInfo
   driverAssignment?: DriverAssignmentInfo
+  pending_submission?: { driverLicence?: DriverLicenceInfo }
   documents?: {
     siaPhysical?:      { uploaded?: boolean; date?: string }
     cscsCard?:         { uploaded?: boolean; date?: string }

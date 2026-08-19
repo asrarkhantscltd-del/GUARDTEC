@@ -117,6 +117,7 @@ interface WizardProps {
   saving: boolean
   submitError: string
   onSubmit: () => void | Promise<void>
+  onAutosave?: () => void
 }
 
 const PHASE_TITLES = [
@@ -136,7 +137,7 @@ const PHASE_TITLES = [
 const LAST_PHASE = PHASE_TITLES.length - 1
 const REVIEW_PHASE = LAST_PHASE
 
-export default function OnboardingWizard({ profile: p, set, photo, photoPreview, pickPhoto, saving, submitError, onSubmit }: WizardProps) {
+export default function OnboardingWizard({ profile: p, set, photo, photoPreview, pickPhoto, saving, submitError, onSubmit, onAutosave }: WizardProps) {
   const [phaseIndex, setPhaseIndex] = useState(0)
   const [errors, setErrors] = useState<string[]>([])
 
@@ -260,16 +261,19 @@ export default function OnboardingWizard({ profile: p, set, photo, photoPreview,
   function goNext() {
     setErrors([])
     setPhaseIndex(i => Math.min(i + 1, LAST_PHASE))
+    onAutosave?.()
   }
 
   function goBack() {
     setErrors([])
     setPhaseIndex(i => Math.max(i - 1, 0))
+    onAutosave?.()
   }
 
   function goToPhase(i: number) {
     setErrors([])
     setPhaseIndex(i)
+    onAutosave?.()
   }
 
   function handleFinalSubmit() {
