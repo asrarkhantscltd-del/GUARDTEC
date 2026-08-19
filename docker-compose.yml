@@ -17,6 +17,14 @@ services:
       - DATA_PATH=/data
       - N8N_AI_WEBHOOK=http://n8n:5678/webhook/ai-chat
       - PORT=3000
+      # Without this, acknowledgment-form links default to
+      # http://localhost:<PORT> where PORT is the CONTAINER's internal port
+      # (3000) — not the host-reachable frontend URL. On this machine
+      # port 3000 is a completely unrelated container (open-webui), so every
+      # generated link silently pointed at the wrong app entirely. The
+      # acknowledgment page itself is a frontend route (/acknowledge/:token),
+      # so this must be the frontend's externally-reachable origin.
+      - BASE_URL=http://localhost:5173
       - DATABASE_URL=postgresql://guardtec:Guardtec@2026@db:5432/guardtec
       - JWT_SECRET=${JWT_SECRET}
       - ADMIN_USERNAME=${ADMIN_USERNAME}
