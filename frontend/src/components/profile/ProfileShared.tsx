@@ -164,8 +164,9 @@ export const DOC_UPLOADS = [
   { key: "cscsCard",          label: "CSCS Card",             hint: "Front of your CSCS card — PDF, JPG or PNG" },
 ]
 
-export function DocUploadRow({ label, hint, staffId, docKey, initialUploaded }: {
+export function DocUploadRow({ label, hint, staffId, docKey, initialUploaded, onUploaded }: {
   label: string; hint: string; staffId: string; docKey: string; initialUploaded?: boolean
+  onUploaded?: () => void
 }) {
   const [uploading, setUploading] = useState(false)
   const [uploaded, setUploaded] = useState(!!initialUploaded)
@@ -176,6 +177,7 @@ export function DocUploadRow({ label, hint, staffId, docKey, initialUploaded }: 
     try {
       await api.post(`/api/staff/${staffId}/documents/${docKey}`, file)
       setUploaded(true)
+      onUploaded?.()
       toast.success(`${label} uploaded`)
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Network error — please try again")
@@ -223,9 +225,10 @@ export const TRAINING_CERT_UPLOADS: { key: StandardTrainingKey; label: string }[
   { key: "cscsTest",           label: "CSCS Health & Safety Test" },
 ]
 
-export function TrainingCertRow({ label, staffId, courseKey, item }: {
+export function TrainingCertRow({ label, staffId, courseKey, item, onUploaded }: {
   label: string; staffId: string; courseKey: string
   item?: { completed?: boolean; expiry?: string; certUploaded?: boolean }
+  onUploaded?: () => void
 }) {
   const [uploading, setUploading] = useState(false)
   const [uploaded, setUploaded] = useState(!!item?.certUploaded)
@@ -236,6 +239,7 @@ export function TrainingCertRow({ label, staffId, courseKey, item }: {
     try {
       await api.post(`/api/staff/${staffId}/training/${courseKey}/certificate`, file)
       setUploaded(true)
+      onUploaded?.()
       toast.success(`${label} certificate uploaded`)
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Network error — please try again")

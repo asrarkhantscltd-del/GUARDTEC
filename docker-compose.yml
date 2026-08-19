@@ -36,6 +36,7 @@ services:
       - guardtec-db-data:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ./schema-phase3.sql:/docker-entrypoint-initdb.d/02-schema-phase3.sql:ro
+      - ./schema-phase4.sql:/docker-entrypoint-initdb.d/03-schema-phase4.sql:ro
     ports:
       - "5432:5432"
     restart: unless-stopped

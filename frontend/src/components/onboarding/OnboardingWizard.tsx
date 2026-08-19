@@ -333,7 +333,7 @@ export default function OnboardingWizard({ profile: p, set, photo, photoPreview,
       {phaseIndex === 6 && <ReferencesPhase p={p} set={set} />}
       {phaseIndex === 7 && <DbsPhase p={p} set={set} />}
       {phaseIndex === 8 && <BankPhase p={p} set={set} />}
-      {phaseIndex === 9 && <DocumentsPhase p={p} photo={photo} photoPreview={photoPreview} pickPhoto={pickPhoto} />}
+      {phaseIndex === 9 && <DocumentsPhase p={p} set={set} photo={photo} photoPreview={photoPreview} pickPhoto={pickPhoto} />}
       {phaseIndex === 10 && <DeclarationsPhase p={p} set={set} />}
       {phaseIndex === REVIEW_PHASE && <ReviewPhase p={p} goToPhase={goToPhase} />}
 
@@ -754,9 +754,25 @@ function BankPhase({ p, set }: { p: WizardProfile; set: WizardProps["set"] }) {
 
 // ── Phase 9: Documents & Training ────────────────────────────────────────────
 
-function DocumentsPhase({ p, photo, photoPreview, pickPhoto }: {
-  p: WizardProfile; photo: File | null; photoPreview: string | null; pickPhoto: (f: File | null) => void
+function DocumentsPhase({ p, set, photo, photoPreview, pickPhoto }: {
+  p: WizardProfile; set: WizardProps["set"]; photo: File | null; photoPreview: string | null; pickPhoto: (f: File | null) => void
 }) {
+  // DocUploadRow/TrainingCertRow track "uploaded" in their own local state,
+  // seeded once from these props — but this whole phase unmounts/remounts
+  // every time phaseIndex navigates away from and back to step 9 (it's a
+  // conditional `{phaseIndex === 9 && <DocumentsPhase .../>}`, not a
+  // display:none toggle). Without mirroring a successful upload back into
+  // p.documents/p.training here, a remount re-seeds from the ORIGINAL
+  // (pre-upload) prop value, so already-uploaded docs silently show as
+  // missing again and block final submission on a false "must upload" error
+  // — confirmed by testing: files were genuinely saved server-side the whole
+  // time, only this component's local state had gone stale.
+  function markDocUploaded(key: string) {
+    set("documents", { ...p.documents, [key]: { ...p.documents?.[key], uploaded: true, date: new Date().toISOString().slice(0, 10) } })
+  }
+  function markCertUploaded(key: string) {
+    set("training", { ...p.training, [key]: { ...p.training?.[key], certUploaded: true } })
+  }
   return (
     <>
       <Section title="Staff Photo">
@@ -781,7 +797,8 @@ function DocumentsPhase({ p, photo, photoPreview, pickPhoto }: {
       <Section title="Identity & Compliance Documents">
         <div className="space-y-3">
           {DOC_UPLOADS.map(doc => (
-            <DocUploadRow key={doc.key} label={doc.label} hint={doc.hint} staffId={p.id} docKey={doc.key} initialUploaded={!!p.documents?.[doc.key]?.uploaded} />
+            <DocUploadRow key={doc.key} label={doc.label} hint={doc.hint} staffId={p.id} docKey={doc.key} initialUploaded={!!p.documents?.[doc.key]?.uploaded}
+              onUploaded={() => markDocUploaded(doc.key)} />
           ))}
         </div>
       </Section>
@@ -792,7 +809,8 @@ function DocumentsPhase({ p, photo, photoPreview, pickPhoto }: {
         </p>
         <div className="space-y-3">
           {TRAINING_CERT_UPLOADS.map(course => (
-            <TrainingCertRow key={course.key} label={course.label} staffId={p.id} courseKey={course.key} item={p.training?.[course.key]} />
+            <TrainingCertRow key={course.key} label={course.label} staffId={p.id} courseKey={course.key} item={p.training?.[course.key]}
+              onUploaded={() => markCertUploaded(course.key)} />
           ))}
         </div>
       </Section>

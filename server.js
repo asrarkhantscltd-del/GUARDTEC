@@ -483,6 +483,32 @@ var deploymentsSchemaReady = (async function ensureDeploymentsSchema() {
   }
 })();
 
+// Backfills employees rows for any active staff.legacy_id missing one — the
+// historical migration only covered staff that existed when it ran, and
+// POST /api/staff only started inserting its own row after that point, so
+// anyone added in between (or by any future path that writes staff_data.json
+// directly) was silently missing this row. Without it, messaging, incident-
+// report attribution, and acknowledgment-link generation all 404 or drop
+// attribution for that person — see resolveEmpId(). Runs on every startup,
+// cheap no-op once caught up (ON CONFLICT DO NOTHING per row).
+(async function backfillEmployeesFromStaffFiles() {
+  try {
+    var staff = loadAllStaff();
+    for (var i = 0; i < staff.length; i++) {
+      var s = staff[i];
+      if (!s.id || !s.name) continue;
+      await pgPool.query(
+        `INSERT INTO employees (legacy_id, name, email, phone, nationality, legacy_folder_path, added_date)
+         VALUES ($1,$2,$3,$4,$5,$6,CURRENT_DATE)
+         ON CONFLICT (legacy_id) DO NOTHING`,
+        [s.id, s.name, s.email || null, s.phone || null, s.nationality || null, s._folderPath || null]
+      );
+    }
+  } catch (e) {
+    console.error('[DB] employees backfill failed:', e.message);
+  }
+})();
+
 var rolesCache = null;
 async function loadRoles() {
   if (!rolesCache) {
@@ -1916,6 +1942,11 @@ app.post('/api/my-profile', requireLogin, requireRole('staff'), function(req, re
     if (!emp) return res.status(404).json({ ok: false, error: 'Profile not found' });
 
     applyPendingProfileFields(emp, req.body || {});
+    // The draft has now been promoted into a real, reviewable submission —
+    // clear it so a stale in-progress copy doesn't reappear and silently
+    // overwrite a later edit the next time this staff member reopens the
+    // wizard (see wizard_draft below).
+    delete emp.wizard_draft;
     saveStaff(emp, emp._folderPath);
     // Without this, a submission landed in pending_submission with no signal
     // anywhere that a manager needed to look — the bell never rang, so it
@@ -1925,6 +1956,34 @@ app.post('/api/my-profile', requireLogin, requireRole('staff'), function(req, re
       summary: 'submitted profile changes for review',
       linkStaffId: emp.id, linkTab: 'pending-review',
     });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Autosaves the onboarding wizard's in-progress answers so a reload, crash,
+// or the earlier document-status desync bug (fixed alongside this) doesn't
+// wipe an entire session's typing — everything from Personal Details through
+// Bank Details lived ONLY in this page's React state until the final
+// "Submit for Review" succeeded, with no recovery path if that never
+// happened. wizard_draft is intentionally separate from pending_submission:
+// it's never shown to a manager, never triggers a notification, and gets
+// cleared the moment a real submission promotes it (above) — it's purely a
+// private resume-buffer for the person still filling the form in.
+app.put('/api/my-profile/draft', requireLogin, requireRole('staff'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var emp = all.find(function(e){ return e.id === req.user.staff_id; });
+    if (!emp) return res.status(404).json({ ok: false, error: 'Profile not found' });
+
+    var draft = Object.assign({}, emp.wizard_draft);
+    var body = req.body || {};
+    MY_PROFILE_FIELDS.forEach(function(field) {
+      if (body[field] !== undefined) draft[field] = body[field];
+    });
+    emp.wizard_draft = draft;
+    saveStaff(emp, emp._folderPath);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -2432,7 +2491,7 @@ app.put('/api/staff/:id', requireLogin, requirePermission('staff'), function(req
   }
 });
 
-app.post('/api/staff', requireLogin, requirePermission('staff'), function(req, res) {
+app.post('/api/staff', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
     var emp = req.body;
     var confirmDifferentPerson = !!emp.confirmDifferentPerson;
@@ -2490,6 +2549,21 @@ app.post('/api/staff', requireLogin, requirePermission('staff'), function(req, r
     updateComplianceTracker(emp);
     updateReferenceTracker(emp);
     refreshOverview();
+
+    // Messaging, incident-report attribution, and acknowledgment links all
+    // resolve a staff member via employees.legacy_id (never a real FK, see
+    // debug note near ensureEventInstructionsSchema) — without this row,
+    // every one of those features 404s or silently drops attribution for
+    // this person forever. The historical migration only backfilled staff
+    // that existed at the time it ran, so every "Add Staff" since then needs
+    // its own insert here.
+    await pgPool.query(
+      `INSERT INTO employees (legacy_id, name, email, phone, nationality, legacy_folder_path, added_date)
+       VALUES ($1,$2,$3,$4,$5,$6,CURRENT_DATE)
+       ON CONFLICT (legacy_id) DO NOTHING`,
+      [emp.id, emp.name, emp.email || null, emp.phone || null, emp.nationality || null, emp._folderPath || null]
+    );
+
     res.json({ ok: true });
   } catch(e) {
     console.error(e);
