@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import {
-  Plus, X, Loader2, Pencil, Link as LinkIcon, ListChecks, Eye, EyeOff, ClipboardList,
+  Plus, X, Loader2, Pencil, Link as LinkIcon, ListChecks, Eye, EyeOff, ClipboardList, Sparkles,
 } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 import { api, ApiError } from "@/lib/api"
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Section, Field } from "@/components/profile/ProfileShared"
 import { FormFieldEditor, type FormFieldDraft } from "@/components/customforms/FormFieldEditor"
 import { FormLinkGenerator } from "@/components/customforms/FormLinkGenerator"
+import { FormFieldsRenderer } from "@/components/customforms/FormFieldsRenderer"
 import type { CustomFormType, CustomFormLinkedEntityType } from "@/types/agency"
 
 // Real row shape from GET/POST/PATCH /api/custom-forms (server.js:4630-4718)
@@ -88,6 +89,11 @@ export default function CustomFormsPage() {
 
   const [linkFormId, setLinkFormId] = useState<string | null>(null)
 
+  // Local-only, never submitted anywhere — exists purely so the live preview
+  // pane below is interactive (clicking a radio/checkbox actually shows the
+  // selection) while building the form.
+  const [previewValues, setPreviewValues] = useState<Record<string, unknown>>({})
+
   async function reload() {
     try {
       // GET /api/custom-forms returns { ok, forms }, not a bare array.
@@ -104,6 +110,7 @@ export default function CustomFormsPage() {
     setEditingId(null)
     setDraft(blankDraft())
     setError("")
+    setPreviewValues({})
     setPanelOpen(true)
   }
 
@@ -120,6 +127,7 @@ export default function CustomFormsPage() {
       fields: (f.fields ?? []) as FormFieldDraft[],
     })
     setError("")
+    setPreviewValues({})
     setPanelOpen(true)
   }
 
@@ -295,7 +303,8 @@ export default function CustomFormsPage() {
             </button>
           </div>
 
-          <div className="mx-auto w-full max-w-2xl flex-1 space-y-4 overflow-y-auto px-6 py-5">
+          <div className="mx-auto grid w-full max-w-6xl flex-1 items-start gap-6 overflow-y-auto px-6 py-5 lg:grid-cols-[minmax(0,1fr)_380px]">
+            <div className="space-y-4">
               {error && <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
 
               <Field label="Form name *">
@@ -368,9 +377,42 @@ export default function CustomFormsPage() {
                   mappingEnabled={draft.formType === "staff_info" && draft.autoMapToProfile}
                 />
               </Section>
+            </div>
+
+            {/* Live preview — mirrors CustomFormFillPage exactly (shared
+                FormFieldsRenderer) so this is never a guess at what
+                respondents will see, it IS what they will see. */}
+            <div className="space-y-2 lg:sticky lg:top-5">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <Sparkles className="h-3.5 w-3.5" />
+                Live preview — what respondents will see
+              </div>
+              <div className="rounded-xl border bg-muted/10 p-5">
+                <div className="mb-4">
+                  <h3 className="text-base font-semibold">
+                    {draft.name || <span className="italic text-muted-foreground">Untitled form</span>}
+                  </h3>
+                  {draft.description && <p className="mt-1 text-sm text-muted-foreground">{draft.description}</p>}
+                </div>
+
+                {draft.fields.length === 0 ? (
+                  <p className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+                    Add a field to see it appear here.
+                  </p>
+                ) : (
+                  <FormFieldsRenderer
+                    fields={draft.fields}
+                    values={previewValues}
+                    onChange={(id, v) => setPreviewValues(p => ({ ...p, [id]: v }))}
+                  />
+                )}
+
+                <Button disabled className="mt-5 w-full opacity-60">Submit</Button>
+              </div>
+            </div>
           </div>
 
-          <div className="mx-auto flex w-full max-w-2xl gap-2 border-t px-6 py-4">
+          <div className="mx-auto flex w-full max-w-6xl gap-2 border-t px-6 py-4">
             <Button variant="outline" className="flex-1" onClick={() => setPanelOpen(false)}>Cancel</Button>
             <Button className="flex-1" onClick={save} disabled={saving}>
               {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : editingId ? "Save changes" : "Create form"}
