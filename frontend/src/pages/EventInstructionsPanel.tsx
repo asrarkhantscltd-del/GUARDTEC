@@ -325,6 +325,41 @@ export default function EventInstructionsPanel() {
     }
   }
 
+  // ── Restore (archived -> draft) ──────────────────────────────────────────
+  async function restoreInstruction(id: string) {
+    setRestoringId(id)
+    try {
+      const res = await api.post<{ ok: boolean; instruction: EventInstructionRow }>(`/api/event-instructions/${id}/restore`)
+      // Restored item's status is now 'draft' — if the current filter is
+      // "archived" it no longer belongs in this list, so drop it instead of
+      // patching it in place (patching would leave a "draft" card stranded
+      // under the Archived tab until the next reload).
+      setInstructions(prev =>
+        statusFilter === "archived" ? prev.filter(i => i.id !== id) : prev.map(i => (i.id === id ? res.instruction : i))
+      )
+      toast.success("Instruction restored to Draft")
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Network error")
+    } finally {
+      setRestoringId(null)
+    }
+  }
+
+  // ── Permanent delete (archived only, blocked if acknowledgments exist) ──
+  async function deleteInstructionPermanently(id: string) {
+    setDeletingId(id)
+    try {
+      await api.delete(`/api/event-instructions/${id}`)
+      setInstructions(prev => prev.filter(i => i.id !== id))
+      toast.success("Instruction permanently deleted")
+      setConfirmDeleteId(null)
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Network error")
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   // ── Links / manage panel ─────────────────────────────────────────────────
   async function openLinks(instr: EventInstructionRow) {
     setLinksInstruction(instr)
