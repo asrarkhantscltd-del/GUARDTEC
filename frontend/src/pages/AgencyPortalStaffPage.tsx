@@ -255,6 +255,8 @@ export default function AgencyPortalStaffPage() {
                 <th className="px-4 py-3">Role</th>
                 <th className="hidden sm:table-cell px-4 py-3">Badge</th>
                 <th className="px-4 py-3">Compliance</th>
+                <th className="hidden lg:table-cell px-4 py-3">SIA Expiry</th>
+                <th className="hidden lg:table-cell px-4 py-3">CSCS Expiry</th>
                 <th className="hidden md:table-cell px-4 py-3">DBS Expiry</th>
                 <th className="px-4 py-3 w-16"></th>
               </tr>
@@ -270,6 +272,8 @@ export default function AgencyPortalStaffPage() {
                   </td>
                   <td className="hidden sm:table-cell px-4 py-3 text-muted-foreground">{s.badge_type || "—"}</td>
                   <td className="px-4 py-3"><ComplianceBadge status={s.compliance_status} /></td>
+                  <td className="hidden lg:table-cell px-4 py-3 text-muted-foreground">{fmtDate(s.sia_expiry)}</td>
+                  <td className="hidden lg:table-cell px-4 py-3 text-muted-foreground">{fmtDate(s.cscs_expiry)}</td>
                   <td className="hidden md:table-cell px-4 py-3 text-muted-foreground">{fmtDate(s.dbs_expiry)}</td>
                   <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                     {confirmArchiveId === s.id ? (

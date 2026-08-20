@@ -30,6 +30,8 @@ export interface AgencyStaffRecord {
   custom_role?: string
   badge_type?: string
   dbs_expiry?: string
+  sia_expiry?: string
+  cscs_expiry?: string
   consent_credit_check: boolean
   consent_social_media_check: boolean
   sia_cert_uploaded: boolean
@@ -89,6 +91,11 @@ export default function AgencyStaffForm({ agencyId, initialStaff, onSaved, onCan
   const [nationality, setNationality] = useState(initialStaff?.nationality ?? "")
   const [badgeType, setBadgeType] = useState(initialStaff?.badge_type ?? "")
   const [dbsExpiry, setDbsExpiry] = useState(initialStaff?.dbs_expiry?.slice(0, 10) ?? "")
+  // Unconditionally mandatory for every guard, independent of badge_type —
+  // badge_type is kept purely as informational metadata (a guard can hold
+  // CCTV/Close Protection/other badges too), not a gate on which certs count.
+  const [siaExpiry, setSiaExpiry] = useState(initialStaff?.sia_expiry?.slice(0, 10) ?? "")
+  const [cscsExpiry, setCscsExpiry] = useState(initialStaff?.cscs_expiry?.slice(0, 10) ?? "")
   // Required only when registering a NEW guard — an existing one already
   // attested this at creation, re-editing other fields shouldn't force
   // re-consent every time.
@@ -117,6 +124,8 @@ export default function AgencyStaffForm({ agencyId, initialStaff, onSaved, onCan
     if (!trimmedName) { setError("Guard name is required."); return }
     if (!jobRole) { setError("Job role is required."); return }
     if (jobRole === "Other" && !customRole.trim()) { setError("Please describe the role."); return }
+    if (!siaExpiry)  { setError("SIA expiry is required."); return }
+    if (!cscsExpiry) { setError("CSCS expiry is required."); return }
     if (!editing && !consentCredit)  { setError("You must confirm the guard has consented to a credit check."); return }
     if (!editing && !consentSocial)  { setError("You must confirm the guard has consented to a social media check."); return }
 
@@ -131,6 +140,8 @@ export default function AgencyStaffForm({ agencyId, initialStaff, onSaved, onCan
         custom_role: jobRole === "Other" ? customRole.trim() : undefined,
         badge_type: badgeType || undefined,
         dbs_expiry: dbsExpiry || undefined,
+        sia_expiry: siaExpiry,
+        cscs_expiry: cscsExpiry,
         consent_credit_check: consentCredit,
         consent_social_media_check: consentSocial,
       }
@@ -213,6 +224,15 @@ export default function AgencyStaffForm({ agencyId, initialStaff, onSaved, onCan
               </div>
 
               <div className="grid grid-cols-2 gap-3">
+                <Field label="SIA expiry *">
+                  <Input type="date" value={siaExpiry} onChange={e => setSiaExpiry(e.target.value)} />
+                </Field>
+                <Field label="CSCS expiry *">
+                  <Input type="date" value={cscsExpiry} onChange={e => setCscsExpiry(e.target.value)} />
+                </Field>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <Field label="Email">
                   <Input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="email@example.com" />
                 </Field>
@@ -273,16 +293,14 @@ export default function AgencyStaffForm({ agencyId, initialStaff, onSaved, onCan
                   <DocumentUploadRow label="Right to Work" hint="Passport, visa or share code confirmation"
                     agencyId={agencyId} staffId={initialStaff!.id} docType="rtw_cert"
                     initialUploaded={initialStaff!.rtw_cert_uploaded} initialDate={initialStaff!.rtw_cert_upload_date} />
-                  {badgeType === "SIA" && (
-                    <DocumentUploadRow label="SIA Licence" hint="Front of the SIA licence card"
-                      agencyId={agencyId} staffId={initialStaff!.id} docType="sia_cert"
-                      initialUploaded={initialStaff!.sia_cert_uploaded} initialDate={initialStaff!.sia_cert_upload_date} />
-                  )}
-                  {badgeType === "CSCS" && (
-                    <DocumentUploadRow label="CSCS Card" hint="Front of the CSCS card"
-                      agencyId={agencyId} staffId={initialStaff!.id} docType="cscs_cert"
-                      initialUploaded={initialStaff!.cscs_cert_uploaded} initialDate={initialStaff!.cscs_cert_upload_date} />
-                  )}
+                  {/* SIA and CSCS are mandatory for every guard now, not
+                      gated on badge_type — so both rows always show. */}
+                  <DocumentUploadRow label="SIA Licence" hint="Front of the SIA licence card"
+                    agencyId={agencyId} staffId={initialStaff!.id} docType="sia_cert"
+                    initialUploaded={initialStaff!.sia_cert_uploaded} initialDate={initialStaff!.sia_cert_upload_date} />
+                  <DocumentUploadRow label="CSCS Card" hint="Front of the CSCS card"
+                    agencyId={agencyId} staffId={initialStaff!.id} docType="cscs_cert"
+                    initialUploaded={initialStaff!.cscs_cert_uploaded} initialDate={initialStaff!.cscs_cert_upload_date} />
                   {jobRole === "Dog Handler" && (
                     <DocumentUploadRow label="Dog Handler Certificate" hint="Dog handling qualification"
                       agencyId={agencyId} staffId={initialStaff!.id} docType="dog_handler_cert"

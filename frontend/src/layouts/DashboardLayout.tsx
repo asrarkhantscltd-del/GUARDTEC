@@ -15,7 +15,7 @@ import {
   Building2, CalendarDays, FileText, ListChecks,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
-import AiChat from "@/components/AiChat"
+// import AiChat from "@/components/AiChat" — see the note by its (commented-out) render call below
 
 interface NavItem {
   label: string
@@ -806,8 +806,12 @@ export default function DashboardLayout() {
         onChange={e => handleMyPhotoUpload(e.target.files?.[0] ?? null)}
       />
 
-      {/* AI Compliance Assistant — floating chat widget */}
-      <AiChat />
+      {/* AI Compliance Assistant — floating chat widget, hidden 2026-08-20:
+          the n8n webhook it calls (/api/ai-chat -> N8N_AI_WEBHOOK) is
+          returning 404, so every question just failed. Pulled from view
+          rather than deleted — the plan is a rebuilt version answering
+          directly off Postgres (no n8n hop), not restoring this one as-is. */}
+      {/* <AiChat /> */}
     </div>
   )
 }

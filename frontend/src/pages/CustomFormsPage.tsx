@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import {
-  Plus, X, Loader2, Pencil, Link as LinkIcon, ListChecks, Eye, EyeOff, ClipboardList, Sparkles,
+  Plus, X, Loader2, Pencil, Link as LinkIcon, ListChecks, Eye, EyeOff, ClipboardList, Sparkles, Trash2, AlertTriangle,
 } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 import { api, ApiError } from "@/lib/api"
@@ -94,6 +94,12 @@ export default function CustomFormsPage() {
   // selection) while building the form.
   const [previewValues, setPreviewValues] = useState<Record<string, unknown>>({})
 
+  const [deletingForm, setDeletingForm] = useState<CustomForm | null>(null)
+  // null while the response count is still loading — distinct from 0, so the
+  // confirm dialog doesn't flash "0 responses" before the real count arrives.
+  const [deleteResponseCount, setDeleteResponseCount] = useState<number | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
   async function reload() {
     try {
       // GET /api/custom-forms returns { ok, forms }, not a bare array.
@@ -172,6 +178,32 @@ export default function CustomFormsPage() {
       toast.success(!f.is_published ? "Form published" : "Form unpublished")
     } catch {
       toast.error("Network error — could not update form")
+    }
+  }
+
+  async function openDeleteConfirm(f: CustomForm) {
+    setDeletingForm(f)
+    setDeleteResponseCount(null)
+    try {
+      const data = await api.get<{ ok: boolean; responses: unknown[] }>(`/api/custom-forms/${f.id}/responses`)
+      setDeleteResponseCount(data.responses?.length ?? 0)
+    } catch {
+      setDeleteResponseCount(0)
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deletingForm) return
+    setDeleting(true)
+    try {
+      await api.delete(`/api/custom-forms/${deletingForm.id}`)
+      setForms(prev => prev.filter(f => f.id !== deletingForm.id))
+      toast.success("Form deleted")
+      setDeletingForm(null)
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Network error — could not delete form")
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -277,6 +309,10 @@ export default function CustomFormsPage() {
                           <button onClick={() => openEdit(f)} title="Edit"
                             className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">
                             <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button onClick={() => openDeleteConfirm(f)} title="Delete"
+                            className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+                            <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </>
                       )}
@@ -430,6 +466,38 @@ export default function CustomFormsPage() {
               <button onClick={() => setLinkFormId(null)} className="rounded-md p-1 hover:bg-muted"><X className="h-4 w-4" /></button>
             </div>
             <FormLinkGenerator formId={linkFormId} />
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete confirm modal ── */}
+      {deletingForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          onClick={() => !deleting && setDeletingForm(null)}>
+          <div className="w-full max-w-md rounded-xl border bg-background p-5 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="mb-3 flex items-start gap-3">
+              <span className="icon-badge bg-destructive/15 shrink-0"><AlertTriangle className="h-5 w-5 text-destructive" /></span>
+              <div>
+                <h3 className="text-sm font-semibold">Delete "{deletingForm.name}"?</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {deleteResponseCount === null ? (
+                    "Checking for recorded responses…"
+                  ) : deleteResponseCount > 0 ? (
+                    <>This form has <strong>{deleteResponseCount}</strong> recorded response{deleteResponseCount === 1 ? "" : "s"} — deleting it will permanently delete those too. This cannot be undone.</>
+                  ) : (
+                    "This form has no recorded responses. This cannot be undone."
+                  )}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setDeletingForm(null)} disabled={deleting}>
+                Cancel
+              </Button>
+              <Button variant="destructive" className="flex-1" onClick={confirmDelete} disabled={deleting || deleteResponseCount === null}>
+                {deleting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Deleting…</> : "Delete form"}
+              </Button>
+            </div>
           </div>
         </div>
       )}

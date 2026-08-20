@@ -343,6 +343,8 @@ export default function AgencyDetailPage() {
                     <th className="px-4 py-3">Name</th>
                     <th className="px-4 py-3">Role</th>
                     <th className="hidden sm:table-cell px-4 py-3">Badge</th>
+                    <th className="hidden lg:table-cell px-4 py-3">SIA Expiry</th>
+                    <th className="hidden lg:table-cell px-4 py-3">CSCS Expiry</th>
                     <th className="hidden sm:table-cell px-4 py-3">DBS Expiry</th>
                     <th className="px-4 py-3">Compliance</th>
                     <th className="px-4 py-3 w-20"></th>
@@ -354,6 +356,8 @@ export default function AgencyDetailPage() {
                       <td className="px-4 py-3 font-medium">{g.name}</td>
                       <td className="px-4 py-3">{g.job_role === "Other" ? (g.custom_role || "Other") : g.job_role}</td>
                       <td className="hidden sm:table-cell px-4 py-3 text-muted-foreground">{g.badge_type || "—"}</td>
+                      <td className="hidden lg:table-cell px-4 py-3 text-muted-foreground">{fmtDate(g.sia_expiry)}</td>
+                      <td className="hidden lg:table-cell px-4 py-3 text-muted-foreground">{fmtDate(g.cscs_expiry)}</td>
                       <td className="hidden sm:table-cell px-4 py-3 text-muted-foreground">{fmtDate(g.dbs_expiry)}</td>
                       <td className="px-4 py-3"><ComplianceBadge status={g.compliance_status} /></td>
                       <td className="px-4 py-3">

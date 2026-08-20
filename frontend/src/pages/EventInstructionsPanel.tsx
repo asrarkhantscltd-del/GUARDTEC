@@ -3,7 +3,7 @@ import { toast } from "sonner"
 import {
   FileText, Plus, Pencil, X, Loader2, MapPin, CalendarDays, Users, Building2,
   Link2, Copy, Check, Trash2, ShieldCheck, Clock, Eye, Search, Send, Truck,
-  UserCog, Upload, Download,
+  UserCog, Upload, Download, Archive, ArchiveRestore,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -162,6 +162,13 @@ export default function EventInstructionsPanel() {
   // Archive (soft-delete) confirm
   const [confirmArchiveId, setConfirmArchiveId] = useState<string | null>(null)
   const [archivingId, setArchivingId] = useState<string | null>(null)
+
+  // Restore (archived -> draft)
+  const [restoringId, setRestoringId] = useState<string | null>(null)
+
+  // Permanent delete — only ever offered on an already-archived instruction
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   // Links / manage panel
   const [linksInstruction, setLinksInstruction] = useState<EventInstructionRow | null>(null)

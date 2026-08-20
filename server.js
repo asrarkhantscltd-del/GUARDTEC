@@ -197,6 +197,14 @@ var agenciesSchemaReady = (async function ensureAgenciesSchema() {
     // rows from this session's own testing before this column existed.
     await pgPool.query("ALTER TABLE agency_staff ADD COLUMN IF NOT EXISTS consent_credit_check BOOLEAN NOT NULL DEFAULT FALSE");
     await pgPool.query("ALTER TABLE agency_staff ADD COLUMN IF NOT EXISTS consent_social_media_check BOOLEAN NOT NULL DEFAULT FALSE");
+    // SIA/CSCS expiry — added later than dbs_expiry (2026-08-20), and unlike
+    // it, both are unconditionally mandatory for every guard regardless of
+    // badge_type (user's explicit decision: badge_type stays as an
+    // informational field — a guard can hold CCTV/Close Protection/other
+    // badges too — it no longer gates which certs are required). dbs_expiry
+    // itself became optional in the same change; see calculateComplianceStatus.
+    await pgPool.query("ALTER TABLE agency_staff ADD COLUMN IF NOT EXISTS sia_expiry DATE");
+    await pgPool.query("ALTER TABLE agency_staff ADD COLUMN IF NOT EXISTS cscs_expiry DATE");
     // Credit/social-media check results — admin uploads after reviewing
     // externally, visibility defaults hidden. "Visible" here means visible
     // to the AGENCY (their admin portal), not the guard — guards never see
@@ -4148,41 +4156,48 @@ function normalizeCsvRow(row) {
     custom_role: norm.customrole,
     badge_type:  norm.badgetype,
     dbs_expiry:  norm.dbsexpiry !== undefined ? norm.dbsexpiry : norm.dbsexpirydate,
+    sia_expiry:  norm.siaexpiry !== undefined ? norm.siaexpiry : norm.siaexpirydate,
+    cscs_expiry: norm.cscsexpiry !== undefined ? norm.cscsexpiry : norm.cscsexpirydate,
   };
 }
 
 // Role-conditional BS7858 compliance (debug note #6) — a cert only counts
-// against a guard if their job_role/badge_type actually requires it, so e.g.
-// a Door Supervisor is never flagged "incomplete" for a missing CSCS card
-// that was never SIA-badged to need one. Priority worst-first: EXPIRED beats
-// INCOMPLETE beats ACTION_NEEDED beats COMPLIANT.
+// against a guard if their job_role actually requires it, so e.g. a Door
+// Supervisor is never flagged "incomplete" for a missing Dog Handler cert.
+// SIA and CSCS expiry are unconditionally required for every guard as of
+// 2026-08-20 (user's explicit decision — badge_type no longer gates this,
+// it's kept purely as informational metadata since a guard can hold other
+// badges like CCTV/Close Protection too). dbs_expiry became optional in the
+// same change — a blank one is no longer counted as a problem, but a
+// present-and-expired one still is, same as before. Priority worst-first:
+// EXPIRED beats INCOMPLETE beats ACTION_NEEDED beats COMPLIANT.
+function expiryCheck(dateVal, requiredFlag) {
+  if (!dateVal) return requiredFlag ? 'missing' : 'n/a';
+  // daysFrom() takes anything `new Date()` accepts, which covers both a
+  // plain date string and the JS Date object pg returns for a DATE column.
+  var days = daysFrom(dateVal);
+  if (days === null || isNaN(days)) return requiredFlag ? 'missing' : 'n/a';
+  if (days < 0) return 'expired';
+  if (days <= 30) return 'warning';
+  return 'ok';
+}
+
 function calculateComplianceStatus(staff) {
   var required = {
-    dbs: true,
-    sia: staff.badge_type === 'SIA',
-    cscs: staff.badge_type === 'CSCS',
+    dbs: false,
+    sia: true,
+    cscs: true,
     rtw: true,
     dog_handler: staff.job_role === 'Dog Handler',
     training: true,
   };
 
-  var dbsCheck;
-  if (!staff.dbs_expiry) {
-    dbsCheck = 'missing';
-  } else {
-    // daysFrom() takes anything `new Date()` accepts, which covers both a
-    // plain date string and the JS Date object pg returns for a DATE column.
-    var days = daysFrom(staff.dbs_expiry);
-    if (days === null || isNaN(days)) dbsCheck = 'missing';
-    else if (days < 0) dbsCheck = 'expired';
-    else if (days <= 30) dbsCheck = 'warning';
-    else dbsCheck = 'ok';
-  }
-
   var checks = {
-    dbs:         dbsCheck,
-    sia:         !required.sia         ? 'n/a' : (staff.sia_cert_uploaded         ? 'ok' : 'missing'),
-    cscs:        !required.cscs        ? 'n/a' : (staff.cscs_cert_uploaded        ? 'ok' : 'missing'),
+    dbs:         expiryCheck(staff.dbs_expiry, required.dbs),
+    sia:         !required.sia  ? 'n/a' : (staff.sia_cert_uploaded  ? 'ok' : 'missing'),
+    sia_expiry:  expiryCheck(staff.sia_expiry, required.sia),
+    cscs:        !required.cscs ? 'n/a' : (staff.cscs_cert_uploaded ? 'ok' : 'missing'),
+    cscs_expiry: expiryCheck(staff.cscs_expiry, required.cscs),
     rtw:         !required.rtw         ? 'n/a' : (staff.rtw_cert_uploaded         ? 'ok' : 'missing'),
     dog_handler: !required.dog_handler ? 'n/a' : (staff.dog_handler_cert_uploaded ? 'ok' : 'missing'),
     training:    !required.training    ? 'n/a' : (staff.training_cert_uploaded    ? 'ok' : 'missing'),
@@ -4219,11 +4234,17 @@ app.post('/api/agencies/:agencyId/staff', requireLogin, requireOwnAgencyOrPermis
     var customRole  = String(b.custom_role || '').trim();
     var badgeType   = String(b.badge_type  || '').trim();
     var dbsExpiry   = b.dbs_expiry ? String(b.dbs_expiry).trim() : null;
+    var siaExpiry   = b.sia_expiry  ? String(b.sia_expiry).trim()  : null;
+    var cscsExpiry  = b.cscs_expiry ? String(b.cscs_expiry).trim() : null;
+    // Mandatory for every guard regardless of badge_type — see the note on
+    // calculateComplianceStatus. dbs_expiry deliberately has no such check.
+    if (!siaExpiry)  return res.status(400).json({ ok: false, error: 'SIA expiry is required.' });
+    if (!cscsExpiry) return res.status(400).json({ ok: false, error: 'CSCS expiry is required.' });
 
     var r = await pgPool.query(
-      `INSERT INTO agency_staff (agency_id, name, email, phone, nationality, job_role, custom_role, badge_type, dbs_expiry, consent_credit_check, consent_social_media_check)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE,TRUE) RETURNING *`,
-      [agencyId, name, email, phone, nationality, jobRole, customRole || null, badgeType || null, dbsExpiry]
+      `INSERT INTO agency_staff (agency_id, name, email, phone, nationality, job_role, custom_role, badge_type, dbs_expiry, sia_expiry, cscs_expiry, consent_credit_check, consent_social_media_check)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,TRUE,TRUE) RETURNING *`,
+      [agencyId, name, email, phone, nationality, jobRole, customRole || null, badgeType || null, dbsExpiry, siaExpiry, cscsExpiry]
     );
     var staff = r.rows[0];
     staff.compliance_status = calculateComplianceStatus(staff);
@@ -4280,14 +4301,18 @@ app.patch('/api/agencies/:agencyId/staff/:id', requireLogin, requireOwnAgencyOrP
     var customRole  = String(b.custom_role !== undefined ? b.custom_role : o.custom_role || '').trim();
     var badgeType   = String(b.badge_type  !== undefined ? b.badge_type  : o.badge_type  || '').trim();
     var dbsExpiry   = b.dbs_expiry !== undefined ? (b.dbs_expiry || null) : o.dbs_expiry;
+    var siaExpiry   = b.sia_expiry  !== undefined ? (b.sia_expiry  || null) : o.sia_expiry;
+    var cscsExpiry  = b.cscs_expiry !== undefined ? (b.cscs_expiry || null) : o.cscs_expiry;
 
-    if (!name)    return res.status(400).json({ ok: false, error: 'Guard name is required.' });
-    if (!jobRole) return res.status(400).json({ ok: false, error: 'Job role is required.' });
+    if (!name)       return res.status(400).json({ ok: false, error: 'Guard name is required.' });
+    if (!jobRole)    return res.status(400).json({ ok: false, error: 'Job role is required.' });
+    if (!siaExpiry)  return res.status(400).json({ ok: false, error: 'SIA expiry is required.' });
+    if (!cscsExpiry) return res.status(400).json({ ok: false, error: 'CSCS expiry is required.' });
 
     var r = await pgPool.query(
-      `UPDATE agency_staff SET name=$1, email=$2, phone=$3, nationality=$4, job_role=$5, custom_role=$6, badge_type=$7, dbs_expiry=$8, updated_at=NOW()
-       WHERE id=$9 RETURNING *`,
-      [name, email, phone, nationality, jobRole, customRole || null, badgeType || null, dbsExpiry, req.params.id]
+      `UPDATE agency_staff SET name=$1, email=$2, phone=$3, nationality=$4, job_role=$5, custom_role=$6, badge_type=$7, dbs_expiry=$8, sia_expiry=$9, cscs_expiry=$10, updated_at=NOW()
+       WHERE id=$11 RETURNING *`,
+      [name, email, phone, nationality, jobRole, customRole || null, badgeType || null, dbsExpiry, siaExpiry, cscsExpiry, req.params.id]
     );
     var staff = r.rows[0];
     staff.compliance_status = calculateComplianceStatus(staff);
@@ -4357,11 +4382,16 @@ app.post('/api/agencies/:agencyId/staff/import-csv', requireLogin, requireOwnAge
             var customRole  = sanitizeForExcel(String(norm.custom_role || '').trim());
             var badgeType   = sanitizeForExcel(String(norm.badge_type  || '').trim());
             var dbsExpiry   = toISO(excelDate(norm.dbs_expiry));
+            // Not hard-required on bulk import (unlike the Add Guard form) —
+            // a row missing these just surfaces as INCOMPLETE compliance
+            // status afterward rather than rejecting the whole row.
+            var siaExpiry   = toISO(excelDate(norm.sia_expiry));
+            var cscsExpiry  = toISO(excelDate(norm.cscs_expiry));
 
             await pgPool.query(
-              `INSERT INTO agency_staff (agency_id, name, email, phone, nationality, job_role, custom_role, badge_type, dbs_expiry)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-              [agencyId, name, email, phone, nationality, jobRole, customRole || null, badgeType || null, dbsExpiry]
+              `INSERT INTO agency_staff (agency_id, name, email, phone, nationality, job_role, custom_role, badge_type, dbs_expiry, sia_expiry, cscs_expiry)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+              [agencyId, name, email, phone, nationality, jobRole, customRole || null, badgeType || null, dbsExpiry, siaExpiry, cscsExpiry]
             );
             importedCount++;
           } catch (rowErr) {
@@ -5453,6 +5483,49 @@ app.post('/api/event-instructions/:id/archive', requireLogin, requirePermission(
   }
 });
 
+// Mirror of archive — brings an instruction back to 'draft' (deliberately
+// not straight back to 'published': re-showing it to guards/staff should be
+// a second, explicit decision, not an automatic side effect of restoring).
+app.post('/api/event-instructions/:id/restore', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var r = await pgPool.query(
+      "UPDATE event_instructions SET status = 'draft' WHERE id = $1 AND status = 'archived' RETURNING *",
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Archived instruction not found.' });
+    res.json({ ok: true, instruction: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Hard delete — deliberately narrower than the Custom Forms one: only
+// allowed once an instruction is already archived (delete lives inside the
+// archive view, not next to the everyday Archive action), AND only when no
+// acknowledgment_forms rows exist against it. A signed acknowledgment is
+// compliance/audit proof a guard was briefed — that must survive even if the
+// instruction itself is being cleaned up, so we refuse rather than cascade.
+app.delete('/api/event-instructions/:id', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var existing = await pgPool.query('SELECT id, status FROM event_instructions WHERE id = $1', [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ ok: false, error: 'Instruction not found.' });
+    if (existing.rows[0].status !== 'archived') {
+      return res.status(400).json({ ok: false, error: 'Archive this instruction before permanently deleting it.' });
+    }
+    var ackCount = await pgPool.query('SELECT COUNT(*)::int AS n FROM acknowledgment_forms WHERE instruction_id = $1', [req.params.id]);
+    if (ackCount.rows[0].n > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Cannot permanently delete — ' + ackCount.rows[0].n + ' acknowledgment record(s) exist for this instruction and must be kept as compliance proof. Leave it archived instead.'
+      });
+    }
+    await pgPool.query('DELETE FROM event_instructions WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── EVENT INSTRUCTIONS: DOCUMENT ATTACHMENT ───────────────────────────────────
 // Flat dir keyed by instruction id (one attached document per instruction,
 // mirroring document_file_url being a single column, not a list) — same
@@ -5736,7 +5809,7 @@ var CUSTOM_FORM_TYPES = ['staff_info', 'agency_info', 'site_info', 'event_info',
 // primitive. Deliberately excludes id/status/cert/audit columns on both
 // tables — those aren't things a form response should ever be able to touch.
 var AGENCY_PROFILE_FIELDS = ['name', 'email', 'phone', 'notes'];
-var AGENCY_STAFF_PROFILE_FIELDS = ['name', 'email', 'phone', 'nationality', 'job_role', 'custom_role', 'badge_type', 'dbs_expiry'];
+var AGENCY_STAFF_PROFILE_FIELDS = ['name', 'email', 'phone', 'nationality', 'job_role', 'custom_role', 'badge_type', 'dbs_expiry', 'sia_expiry', 'cscs_expiry'];
 
 // The Governance Fix (plan 3.5): whatever entity type a mapped field targets,
 // the target name must come from one of these three fixed allowlists — never
@@ -5884,6 +5957,35 @@ app.patch('/api/custom-forms/:id', requireLogin, requirePermission('staff'), asy
       [name, description, formType, JSON.stringify(fields), linkedType, linkedId, isPublished, autoMap, version, req.params.id]
     );
     res.json({ ok: true, form: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Hard delete — a custom form isn't vetting/compliance data with a
+// retention requirement (unlike ex-staff records), so unlike
+// /api/exstaff/permanent this needs no 7-year guard. Still destroys
+// recorded responses, so the response count is returned for the frontend
+// to warn on before the confirm click, same info-then-confirm shape as any
+// other irreversible delete in this app.
+app.delete('/api/custom-forms/:id', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var existing = await pgPool.query('SELECT id FROM custom_forms WHERE id = $1', [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ ok: false, error: 'Form not found.' });
+
+    var client = await pgPool.connect();
+    try {
+      await client.query('BEGIN');
+      var deletedResponses = await client.query('DELETE FROM custom_form_responses WHERE form_id = $1', [req.params.id]);
+      await client.query('DELETE FROM custom_forms WHERE id = $1', [req.params.id]);
+      await client.query('COMMIT');
+      res.json({ ok: true, deleted_responses: deletedResponses.rowCount });
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
