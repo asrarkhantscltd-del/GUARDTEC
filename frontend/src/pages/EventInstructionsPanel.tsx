@@ -499,10 +499,24 @@ export default function EventInstructionsPanel() {
                   className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 transition-colors">
                   <Link2 className="h-3.5 w-3.5" />Links
                 </button>
-                <button onClick={() => setConfirmArchiveId(instr.id)}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors">
-                  <Trash2 className="h-3.5 w-3.5" />Delete
-                </button>
+                {instr.status === "archived" ? (
+                  <>
+                    <button onClick={() => restoreInstruction(instr.id)} disabled={restoringId === instr.id}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 transition-colors disabled:opacity-50">
+                      {restoringId === instr.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArchiveRestore className="h-3.5 w-3.5" />}
+                      Restore
+                    </button>
+                    <button onClick={() => setConfirmDeleteId(instr.id)}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors">
+                      <Trash2 className="h-3.5 w-3.5" />Delete
+                    </button>
+                  </>
+                ) : (
+                  <button onClick={() => setConfirmArchiveId(instr.id)}
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors">
+                    <Archive className="h-3.5 w-3.5" />Archive
+                  </button>
+                )}
               </div>
               {confirmArchiveId === instr.id && (
                 <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 flex flex-col gap-2">
@@ -514,6 +528,22 @@ export default function EventInstructionsPanel() {
                       className="rounded px-2.5 py-1 text-xs bg-destructive text-white hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1">
                       {archivingId === instr.id ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                       Yes, archive
+                    </button>
+                  </div>
+                </div>
+              )}
+              {confirmDeleteId === instr.id && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 flex flex-col gap-2">
+                  <p className="text-xs text-destructive font-medium">
+                    Permanently delete this instruction? This cannot be undone. Blocked if any acknowledgment records exist for it.
+                  </p>
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => setConfirmDeleteId(null)}
+                      className="rounded px-2.5 py-1 text-xs border hover:bg-muted transition-colors">Cancel</button>
+                    <button onClick={() => deleteInstructionPermanently(instr.id)} disabled={deletingId === instr.id}
+                      className="rounded px-2.5 py-1 text-xs bg-destructive text-white hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1">
+                      {deletingId === instr.id ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                      Yes, delete permanently
                     </button>
                   </div>
                 </div>
