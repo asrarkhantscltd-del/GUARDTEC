@@ -2,10 +2,11 @@ import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { api } from "@/lib/api"
 import { fmtDate } from "@/lib/utils"
+import { useAuth } from "@/contexts/AuthContext"
 import {
   Flag, Loader2, ChevronDown, ChevronUp, Paperclip,
   FileVideo, FileText, Image as ImageIcon, Download,
-  EyeOff, User as UserIcon,
+  EyeOff, User as UserIcon, ShieldAlert, ShieldOff,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
@@ -31,6 +32,10 @@ interface Report {
   created_at: string
   attachment_count: number
   attachments?: Attachment[]
+  flagged_inappropriate: boolean
+  flagged_reason: string | null
+  flagged_by_name: string | null
+  flagged_at: string | null
 }
 
 function fmtBytes(n: number) {
@@ -62,18 +67,52 @@ const STATUS_CFG: Record<string, { label: string; cls: string }> = {
 }
 
 export default function IncidentReportsPage() {
+  const { user: me } = useAuth()
+  const isDirector = me?.role === "director"
+
   const [reports, setReports]   = useState<Report[]>([])
   const [loading, setLoading]   = useState(true)
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [updating, setUpdating] = useState<string | null>(null)
+  // Director-only: flagged (inappropriate-content) reports are hidden from
+  // the normal queue by default — this just toggles whether to also fetch
+  // them, never anything about who submitted a report.
+  const [showFlagged, setShowFlagged] = useState(false)
 
-  async function load() {
+  async function load(includeFlagged = showFlagged) {
     setLoading(true)
     try {
-      const d = await api.get<{ ok: boolean; reports: Report[] }>("/api/incident-reports")
+      const url = isDirector && includeFlagged ? "/api/incident-reports?includeFlagged=true" : "/api/incident-reports"
+      const d = await api.get<{ ok: boolean; reports: Report[] }>(url)
       if (d.ok) setReports(d.reports)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function flagReport(id: string, reason: string) {
+    setUpdating(id)
+    try {
+      await api.patch(`/api/incident-reports/${id}/flag`, { reason })
+      toast.success("Report flagged and hidden from the queue.")
+      await load()
+    } catch {
+      toast.error("Failed to flag report.")
+    } finally {
+      setUpdating(null)
+    }
+  }
+
+  async function unflagReport(id: string) {
+    setUpdating(id)
+    try {
+      await api.patch(`/api/incident-reports/${id}/unflag`, {})
+      toast.success("Flag removed.")
+      await load()
+    } catch {
+      toast.error("Failed to unflag report.")
+    } finally {
+      setUpdating(null)
     }
   }
 
@@ -102,11 +141,13 @@ export default function IncidentReportsPage() {
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(showFlagged) }, [showFlagged])
 
-  const open         = reports.filter(r => r.status === "open")
-  const under_review = reports.filter(r => r.status === "under_review")
-  const closed       = reports.filter(r => r.status === "resolved" || r.status === "closed")
+  const active        = reports.filter(r => !r.flagged_inappropriate)
+  const flaggedList    = reports.filter(r => r.flagged_inappropriate)
+  const open         = active.filter(r => r.status === "open")
+  const under_review = active.filter(r => r.status === "under_review")
+  const closed       = active.filter(r => r.status === "resolved" || r.status === "closed")
 
   if (loading) return (
     <div className="flex items-center justify-center h-64">
@@ -118,12 +159,18 @@ export default function IncidentReportsPage() {
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
       <div className="flex items-center gap-3">
         <Flag className="h-5 w-5 text-destructive" />
-        <div>
+        <div className="flex-1">
           <h1 className="font-display text-xl font-semibold">Incident Reports</h1>
           <p className="text-sm text-muted-foreground">
-            {reports.length} total — {open.length} new, {under_review.length} pending, {closed.length} closed
+            {active.length} total — {open.length} new, {under_review.length} pending, {closed.length} closed
           </p>
         </div>
+        {isDirector && (
+          <Button size="sm" variant="outline" onClick={() => setShowFlagged(v => !v)} className="gap-1.5">
+            {showFlagged ? <ShieldOff className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+            {showFlagged ? "Hide flagged" : "Show flagged"}
+          </Button>
+        )}
       </div>
 
       {reports.length === 0 && (
@@ -145,34 +192,67 @@ export default function IncidentReportsPage() {
               rep={rep}
               isOpen={!!expanded[rep.id]}
               updating={updating === rep.id}
+              isDirector={isDirector}
               onToggle={() => toggleExpand(rep.id)}
               onUpdate={updateStatus}
+              onFlag={flagReport}
+              onUnflag={unflagReport}
             />
           ))}
         </section>
       ))}
+
+      {isDirector && showFlagged && flaggedList.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-destructive">
+            Flagged as inappropriate — hidden from the normal queue
+          </h2>
+          {flaggedList.map(rep => (
+            <ReportCard
+              key={rep.id}
+              rep={rep}
+              isOpen={!!expanded[rep.id]}
+              updating={updating === rep.id}
+              isDirector={isDirector}
+              onToggle={() => toggleExpand(rep.id)}
+              onUpdate={updateStatus}
+              onFlag={flagReport}
+              onUnflag={unflagReport}
+            />
+          ))}
+        </section>
+      )}
     </div>
   )
 }
 
-function ReportCard({ rep, isOpen, updating, onToggle, onUpdate }: {
+function ReportCard({ rep, isOpen, updating, isDirector, onToggle, onUpdate, onFlag, onUnflag }: {
   rep: Report
   isOpen: boolean
   updating: boolean
+  isDirector: boolean
   onToggle: () => void
   onUpdate: (id: string, status: string, notes: string) => void
+  onFlag: (id: string, reason: string) => void
+  onUnflag: (id: string) => void
 }) {
   const [notes, setNotes]   = useState(rep.resolution_notes ?? "")
   const [status, setStatus] = useState(rep.status)
+  const [flagReason, setFlagReason] = useState("")
   const cfg = STATUS_CFG[rep.status] ?? STATUS_CFG.open
 
   return (
-    <div className="surface rounded-lg border bg-card shadow-sm overflow-hidden">
+    <div className={`surface rounded-lg border bg-card shadow-sm overflow-hidden ${rep.flagged_inappropriate ? "border-destructive/40" : ""}`}>
       {/* Header row */}
       <button
         onClick={onToggle}
         className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
       >
+        {rep.flagged_inappropriate && (
+          <span className="text-xs font-medium rounded-full px-2.5 py-0.5 shrink-0 bg-destructive/15 text-destructive flex items-center gap-1">
+            <ShieldAlert className="h-3 w-3" /> Flagged
+          </span>
+        )}
         <span className={`text-xs font-medium rounded-full px-2.5 py-0.5 shrink-0 ${cfg.cls}`}>
           {cfg.label}
         </span>
@@ -203,6 +283,41 @@ function ReportCard({ rep, isOpen, updating, onToggle, onUpdate }: {
 
           {/* Description */}
           <p className="text-sm leading-relaxed">{rep.description}</p>
+
+          {/* Content moderation — director only. Flags the report's CONTENT
+              (e.g. abusive language) to hide it from the normal queue.
+              Deliberately has no bearing on reporter_id/is_anonymous — an
+              anonymous submitter's identity is never revealed by this. */}
+          {isDirector && (
+            rep.flagged_inappropriate ? (
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 space-y-2">
+                <p className="text-xs text-destructive font-medium flex items-center gap-1.5">
+                  <ShieldAlert className="h-3.5 w-3.5" /> Flagged as inappropriate{rep.flagged_by_name ? ` by ${rep.flagged_by_name}` : ""}{rep.flagged_at ? ` on ${fmtDate(rep.flagged_at)}` : ""}
+                </p>
+                {rep.flagged_reason && <p className="text-xs text-muted-foreground">Reason: {rep.flagged_reason}</p>}
+                <Button size="sm" variant="outline" disabled={updating} onClick={() => onUnflag(rep.id)} className="gap-1.5">
+                  {updating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldOff className="h-3.5 w-3.5" />}
+                  Remove flag
+                </Button>
+              </div>
+            ) : (
+              <div className="rounded-md border border-dashed px-3 py-2.5 space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  If this report's content is abusive or clearly misuses the reporting channel, you can flag and hide
+                  it — this never reveals who submitted it, even if it was anonymous.
+                </p>
+                <div className="flex items-center gap-2">
+                  <input type="text" value={flagReason} onChange={e => setFlagReason(e.target.value)}
+                    placeholder="Reason (optional, for your own records)"
+                    className="h-8 flex-1 rounded-md border border-input bg-background px-3 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
+                  <Button size="sm" variant="outline" disabled={updating} onClick={() => onFlag(rep.id, flagReason)} className="gap-1.5 shrink-0">
+                    {updating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+                    Flag as inappropriate
+                  </Button>
+                </div>
+              </div>
+            )
+          )}
 
           {/* Attachments */}
           {rep.attachments && rep.attachments.length > 0 && (

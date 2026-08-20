@@ -246,10 +246,88 @@ var agenciesSchemaReady = (async function ensureAgenciesSchema() {
   }
 })();
 
+// Deployment Sites — migrated off deployment-sites.json (JSON→Postgres
+// migration, phase 1 of 3: Sites/Vehicles/Staff). id stays TEXT and preserves
+// the pre-migration Date.now().toString() value on purpose: agency_deployments
+// .site_id and event_instructions.site_id (both TEXT, defined below) already
+// hold these exact string values with no FK — minting fresh UUIDs here would
+// mean remapping both of those plus every staff record's currentSite for zero
+// functional benefit at this scale. welfare_items/assigned_staff are real
+// child tables, not JSONB columns, for the same "no hidden blob" reasoning as
+// message_attachments/incident_attachments elsewhere in this file.
+// site_staff_assignments deliberately stores the legacy staff-JSON id
+// (employee_legacy_id), not a resolved employees.id UUID — Staff hasn't been
+// migrated yet (that's phase 3), and not every staff member is guaranteed an
+// employees row yet either, so this avoids a Sites-phase assignment silently
+// failing because of a Staff-phase timing issue. Upgrade to a real FK once
+// Staff migration lands and every legacy_id is guaranteed resolvable.
+var sitesSchemaReady = (async function ensureSitesSchema() {
+  try {
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS sites (
+        id                TEXT PRIMARY KEY,
+        name              TEXT NOT NULL,
+        type              TEXT NOT NULL DEFAULT 'other',
+        client_name       TEXT NOT NULL DEFAULT '',
+        client_phone      TEXT NOT NULL DEFAULT '',
+        client_email      TEXT NOT NULL DEFAULT '',
+        address           TEXT NOT NULL DEFAULT '',
+        supervisor_name   TEXT NOT NULL DEFAULT '',
+        supervisor_phone  TEXT NOT NULL DEFAULT '',
+        supervisor_email  TEXT NOT NULL DEFAULT '',
+        status            TEXT NOT NULL DEFAULT 'active',
+        notes             TEXT NOT NULL DEFAULT '',
+        created_at        TIMESTAMPTZ DEFAULT NOW(),
+        updated_at        TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS site_documents (
+        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        site_id       TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+        filename      TEXT NOT NULL,
+        original_name TEXT NOT NULL,
+        category      TEXT,
+        size_bytes    INTEGER,
+        uploaded_at   TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (site_id, filename)
+      )
+    `);
+    await pgPool.query("CREATE INDEX IF NOT EXISTS idx_site_documents_site ON site_documents(site_id)");
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS site_welfare_items (
+        id            TEXT PRIMARY KEY,
+        site_id       TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+        name          TEXT NOT NULL,
+        quantity      INTEGER NOT NULL DEFAULT 1,
+        condition     TEXT NOT NULL DEFAULT 'good',
+        serial_number TEXT NOT NULL DEFAULT '',
+        notes         TEXT NOT NULL DEFAULT '',
+        image_ext     TEXT NOT NULL DEFAULT '',
+        created_at    TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pgPool.query("CREATE INDEX IF NOT EXISTS idx_site_welfare_site ON site_welfare_items(site_id)");
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS site_staff_assignments (
+        site_id            TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+        employee_legacy_id TEXT NOT NULL,
+        assigned_at        TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (site_id, employee_legacy_id)
+      )
+    `);
+  } catch (e) {
+    console.error('[DB] sites schema migration failed:', e.message);
+  }
+})();
+
 // Agency deployments (site bookings) and their attendance/notes children.
-// site_id is TEXT with NO foreign key on purpose — sites are JSON-file-backed
-// (deployment-sites.json / loadSites()), never a Postgres table, so there is
-// nothing real for a FK to reference (same reasoning as users.staff_id TEXT).
+// site_id stays TEXT (no FK yet) even though `sites` now exists in Postgres —
+// adding the FK here would fail on every boot until the one-time sites
+// migration script has actually populated `sites` from deployment-sites.json,
+// since this table's existing live rows already hold those string ids. Once
+// the migration has run, a separate follow-up ALTER (checked against
+// pg_constraint, same idiom as staff_messages_one_party) adds the real FK.
 // Captured as a promise too — ensureEventInstructionsSchema's acknowledgment_forms
 // table FKs into agency_deployments created here.
 var deploymentsSchemaReady = (async function ensureDeploymentsSchema() {
@@ -357,7 +435,9 @@ var deploymentsSchemaReady = (async function ensureDeploymentsSchema() {
 // picks which id space respondent_id lives in — agency_staff.id or
 // employees.legacy_id — resolved at the app layer, never a real FK, same
 // reasoning as site_id (debug note #1).
-(async function ensureEventInstructionsSchema() {
+// Captured as a promise (not fire-and-forget) so the FK-backfill IIFE just
+// below can await it — see ensureSiteForeignKeysSchema.
+var eventInstructionsSchemaReady = (async function ensureEventInstructionsSchema() {
   try {
     await deploymentsSchemaReady; // acknowledgment_forms.deployment_id FKs into agency_deployments (this also transitively waits on agencies)
     await pgPool.query(`
@@ -436,6 +516,87 @@ var deploymentsSchemaReady = (async function ensureDeploymentsSchema() {
   }
 })();
 
+// Adds the real FK from agency_deployments.site_id / event_instructions.site_id
+// to sites(id) now that `sites` actually exists in Postgres — deliberately
+// NOT baked into ensureDeploymentsSchema/ensureEventInstructionsSchema's own
+// CREATE TABLE, because those tables already have live rows on Asrar's
+// database from before `sites` existed, and the one-time migrate-sites.js
+// script needs to have populated `sites` from deployment-sites.json first or
+// this ALTER fails (any site_id value with no matching sites row blocks the
+// constraint). Safe to fail: this IIFE re-runs on every boot and simply
+// succeeds once the migration script has been run and every existing
+// site_id value resolves — same "self-healing, safe to retry" idiom as every
+// other schema IIFE in this file, just tolerant of failing for a while.
+(async function ensureSiteForeignKeysSchema() {
+  try {
+    await sitesSchemaReady;
+    await deploymentsSchemaReady;
+    await eventInstructionsSchemaReady;
+
+    var depFk = await pgPool.query(
+      `SELECT 1 FROM pg_constraint WHERE conname = 'agency_deployments_site_id_fkey'`
+    );
+    if (!depFk.rows.length) {
+      await pgPool.query(
+        'ALTER TABLE agency_deployments ADD CONSTRAINT agency_deployments_site_id_fkey FOREIGN KEY (site_id) REFERENCES sites(id)'
+      );
+    }
+
+    var eiFk = await pgPool.query(
+      `SELECT 1 FROM pg_constraint WHERE conname = 'event_instructions_site_id_fkey'`
+    );
+    if (!eiFk.rows.length) {
+      await pgPool.query(
+        'ALTER TABLE event_instructions ADD CONSTRAINT event_instructions_site_id_fkey FOREIGN KEY (site_id) REFERENCES sites(id)'
+      );
+    }
+  } catch (e) {
+    // Expected to fail-and-retry-next-boot until migrate-sites.js has run —
+    // not logged as an error at the same severity as a genuine schema bug.
+    console.log('[DB] site foreign keys not added yet (will retry next boot):', e.message);
+  }
+})();
+
+// Vehicles/Fleet — JSON→Postgres migration, phase 2 of 3 (see ensureSitesSchema
+// above for phase 1). Unlike sites, `vehicles`/`vehicle_compliance`/
+// `vehicle_assignments`/`driver_compliance` already existed on Asrar's live
+// database from schema-phase3.sql — created, empty, never read/written by any
+// route until now. This ALTERs the existing table rather than re-CREATEing
+// it. legacy_id bridges the old vehicles.json Date.now().toString() id —
+// unlike sites, nothing outside vehicles.json itself referenced a vehicle id
+// as a live Postgres column, so vehicles get a fresh UUID (the dormant
+// table was already UUID-typed; legacy_id is just for traceability + the
+// one-time migration's photo/doc-folder rename). mot/insurance/road_tax/
+// service dates live in vehicle_compliance (one row per document_type,
+// already designed for exactly this); driver assignment lives in
+// vehicle_assignments (already designed with assigned_date/unassigned_date,
+// richer than the old flat assignedDriverId field — an "open" assignment is
+// unassigned_date IS NULL). has_photo is deliberately NOT a stored column —
+// it was never authoritative pre-migration either (the photo-serving route
+// always re-checked the filesystem via findVehiclePhoto() regardless of the
+// flag), so it stays computed live from disk, same as before.
+(async function ensureVehiclesExtendedSchema() {
+  try {
+    await pgPool.query("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS legacy_id TEXT UNIQUE");
+    await pgPool.query("ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS mileage INTEGER");
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS vehicle_documents (
+        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        vehicle_id    UUID NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+        filename      TEXT NOT NULL,
+        original_name TEXT NOT NULL,
+        doc_type      TEXT,
+        size_bytes    INTEGER,
+        uploaded_at   TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (vehicle_id, filename)
+      )
+    `);
+    await pgPool.query("CREATE INDEX IF NOT EXISTS idx_vehicle_documents_vehicle ON vehicle_documents(vehicle_id)");
+  } catch (e) {
+    console.error('[DB] vehicles extended-schema migration failed:', e.message);
+  }
+})();
+
 // Feature 3: custom forms builder. fields is a JSONB array of FormField
 // objects (plan 3.3); a field MAY carry a `profile_field` mapping target
 // when auto_map_to_profile is true — validated against an allowlist at
@@ -483,36 +644,92 @@ var deploymentsSchemaReady = (async function ensureDeploymentsSchema() {
   }
 })();
 
-// Backfills employees rows for any active staff.legacy_id missing one — the
-// historical migration only covered staff that existed when it ran, and
-// POST /api/staff only started inserting its own row after that point, so
-// anyone added in between (or by any future path that writes staff_data.json
-// directly) was silently missing this row. Without it, messaging, incident-
-// report attribution, and acknowledgment-link generation all 404 or drop
-// attribution for that person — see resolveEmpId(). Runs on every startup,
-// cheap no-op once caught up (ON CONFLICT DO NOTHING per row).
-(async function backfillEmployeesFromStaffFiles() {
+// Staff — JSON→Postgres migration, phase 3 of 3 (see ensureSitesSchema /
+// ensureVehiclesExtendedSchema above for phases 1-2; this is the big one).
+//
+// Design: `employees` (already exists, was a bridge table with only a
+// handful of columns wired up) gets a `profile_data JSONB` column holding
+// almost everything else, plus a handful of new promoted scalar columns for
+// fields with a genuinely stable, simple shape. This deliberately does NOT
+// try to force data into the five dormant Phase-1 tables (employee_private/
+// employee_addresses/compliance_documents/staff_references/employment_history)
+// — confirmed by reading their actual column shapes against the real current
+// staff record shape (from frontend/src/types/staff.ts + a real on-disk
+// staff_data.json) that they were designed against an older, simpler shape
+// than what the 12-phase onboarding wizard now produces (e.g.
+// employee_private.criminal_offences VARCHAR(10) cannot hold criminalHistory[]
+// — an array of rich objects with offense type/court/sentence/details; three
+// DIFFERENT real shape variants coexist in production staff_data.json files
+// today — old flat legacy records, an MS-Forms-inbox importer shape, and the
+// full modern wizard shape — and nothing in this app ever queries into any
+// of this via SQL, only ever reads/writes it as a whole JS object via
+// loadAllStaff()/saveStaff()). JSONB preserves all three variants as-is, with
+// zero forced renaming/normalization, which is the same "store whatever's
+// there" tolerance the JSON-file era already had.
+//
+// current_site_id is deliberately TEXT with no FK yet — some staff records'
+// currentSite may not resolve to a real sites.id (blank/stale/pre-Sites-
+// migration drift), and a hard FK would fail every boot until that's been
+// verified clean, same as ensureSiteForeignKeysSchema's reasoning elsewhere.
+// Captured as a promise (not fire-and-forget) — the startup sequence at the
+// bottom of this file awaits it before populating STAFF_CACHE, so
+// refreshStaffCacheFull()'s `SELECT *` is guaranteed to see every column.
+var employeesExtendedSchemaReady = (async function ensureEmployeesExtendedSchema() {
   try {
-    // loadAllStaff() reads ACTIVE_DIR, a `const` declared further down this
-    // file (module-load order, not call order) — calling it synchronously
-    // from an IIFE this early throws "Cannot access before initialization"
-    // (its temporal dead zone hasn't closed yet). Yielding once here lets
-    // the rest of the module's top-level consts finish evaluating first;
-    // by the time this resumes, ACTIVE_DIR is safely initialized.
-    await Promise.resolve();
-    var staff = loadAllStaff();
-    for (var i = 0; i < staff.length; i++) {
-      var s = staff[i];
-      if (!s.id || !s.name) continue;
-      await pgPool.query(
-        `INSERT INTO employees (legacy_id, name, email, phone, nationality, legacy_folder_path, added_date)
-         VALUES ($1,$2,$3,$4,$5,$6,CURRENT_DATE)
-         ON CONFLICT (legacy_id) DO NOTHING`,
-        [s.id, s.name, s.email || null, s.phone || null, s.nationality || null, s._folderPath || null]
-      );
-    }
+    await sitesSchemaReady; // not FK'd yet, but this order keeps intent clear
+    await pgPool.query("ALTER TABLE employees ADD COLUMN IF NOT EXISTS job_role TEXT");
+    await pgPool.query("ALTER TABLE employees ADD COLUMN IF NOT EXISTS current_site_id TEXT");
+    await pgPool.query("ALTER TABLE employees ADD COLUMN IF NOT EXISTS wizard_draft JSONB");
+    await pgPool.query("ALTER TABLE employees ADD COLUMN IF NOT EXISTS pending_submission JSONB");
+    await pgPool.query("ALTER TABLE employees ADD COLUMN IF NOT EXISTS rejection_reason TEXT");
+    await pgPool.query("ALTER TABLE employees ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ");
+    // archive_reason: 'left_employment' | 'duplicate_record', null for pre-migration ex-staff (no real archive date on file — see migrate-staff.js)
+    await pgPool.query("ALTER TABLE employees ADD COLUMN IF NOT EXISTS archive_reason TEXT");
+    await pgPool.query("ALTER TABLE employees ADD COLUMN IF NOT EXISTS profile_data JSONB NOT NULL DEFAULT '{}'::jsonb");
+
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS staff_documents (
+        id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        employee_id       UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+        doc_category      TEXT NOT NULL,   -- 'document' | 'training' | 'photo'
+        doc_key           TEXT NOT NULL,
+        doc_subtype       TEXT,            -- proofOfAddress1/2's docType; null otherwise
+        filename          TEXT NOT NULL,
+        original_name     TEXT NOT NULL,
+        mime_type         TEXT,
+        size_bytes        INTEGER,
+        visible_to_staff  BOOLEAN NOT NULL DEFAULT TRUE,
+        uploaded_at       TIMESTAMPTZ DEFAULT NOW(),
+        uploaded_by       UUID REFERENCES users(id) ON DELETE SET NULL,
+        UNIQUE (employee_id, doc_category, doc_key)
+      )
+    `);
+    await pgPool.query("CREATE INDEX IF NOT EXISTS idx_staff_documents_employee ON staff_documents(employee_id)");
   } catch (e) {
-    console.error('[DB] employees backfill failed:', e.message);
+    console.error('[DB] employees extended-schema migration failed:', e.message);
+  }
+})();
+
+// Content-moderation for incident reports, WITHOUT ever touching anonymity.
+// A director can flag a report's CONTENT as inappropriate (e.g. abusive
+// language used in an anonymous submission) to remove it from the normal
+// management queue — this only ever operates on the report row itself, never
+// on reporter_id/is_anonymous, so an anonymous submitter's identity is never
+// exposed by this mechanism under any circumstance. Deliberately NOT a
+// "reveal who submitted this" feature — that was considered and rejected:
+// it would defeat the anonymity guarantee the reporting channel depends on
+// (whistleblower protection), and creates a conflict-of-interest risk if the
+// person deciding what counts as "abusive" could ever be the report's
+// subject. Flagged reports are never deleted (same "no hard delete" policy
+// as the rest of this app) — just excluded from the default list.
+(async function ensureIncidentReportModerationSchema() {
+  try {
+    await pgPool.query("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS flagged_inappropriate BOOLEAN NOT NULL DEFAULT FALSE");
+    await pgPool.query("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS flagged_at TIMESTAMPTZ");
+    await pgPool.query("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS flagged_by UUID REFERENCES users(id) ON DELETE SET NULL");
+    await pgPool.query("ALTER TABLE incident_reports ADD COLUMN IF NOT EXISTS flagged_reason TEXT");
+  } catch (e) {
+    console.error('[DB] incident report moderation schema migration failed:', e.message);
   }
 })();
 
@@ -778,7 +995,7 @@ app.post('/api/register', async function(req, res) {
     var user = r.rows[0];
 
     emp.registration_claimed = true;
-    saveStaff(emp, emp._folderPath);
+    await saveStaff(emp, emp._folderPath);
 
     var token = signToken(user);
     res.cookie('token', token, {
@@ -853,50 +1070,106 @@ function findFileByExts(dir, prefix) {
   return null;
 }
 
-function findProfilePhoto(folderPath) { return findFileByExts(folderPath, 'profile'); }
+// ── STAFF DOCUMENTS (Postgres-backed) ────────────────────────────────────────
+// Replaces the old per-person-folder document/photo/training-cert storage
+// (doc_<key>.ext, doc_training_<key>.ext, profile.ext, pending-profile.ext).
+// One flat directory per employee UUID; staff_documents is the single source
+// of truth for both "does this file exist" and its metadata — the two were
+// separate, unguarded fs writes before (see ensureEmployeesExtendedSchema
+// comment), which could already silently desync.
+var STAFF_DOCS_DIR = path.join(BASE, 'staff-documents');
+if (!fs.existsSync(STAFF_DOCS_DIR)) fs.mkdirSync(STAFF_DOCS_DIR, { recursive: true });
 
-app.get('/api/staff/:id/photo', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
+function staffDocDir(employeeId) {
+  var dir = path.join(STAFF_DOCS_DIR, employeeId);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function detectExtFromBuffer(buf, fallback) {
+  if (buf[0] === 0x89 && buf[1] === 0x50) return '.png';
+  if (buf[0] === 0xFF && buf[1] === 0xD8) return '.jpg';
+  return fallback || '.pdf';
+}
+
+async function getStaffDocRow(employeeId, category, key) {
+  var r = await pgPool.query(
+    'SELECT * FROM staff_documents WHERE employee_id=$1 AND doc_category=$2 AND doc_key=$3',
+    [employeeId, category, key]
+  );
+  return r.rows[0] || null;
+}
+
+// Removes any existing file for this slot regardless of extension, writes
+// the new one, and upserts the metadata row — one function so a route can
+// never do the file write without the DB write (or vice versa).
+async function saveStaffDocFile(employeeId, category, key, buf, ext, opts) {
+  opts = opts || {};
+  var dir = staffDocDir(employeeId);
+  ['.pdf', '.jpg', '.jpeg', '.png', '.webp'].forEach(function(e) {
+    var old = path.join(dir, category + '_' + key + e);
+    if (fs.existsSync(old)) fs.unlinkSync(old);
+  });
+  var filename = category + '_' + key + ext;
+  fs.writeFileSync(path.join(dir, filename), buf);
+  await pgPool.query(
+    `INSERT INTO staff_documents (employee_id, doc_category, doc_key, doc_subtype, filename, original_name, size_bytes, visible_to_staff, uploaded_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (employee_id, doc_category, doc_key) DO UPDATE SET
+       doc_subtype=$4, filename=$5, original_name=$6, size_bytes=$7, visible_to_staff=$8, uploaded_by=$9, uploaded_at=NOW()`,
+    [employeeId, category, key, opts.subtype || null, filename, opts.originalName || filename,
+     buf.length, opts.visibleToStaff !== undefined ? opts.visibleToStaff : true, opts.uploadedBy || null]
+  );
+  await refreshStaffCacheEntry(employeeId);
+}
+
+async function deleteStaffDocFile(employeeId, category, key) {
+  var row = await getStaffDocRow(employeeId, category, key);
+  if (row) {
+    var fp = path.join(staffDocDir(employeeId), row.filename);
+    if (fs.existsSync(fp)) fs.unlinkSync(fp);
+    await pgPool.query('DELETE FROM staff_documents WHERE id = $1', [row.id]);
+  }
+  await refreshStaffCacheEntry(employeeId);
+}
+
+app.get('/api/staff/:id/photo', requireLogin, requireOwnStaffOrPermission('staff'), async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
-    if (!emp || !emp._folderPath) return res.status(404).end();
-    var photo = findProfilePhoto(emp._folderPath);
-    if (!photo) return res.status(404).end();
-    var ext = path.extname(photo).toLowerCase();
+    if (!emp || !emp._pgId) return res.status(404).end();
+    var row = await getStaffDocRow(emp._pgId, 'photo', 'profile');
+    if (!row) return res.status(404).end();
+    var fp = path.join(staffDocDir(emp._pgId), row.filename);
+    if (!fs.existsSync(fp)) return res.status(404).end();
+    var ext = path.extname(fp).toLowerCase();
     var mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
     res.setHeader('Content-Type', mime);
     res.setHeader('Cache-Control', 'no-store');
-    res.send(fs.readFileSync(photo));
+    res.send(fs.readFileSync(fp));
   } catch(e) {
     res.status(500).end();
   }
 });
 
-app.post('/api/staff/:id/photo', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
+app.post('/api/staff/:id/photo', requireLogin, requireOwnStaffOrPermission('staff'), async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
-    if (!emp || !emp._folderPath) return res.status(404).json({ ok:false, error:'Staff not found' });
+    if (!emp || !emp._pgId) return res.status(404).json({ ok:false, error:'Staff not found' });
 
     var chunks = [];
     req.on('data', function(c){ chunks.push(c); });
-    req.on('end', function() {
-      var buf = Buffer.concat(chunks);
-      // Detect image type from header bytes
-      var ext = '.jpg';
-      if (buf[0]===0x89 && buf[1]===0x50) ext = '.png';
-      else if (buf[0]===0xFF && buf[1]===0xD8) ext = '.jpg';
-
-      // Remove any old profile photo
-      ['.jpg','.jpeg','.png','.webp'].forEach(function(e){
-        var old = path.join(emp._folderPath, 'profile' + e);
-        if (fs.existsSync(old)) fs.unlinkSync(old);
-      });
-
-      var dest = path.join(emp._folderPath, 'profile' + ext);
-      fs.writeFileSync(dest, buf);
-      console.log('[PHOTO] Saved profile photo for', emp.name);
-      res.json({ ok: true });
+    req.on('end', async function() {
+      try {
+        var buf = Buffer.concat(chunks);
+        var ext = detectExtFromBuffer(buf, '.jpg');
+        await saveStaffDocFile(emp._pgId, 'photo', 'profile', buf, ext, {});
+        console.log('[PHOTO] Saved profile photo for', emp.name);
+        res.json({ ok: true });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: e.message });
+      }
     });
   } catch(e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -940,22 +1213,13 @@ var TRAINING_KEY_LABELS = {
   cscsTest: 'CSCS Health & Safety Test certificate',
 };
 
-function findDocFile(folderPath, docKey) {
-  var exts = ['.pdf','.jpg','.jpeg','.png','.webp'];
-  for (var e of exts) {
-    var dp = path.join(folderPath, 'doc_' + docKey + e);
-    if (fs.existsSync(dp)) return dp;
-  }
-  return null;
-}
-
 app.get('/api/staff/:id/documents/:docKey', requireLogin, requireOwnStaffOrPermission('staff'), async function(req, res) {
   var docKey = req.params.docKey;
   if (!ALLOWED_DOC_KEYS.includes(docKey)) return res.status(400).end();
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
-    if (!emp || !emp._folderPath) return res.status(404).end();
+    if (!emp || !emp._pgId) return res.status(404).end();
     // requireOwnStaffOrPermission already let the staff member themselves
     // through for their own :id — this extra check catches that specific
     // case for manager-only docs, since the middleware alone can't tell
@@ -964,8 +1228,10 @@ app.get('/api/staff/:id/documents/:docKey', requireLogin, requireOwnStaffOrPermi
       var visMeta = emp.documents && emp.documents[docKey];
       if (!visMeta || visMeta.visibleToStaff !== true) return res.status(404).end();
     }
-    var fp = findDocFile(emp._folderPath, docKey);
-    if (!fp) return res.status(404).end();
+    var row = await getStaffDocRow(emp._pgId, 'document', docKey);
+    if (!row) return res.status(404).end();
+    var fp = path.join(staffDocDir(emp._pgId), row.filename);
+    if (!fs.existsSync(fp)) return res.status(404).end();
     var ext = path.extname(fp).toLowerCase();
     var mime = ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
     res.setHeader('Content-Type', mime);
@@ -986,44 +1252,33 @@ app.post('/api/staff/:id/documents/:docKey', requireLogin, requireOwnStaffOrPerm
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
-    if (!emp || !emp._folderPath) return res.status(404).json({ ok:false, error:'Staff not found' });
+    if (!emp || !emp._pgId) return res.status(404).json({ ok:false, error:'Staff not found' });
     var chunks = [];
     req.on('data', function(c){ chunks.push(c); });
-    req.on('end', function() {
-      var buf = Buffer.concat(chunks);
-      // Detect file type from magic bytes
-      var ext = '.pdf';
-      if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
-      else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
-      // Remove any existing file for this docKey
-      ['.pdf','.jpg','.jpeg','.png','.webp'].forEach(function(e){
-        var old = path.join(emp._folderPath, 'doc_' + docKey + e);
-        if (fs.existsSync(old)) fs.unlinkSync(old);
-      });
-      fs.writeFileSync(path.join(emp._folderPath, 'doc_' + docKey + ext), buf);
-      // Auto-update metadata in staff_data.json
-      var jp = path.join(emp._folderPath, 'staff_data.json');
-      var data = JSON.parse(fs.readFileSync(jp, 'utf8'));
-      if (!data.documents) data.documents = {};
-      var today = new Date().toISOString().split('T')[0];
-      // Manager-only docs default HIDDEN from the subject unless the uploader
-      // explicitly opts them in via this header at upload time (see
-      // MANAGER_ONLY_DOC_KEYS comment) — everything else stays visible, same
-      // as before this feature existed.
-      var visibleToStaff = MANAGER_ONLY_DOC_KEYS.includes(docKey)
-        ? req.query.visibleToStaff === 'true'
-        : true;
-      data.documents[docKey] = { uploaded: true, date: today, visibleToStaff: visibleToStaff };
-      fs.writeFileSync(jp, JSON.stringify(data, null, 2));
-      console.log('[DOCS] Saved', docKey, 'for', emp.name);
-      if (req.user.role === 'staff') {
-        createNotification({
-          type: 'document', actorName: emp.name,
-          summary: 'uploaded ' + (DOC_KEY_LABELS[docKey] || docKey),
-          linkStaffId: req.params.id, linkTab: 'documents',
-        });
+    req.on('end', async function() {
+      try {
+        var buf = Buffer.concat(chunks);
+        var ext = detectExtFromBuffer(buf, '.pdf');
+        // Manager-only docs default HIDDEN from the subject unless the uploader
+        // explicitly opts them in via this header at upload time (see
+        // MANAGER_ONLY_DOC_KEYS comment) — everything else stays visible, same
+        // as before this feature existed.
+        var visibleToStaff = MANAGER_ONLY_DOC_KEYS.includes(docKey)
+          ? req.query.visibleToStaff === 'true'
+          : true;
+        await saveStaffDocFile(emp._pgId, 'document', docKey, buf, ext, { visibleToStaff: visibleToStaff });
+        console.log('[DOCS] Saved', docKey, 'for', emp.name);
+        if (req.user.role === 'staff') {
+          createNotification({
+            type: 'document', actorName: emp.name,
+            summary: 'uploaded ' + (DOC_KEY_LABELS[docKey] || docKey),
+            linkStaffId: req.params.id, linkTab: 'documents',
+          });
+        }
+        res.json({ ok:true, date: new Date().toISOString().slice(0, 10) });
+      } catch (e) {
+        res.status(500).json({ ok:false, error: e.message });
       }
-      res.json({ ok:true, date: today });
     });
   } catch(e) {
     res.status(500).json({ ok:false, error: e.message });
@@ -1032,19 +1287,14 @@ app.post('/api/staff/:id/documents/:docKey', requireLogin, requireOwnStaffOrPerm
 
 // Management-only — deliberately requirePermission, not requireOwnStaffOrPermission,
 // so a staff member can never remove a document their manager has already reviewed.
-app.delete('/api/staff/:id/documents/:docKey', requireLogin, requirePermission('staff'), function(req, res) {
+app.delete('/api/staff/:id/documents/:docKey', requireLogin, requirePermission('staff'), async function(req, res) {
   var docKey = req.params.docKey;
   if (!ALLOWED_DOC_KEYS.includes(docKey)) return res.status(400).json({ ok:false, error:'Invalid document key' });
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
-    if (!emp || !emp._folderPath) return res.status(404).json({ ok:false, error:'Staff not found' });
-    var fp = findDocFile(emp._folderPath, docKey);
-    if (fp) fs.unlinkSync(fp);
-    var jp = path.join(emp._folderPath, 'staff_data.json');
-    var data = JSON.parse(fs.readFileSync(jp, 'utf8'));
-    if (data.documents) delete data.documents[docKey];
-    fs.writeFileSync(jp, JSON.stringify(data, null, 2));
+    if (!emp || !emp._pgId) return res.status(404).json({ ok:false, error:'Staff not found' });
+    await deleteStaffDocFile(emp._pgId, 'document', docKey);
     console.log('[DOCS] Deleted', docKey, 'for', emp.name);
     res.json({ ok:true });
   } catch(e) {
@@ -1055,7 +1305,7 @@ app.delete('/api/staff/:id/documents/:docKey', requireLogin, requirePermission('
 // Flip visibility on an already-uploaded manager-only document without
 // re-uploading it — the manager's own control over "can this person see
 // what I checked", separate from the upload step itself.
-app.patch('/api/staff/:id/documents/:docKey/visibility', requireLogin, requirePermission('staff'), function(req, res) {
+app.patch('/api/staff/:id/documents/:docKey/visibility', requireLogin, requirePermission('staff'), async function(req, res) {
   var docKey = req.params.docKey;
   if (!MANAGER_ONLY_DOC_KEYS.includes(docKey)) {
     return res.status(400).json({ ok:false, error: 'Visibility is not configurable for this document type.' });
@@ -1063,13 +1313,13 @@ app.patch('/api/staff/:id/documents/:docKey/visibility', requireLogin, requirePe
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
-    if (!emp || !emp._folderPath) return res.status(404).json({ ok:false, error:'Staff not found' });
-    var jp = path.join(emp._folderPath, 'staff_data.json');
-    var data = JSON.parse(fs.readFileSync(jp, 'utf8'));
-    if (!data.documents || !data.documents[docKey]) return res.status(404).json({ ok:false, error: 'Document not found' });
-    data.documents[docKey].visibleToStaff = !!(req.body && req.body.visibleToStaff);
-    fs.writeFileSync(jp, JSON.stringify(data, null, 2));
-    res.json({ ok:true, visibleToStaff: data.documents[docKey].visibleToStaff });
+    if (!emp || !emp._pgId) return res.status(404).json({ ok:false, error:'Staff not found' });
+    var row = await getStaffDocRow(emp._pgId, 'document', docKey);
+    if (!row) return res.status(404).json({ ok:false, error: 'Document not found' });
+    var visibleToStaff = !!(req.body && req.body.visibleToStaff);
+    await pgPool.query('UPDATE staff_documents SET visible_to_staff = $1 WHERE id = $2', [visibleToStaff, row.id]);
+    await refreshStaffCacheEntry(emp._pgId);
+    res.json({ ok:true, visibleToStaff: visibleToStaff });
   } catch(e) {
     res.status(500).json({ ok:false, error: e.message });
   }
@@ -1078,15 +1328,17 @@ app.patch('/api/staff/:id/documents/:docKey/visibility', requireLogin, requirePe
 // ── TRAINING CERTIFICATE FILES ────────────────────────────────────────────────
 // Staff upload their own certificate for each standard course; management can
 // only view whether one is on file (no upload button on that side of the UI).
-app.get('/api/staff/:id/training/:key/certificate', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
+app.get('/api/staff/:id/training/:key/certificate', requireLogin, requireOwnStaffOrPermission('staff'), async function(req, res) {
   var key = req.params.key;
   if (!ALLOWED_TRAINING_KEYS.includes(key)) return res.status(400).end();
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
-    if (!emp || !emp._folderPath) return res.status(404).end();
-    var fp = findDocFile(emp._folderPath, 'training_' + key);
-    if (!fp) return res.status(404).end();
+    if (!emp || !emp._pgId) return res.status(404).end();
+    var row = await getStaffDocRow(emp._pgId, 'training', key);
+    if (!row) return res.status(404).end();
+    var fp = path.join(staffDocDir(emp._pgId), row.filename);
+    if (!fs.existsSync(fp)) return res.status(404).end();
     var ext = path.extname(fp).toLowerCase();
     var mime = ext === '.pdf' ? 'application/pdf' : ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
     res.setHeader('Content-Type', mime);
@@ -1098,42 +1350,32 @@ app.get('/api/staff/:id/training/:key/certificate', requireLogin, requireOwnStaf
   }
 });
 
-app.post('/api/staff/:id/training/:key/certificate', requireLogin, requireOwnStaffOrPermission('staff'), function(req, res) {
+app.post('/api/staff/:id/training/:key/certificate', requireLogin, requireOwnStaffOrPermission('staff'), async function(req, res) {
   var key = req.params.key;
   if (!ALLOWED_TRAINING_KEYS.includes(key)) return res.status(400).json({ ok:false, error:'Invalid training key' });
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
-    if (!emp || !emp._folderPath) return res.status(404).json({ ok:false, error:'Staff not found' });
+    if (!emp || !emp._pgId) return res.status(404).json({ ok:false, error:'Staff not found' });
     var chunks = [];
     req.on('data', function(c){ chunks.push(c); });
-    req.on('end', function() {
-      var buf = Buffer.concat(chunks);
-      var ext = '.pdf';
-      if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
-      else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
-      ['.pdf','.jpg','.jpeg','.png','.webp'].forEach(function(e){
-        var old = path.join(emp._folderPath, 'doc_training_' + key + e);
-        if (fs.existsSync(old)) fs.unlinkSync(old);
-      });
-      fs.writeFileSync(path.join(emp._folderPath, 'doc_training_' + key + ext), buf);
-      var jp = path.join(emp._folderPath, 'staff_data.json');
-      var data = JSON.parse(fs.readFileSync(jp, 'utf8'));
-      if (!data.training) data.training = {};
-      if (!data.training[key]) data.training[key] = {};
-      var today = new Date().toISOString().split('T')[0];
-      data.training[key].certUploaded = true;
-      data.training[key].certDate = today;
-      fs.writeFileSync(jp, JSON.stringify(data, null, 2));
-      console.log('[TRAINING CERT] Saved', key, 'for', emp.name);
-      if (req.user.role === 'staff') {
-        createNotification({
-          type: 'training_cert', actorName: emp.name,
-          summary: 'uploaded ' + (TRAINING_KEY_LABELS[key] || key),
-          linkStaffId: req.params.id, linkTab: 'training',
-        });
+    req.on('end', async function() {
+      try {
+        var buf = Buffer.concat(chunks);
+        var ext = detectExtFromBuffer(buf, '.pdf');
+        await saveStaffDocFile(emp._pgId, 'training', key, buf, ext, {});
+        console.log('[TRAINING CERT] Saved', key, 'for', emp.name);
+        if (req.user.role === 'staff') {
+          createNotification({
+            type: 'training_cert', actorName: emp.name,
+            summary: 'uploaded ' + (TRAINING_KEY_LABELS[key] || key),
+            linkStaffId: req.params.id, linkTab: 'training',
+          });
+        }
+        res.json({ ok:true, date: new Date().toISOString().slice(0, 10) });
+      } catch (e) {
+        res.status(500).json({ ok:false, error: e.message });
       }
-      res.json({ ok:true, date: today });
     });
   } catch(e) {
     res.status(500).json({ ok:false, error: e.message });
@@ -1141,22 +1383,14 @@ app.post('/api/staff/:id/training/:key/certificate', requireLogin, requireOwnSta
 });
 
 // Management-only, same reasoning as the documents delete route above.
-app.delete('/api/staff/:id/training/:key/certificate', requireLogin, requirePermission('staff'), function(req, res) {
+app.delete('/api/staff/:id/training/:key/certificate', requireLogin, requirePermission('staff'), async function(req, res) {
   var key = req.params.key;
   if (!ALLOWED_TRAINING_KEYS.includes(key)) return res.status(400).json({ ok:false, error:'Invalid training key' });
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
-    if (!emp || !emp._folderPath) return res.status(404).json({ ok:false, error:'Staff not found' });
-    var fp = findDocFile(emp._folderPath, 'training_' + key);
-    if (fp) fs.unlinkSync(fp);
-    var jp = path.join(emp._folderPath, 'staff_data.json');
-    var data = JSON.parse(fs.readFileSync(jp, 'utf8'));
-    if (data.training && data.training[key]) {
-      data.training[key].certUploaded = false;
-      delete data.training[key].certDate;
-    }
-    fs.writeFileSync(jp, JSON.stringify(data, null, 2));
+    if (!emp || !emp._pgId) return res.status(404).json({ ok:false, error:'Staff not found' });
+    await deleteStaffDocFile(emp._pgId, 'training', key);
     console.log('[TRAINING CERT] Deleted', key, 'for', emp.name);
     res.json({ ok:true });
   } catch(e) {
@@ -1317,6 +1551,18 @@ function nextFreeNameSuffix(name) {
   }
 }
 
+// Postgres-backed equivalent of nextFreeNameSuffix — finds the lowest
+// numeric suffix not already taken by an existing employees.legacy_id, used
+// to disambiguate two different people who share a name (the folder-name
+// suffix concept above doesn't apply any more; only the stored id needs to
+// stay unique).
+async function nextFreeIdSuffix(baseId) {
+  for (var n = 2; ; n++) {
+    var r = await pgPool.query('SELECT 1 FROM employees WHERE legacy_id = $1', [baseId + '-' + n]);
+    if (!r.rows.length) return n;
+  }
+}
+
 // ── EXCEL HELPERS ─────────────────────────────────────────────────────────────
 var MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function isoToExcelDate(isoStr) {
@@ -1460,92 +1706,279 @@ function updateReferenceTracker(emp) {
   }
 }
 
-// ── LOAD STAFF ────────────────────────────────────────────────────────────────
-function loadAllStaff() {
-  var staff = [];
-  if (!fs.existsSync(ACTIVE_DIR)) return staff;
+// ── STAFF: POSTGRES-BACKED, IN-MEMORY-CACHED ──────────────────────────────────
+// loadAllStaff()/saveStaff() are the ONLY two functions most of this file's
+// ~50 call sites need to know about. loadAllStaff() stays SYNCHRONOUS —
+// reading from STAFF_CACHE rather than awaiting Postgres — specifically so
+// none of those ~50 call sites (messaging, incident reports, disciplinary
+// records, custom forms, compliance alerts, dashboard stats, Excel/HTML
+// reports, the onboarding wizard) need converting to async. This is safe
+// because: the whole roster is small (tens to low hundreds of people), this
+// app runs as a single Node process (see docker-compose.yml — no horizontal
+// scaling), and nothing outside this process writes to `employees`/
+// `staff_documents` except the one-time migrate-staff.js (run with the app
+// stopped). saveStaff() itself, and the document/photo/training-cert upload
+// routes below (which bypass saveStaff() entirely, same as they bypassed it
+// pre-migration), are the only writers, and each refreshes the one affected
+// cache entry immediately after its own write — so the cache is never stale
+// for longer than one request.
+var STAFF_CACHE = [];
 
-  // Build set of ex-staff names to exclude (OneDrive may restore deleted
-  // folders as a stray duplicate active copy). Only counts an ex-staff
-  // entry that still has a real staff_data.json — a folder with no data
-  // file isn't proof of an actual duplicate person, and must never be
-  // allowed to silently hide an unrelated active profile of the same name
-  // (this exact gap hid a live, fully-documented staff member's record —
-  // see the Abu Baker incident).
-  var exDir = path.join(BASE, '02 - Vetting & Screening', 'Ex-Staff');
-  var exNames = new Set();
-  if (fs.existsSync(exDir)) {
-    fs.readdirSync(exDir).forEach(function(d) {
-      if (!fs.existsSync(path.join(exDir, d, 'staff_data.json'))) return;
-      var clean = cleanFolderName(d);
-      if (clean) exNames.add(clean);
-    });
-  }
+// Fields that are real Postgres columns (or purely computed/retired) and
+// must never be copied into profile_data — kept in one place so saveStaff()
+// and the migration script apply the exact same rule.
+var STAFF_STRIP_FIELDS = ['id','name','email','phone','phoneLandline','dateOfBirth','dob','placeOfBirth',
+  'nationality','gender','drivingLicence','deployStatus','currentSite','contract','induction','addedDate',
+  'status','jobRole','wizard_draft','pending_submission','rejection_reason','overall','_folderPath',
+  '_nameSuffix','_pgId','documents','archived_at','archive_reason'];
 
-  fs.readdirSync(ACTIVE_DIR).forEach(function(d) {
-    var fp = path.join(ACTIVE_DIR, d);
-    try {
-      if (!fs.statSync(fp).isDirectory()) return;
-      var jp = path.join(fp, 'staff_data.json');
-      if (!fs.existsSync(jp)) return;
-      // Skip if this person is also in Ex-Staff
-      var clean = cleanFolderName(d);
-      if (exNames.has(clean)) return;
-      var emp = JSON.parse(fs.readFileSync(jp,'utf8'));
-      emp._folderPath = fp;
-      emp.overall = calcOverall(emp);
-      staff.push(emp);
-    } catch(e) {}
+// Rebuilds the flat `emp` object shape every existing call site already
+// expects, from a Postgres `employees` row + that employee's `staff_documents`
+// rows. Order matters: profile_data first (the base), then real columns
+// (only where non-null, so an absent key stays absent rather than becoming
+// a stored `null` — many call sites do `if (emp.rejectionReason)`-style
+// falsy checks), then computed fields last.
+// node-postgres parses a DATE column into a JS Date object by default (not
+// a string) — String(dateObj) calls .toString() ("Tue May 15 1990..."), not
+// .toISOString(), so a naive .slice(0,10) silently truncates to "Tue May 15"
+// instead of "1990-05-15" (found via live testing — see date_of_birth below).
+// Handles both cases defensively since some callers may pass an already-ISO
+// string (e.g. from migrate-staff.js's own inserted values on re-read).
+function pgDateToStr(v) {
+  if (!v) return null;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v).slice(0, 10);
+}
+
+function reconstructEmp(row, docRows) {
+  var flat = Object.assign({}, row.profile_data || {});
+  var core = {
+    id: row.legacy_id, name: row.name, email: row.email, phone: row.phone,
+    phoneLandline: row.phone_landline,
+    dateOfBirth: pgDateToStr(row.date_of_birth),
+    dob: pgDateToStr(row.date_of_birth),
+    placeOfBirth: row.place_of_birth, nationality: row.nationality, gender: row.gender,
+    drivingLicence: row.driving_licence, status: row.status, deployStatus: row.deploy_status,
+    contract: row.contract, induction: row.induction,
+    addedDate: pgDateToStr(row.added_date),
+    jobRole: row.job_role, currentSite: row.current_site_id,
+    wizard_draft: row.wizard_draft, pending_submission: row.pending_submission,
+    rejection_reason: row.rejection_reason,
+  };
+  Object.keys(core).forEach(function(k) {
+    if (core[k] !== null && core[k] !== undefined) flat[k] = core[k];
   });
-  return staff;
+  flat._pgId = row.id;
+  flat.archived_at = row.archived_at;
+  flat.archive_reason = row.archive_reason;
+  applyStaffDocuments(flat, docRows);
+  flat.overall = calcOverall(flat);
+  return flat;
+}
+
+// Merges staff_documents rows back into the documents.{key}.{uploaded,date}
+// and training.{key}.{certUploaded,certDate} shape the frontend expects —
+// this is the single source of truth for "is this file actually on disk",
+// closing a drift class the old system had (it wrote the boolean flag and
+// the file as two separate, unguarded fs writes that could already desync).
+function applyStaffDocuments(flat, docRows) {
+  var documents = {};
+  var trainingUpdates = {};
+  (docRows || []).forEach(function(d) {
+    var dateStr = d.uploaded_at ? new Date(d.uploaded_at).toISOString().slice(0, 10) : null;
+    if (d.doc_category === 'document') {
+      var entry = { uploaded: true, date: dateStr, visibleToStaff: d.visible_to_staff };
+      if (d.doc_subtype) entry.docType = d.doc_subtype;
+      documents[d.doc_key] = entry;
+    } else if (d.doc_category === 'training') {
+      trainingUpdates[d.doc_key] = { certUploaded: true, certDate: dateStr };
+    }
+  });
+  flat.documents = documents;
+  var training = Object.assign({}, flat.training);
+  Object.keys(trainingUpdates).forEach(function(k) {
+    training[k] = Object.assign({}, training[k], trainingUpdates[k]);
+  });
+  flat.training = training;
+}
+
+function deepCloneEmp(e) { return JSON.parse(JSON.stringify(e)); }
+
+async function refreshStaffCacheEntry(employeeId) {
+  var r = await pgPool.query('SELECT * FROM employees WHERE id = $1', [employeeId]);
+  if (!r.rows.length) {
+    STAFF_CACHE = STAFF_CACHE.filter(function(e) { return e._pgId !== employeeId; });
+    return;
+  }
+  var docRows = (await pgPool.query('SELECT * FROM staff_documents WHERE employee_id = $1', [employeeId])).rows;
+  var reconstructed = reconstructEmp(r.rows[0], docRows);
+  var idx = STAFF_CACHE.findIndex(function(e) { return e._pgId === employeeId; });
+  if (idx === -1) STAFF_CACHE.push(reconstructed);
+  else STAFF_CACHE[idx] = reconstructed;
+}
+
+async function refreshStaffCacheFull() {
+  var rows = (await pgPool.query('SELECT * FROM employees')).rows;
+  var docsByEmployee = {};
+  (await pgPool.query('SELECT * FROM staff_documents')).rows.forEach(function(d) {
+    (docsByEmployee[d.employee_id] = docsByEmployee[d.employee_id] || []).push(d);
+  });
+  STAFF_CACHE = rows.map(function(row) { return reconstructEmp(row, docsByEmployee[row.id] || []); });
+}
+
+// ── LOAD STAFF ────────────────────────────────────────────────────────────────
+// Byte-shape-identical to the old JSON-file version: active staff only
+// (Ex-Staff — status='archived' — was always a separate directory this never
+// scanned; status='duplicate' from autoDedup() was always invisible to both
+// views via the separate "Duplicate Archive" folder, preserved here by
+// simply not returning it from either accessor). Deep-cloned on every call,
+// same as the old version implicitly was by re-parsing JSON from disk fresh
+// each time — so a caller that finds-then-mutates-then-saves never corrupts
+// the shared cache if it forgets to save, or the save fails partway.
+function loadAllStaff() {
+  return STAFF_CACHE.filter(function(e) { return e.status === 'active'; }).map(deepCloneEmp);
+}
+
+function loadExStaff() {
+  return STAFF_CACHE.filter(function(e) { return e.status === 'archived'; }).map(deepCloneEmp);
 }
 
 // ── SAVE STAFF ────────────────────────────────────────────────────────────────
-function saveStaff(emp, oldFolderPath) {
+// oldFolderPath is accepted (and ignored) purely so every existing call site
+// — saveStaff(emp, emp._folderPath) — keeps working unedited; _folderPath is
+// always absent on a Postgres-backed emp object, so it always evaluates to
+// undefined at the call site anyway.
+async function saveStaff(emp, oldFolderPath) {
   emp.overall = calcOverall(emp);
-  var newFolder = folderForEmp(emp);
-  if (oldFolderPath && oldFolderPath !== newFolder && fs.existsSync(oldFolderPath)) {
-    try { fs.renameSync(oldFolderPath, newFolder); } catch(e) { newFolder = oldFolderPath; }
+
+  var core = {
+    name: emp.name || '', email: emp.email || null, phone: emp.phone || null,
+    phone_landline: emp.phoneLandline || null,
+    date_of_birth: emp.dateOfBirth || emp.dob || null,
+    place_of_birth: emp.placeOfBirth || null, nationality: emp.nationality || null,
+    gender: emp.gender || null, driving_licence: emp.drivingLicence || null,
+    status: emp.status || 'active', deploy_status: emp.deployStatus || 'inactive',
+    contract: emp.contract || null, induction: !!emp.induction,
+    added_date: emp.addedDate || null, job_role: emp.jobRole || null,
+    current_site_id: emp.currentSite || null,
+    wizard_draft: emp.wizard_draft ? JSON.stringify(emp.wizard_draft) : null,
+    pending_submission: emp.pending_submission ? JSON.stringify(emp.pending_submission) : null,
+    rejection_reason: emp.rejection_reason || null,
+  };
+
+  var profileData = Object.assign({}, emp);
+  STAFF_STRIP_FIELDS.forEach(function(k) { delete profileData[k]; });
+  // training.*.certUploaded/certDate are reconstructed from staff_documents
+  // at read time (see applyStaffDocuments) — strip them here so a stale copy
+  // can never be written back and fight with the real source of truth.
+  if (profileData.training) {
+    var strippedTraining = {};
+    Object.keys(profileData.training).forEach(function(k) {
+      var t = profileData.training[k];
+      if (t && typeof t === 'object' && !Array.isArray(t)) {
+        strippedTraining[k] = Object.assign({}, t);
+        delete strippedTraining[k].certUploaded;
+        delete strippedTraining[k].certDate;
+      } else {
+        strippedTraining[k] = t;
+      }
+    });
+    profileData.training = strippedTraining;
   }
-  if (!fs.existsSync(newFolder)) fs.mkdirSync(newFolder, {recursive:true});
-  SUBFOLDERS.forEach(function(sf) {
-    var p = path.join(newFolder, sf);
-    if (!fs.existsSync(p)) fs.mkdirSync(p, {recursive:true});
-  });
-  emp._folderPath = newFolder;
-  fs.writeFileSync(path.join(newFolder,'staff_data.json'), JSON.stringify(emp,null,2), 'utf8');
-  fs.writeFileSync(path.join(newFolder,'COMPLIANCE SUMMARY - '+safeName(emp.name)+'.html'), buildReportHTML(emp), 'utf8');
-  scheduleGitPush(emp.name);
-  return newFolder;
+
+  var existing = await pgPool.query('SELECT id FROM employees WHERE legacy_id = $1', [emp.id]);
+  var employeeId;
+  if (existing.rows.length) {
+    employeeId = existing.rows[0].id;
+    await pgPool.query(
+      `UPDATE employees SET name=$1, email=$2, phone=$3, phone_landline=$4, date_of_birth=$5,
+        place_of_birth=$6, nationality=$7, gender=$8, driving_licence=$9, status=$10, deploy_status=$11,
+        contract=$12, induction=$13, added_date=$14, job_role=$15, current_site_id=$16,
+        wizard_draft=$17, pending_submission=$18, rejection_reason=$19, profile_data=$20, updated_at=NOW()
+       WHERE id=$21`,
+      [core.name, core.email, core.phone, core.phone_landline, core.date_of_birth, core.place_of_birth,
+       core.nationality, core.gender, core.driving_licence, core.status, core.deploy_status, core.contract,
+       core.induction, core.added_date, core.job_role, core.current_site_id, core.wizard_draft,
+       core.pending_submission, core.rejection_reason, JSON.stringify(profileData), employeeId]
+    );
+  } else {
+    var ins = await pgPool.query(
+      `INSERT INTO employees (legacy_id, name, email, phone, phone_landline, date_of_birth, place_of_birth,
+         nationality, gender, driving_licence, status, deploy_status, contract, induction, added_date,
+         job_role, current_site_id, wizard_draft, pending_submission, rejection_reason, profile_data)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING id`,
+      [emp.id, core.name, core.email, core.phone, core.phone_landline, core.date_of_birth, core.place_of_birth,
+       core.nationality, core.gender, core.driving_licence, core.status, core.deploy_status, core.contract,
+       core.induction, core.added_date, core.job_role, core.current_site_id, core.wizard_draft,
+       core.pending_submission, core.rejection_reason, JSON.stringify(profileData)]
+    );
+    employeeId = ins.rows[0].id;
+  }
+
+  await refreshStaffCacheEntry(employeeId);
+  return employeeId;
 }
 
 // ── DEPLOYMENT SITES ──────────────────────────────────────────────────────────
-function loadSites() {
-  if (!fs.existsSync(SITES_FILE)) return [];
-  try { return JSON.parse(fs.readFileSync(SITES_FILE, 'utf8')).sites || []; } catch(e) { return []; }
+// Postgres-backed (see ensureSitesSchema above). welfare_items/assigned_staff
+// are reconstructed via LEFT JOIN so every route's response shape stays
+// byte-identical to the old deployment-sites.json era — SitesPage.tsx reads
+// site.welfare_items?.length / site.assigned_staff?.length directly off the
+// list response, so those arrays must stay embedded, not dropped.
+var SITE_JOIN_SQL =
+  "SELECT s.*, " +
+  "  COALESCE(w.items, '[]'::json) AS welfare_items, " +
+  "  COALESCE(a.ids, '[]'::json) AS assigned_staff " +
+  "FROM sites s " +
+  "LEFT JOIN ( " +
+  "  SELECT site_id, json_agg(json_build_object( " +
+  "    'id', id, 'name', name, 'quantity', quantity, 'condition', condition, " +
+  "    'serial_number', serial_number, 'notes', notes, 'image_ext', image_ext " +
+  "  ) ORDER BY created_at) AS items " +
+  "  FROM site_welfare_items GROUP BY site_id " +
+  ") w ON w.site_id = s.id " +
+  "LEFT JOIN ( " +
+  "  SELECT site_id, json_agg(employee_legacy_id ORDER BY assigned_at) AS ids " +
+  "  FROM site_staff_assignments GROUP BY site_id " +
+  ") a ON a.site_id = s.id";
+
+async function loadSites() {
+  var r = await pgPool.query(SITE_JOIN_SQL + " ORDER BY s.created_at");
+  return r.rows;
 }
-function saveSites(sites) {
-  fs.writeFileSync(SITES_FILE, JSON.stringify({ sites: sites }, null, 2), 'utf8');
+async function getSiteById(siteId) {
+  var r = await pgPool.query(SITE_JOIN_SQL + " WHERE s.id = $1", [siteId]);
+  return r.rows[0] || null;
 }
 
 // ── INIT FROM SPREADSHEET ─────────────────────────────────────────────────────
-function initFromSpreadsheet() {
+// Only ever fills gaps — never overwrites an existing record of the same
+// name (byte-identical semantics to the old fs.existsSync(jp) check, now
+// checked against the freshly-populated STAFF_CACHE rather than a fresh
+// Postgres query: this runs once, sequentially, at startup right after
+// refreshStaffCacheFull(), before the server accepts any traffic, so the
+// cache is guaranteed warm and there's no concurrent-write race to guard
+// against the way there is for the live POST /api/staff Abu Baker check).
+async function initFromSpreadsheet() {
   try {
     var wb = XLSX.readFile(SPREADSHEET);
     var ws = wb.Sheets[wb.SheetNames[0]];
     var rows = XLSX.utils.sheet_to_json(ws,{header:1});
-    rows.slice(1).forEach(function(r) {
-      if (!r || !r[0]) return;
+    for (const r of rows.slice(1)) {
+      if (!r || !r[0]) continue;
       var name = String(r[0]).trim();
-      if (!name) return;
+      if (!name) continue;
 
       // Sanity check: real staff rows always have a real phone number.
       // Legend/summary/caption rows in the spreadsheet (e.g. "COLOUR KEY",
       // "TOTAL STAFF TRACKED") have either a blank phone column or non-numeric
       // text there instead — skip anything that isn't a real phone number so
-      // it doesn't get created as a fake staff folder on every app restart.
+      // it doesn't get created as a fake staff record on every app restart.
       var phoneDigits = (r[3] ? String(r[3]) : '').replace(/\D/g, '');
-      if (phoneDigits.length < 7) return;
+      if (phoneDigits.length < 7) continue;
+
+      var already = STAFF_CACHE.some(function(e) { return safeName(e.name).toUpperCase() === safeName(name).toUpperCase(); });
+      if (already) continue;
 
       var siaNum = r[5] ? String(r[5]).trim().replace(/\s+/g,'') : '';
       if (['N/A','NA',''].includes(siaNum.toUpperCase())) siaNum = '';
@@ -1574,32 +2007,10 @@ function initFromSpreadsheet() {
         },
         contract: '', induction: false, status: 'active', addedDate: getTodayStr()
       };
-      emp.overall = calcOverall(emp);
 
-      // Find existing folder (any emoji prefix + name)
-      var matched = null;
-      if (fs.existsSync(ACTIVE_DIR)) {
-        fs.readdirSync(ACTIVE_DIR).forEach(function(d) {
-          var clean = d.replace(/^[\s\S]{1,3}/,'').trim();
-          if (clean.toLowerCase() === name.toLowerCase()) matched = path.join(ACTIVE_DIR, d);
-        });
-      }
-
-      var target = matched || folderForEmp(emp);
-      if (!fs.existsSync(target)) fs.mkdirSync(target, {recursive:true});
-      SUBFOLDERS.forEach(function(sf) {
-        var p = path.join(target, sf);
-        if (!fs.existsSync(p)) fs.mkdirSync(p, {recursive:true});
-      });
-
-      var jp = path.join(target, 'staff_data.json');
-      if (!fs.existsSync(jp)) {
-        emp._folderPath = target;
-        fs.writeFileSync(jp, JSON.stringify(emp,null,2), 'utf8');
-        fs.writeFileSync(path.join(target,'COMPLIANCE SUMMARY - '+safeName(name)+'.html'), buildReportHTML(emp), 'utf8');
-        console.log('  Init:', name);
-      }
-    });
+      await saveStaff(emp, null);
+      console.log('  Init:', name);
+    }
   } catch(e) {
     console.error('Spreadsheet init error:', e.message);
   }
@@ -1723,10 +2134,10 @@ function normDeployStatus(raw) {
   return 'unknown';
 }
 
-app.get('/api/staff/export', requireLogin, requirePermission('staff'), function(req, res) {
+app.get('/api/staff/export', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
     var all = loadAllStaff();
-    var sites = loadSites();
+    var sites = await loadSites();
     var siteName = function(id) {
       var s = sites.find(function(x) { return x.id === id; });
       return s ? s.name : (id || '');
@@ -1810,14 +2221,14 @@ app.get('/api/compliance/alerts', requireLogin, requirePermission('staff'), func
 });
 
 // ── DEPLOYMENT STATUS ─────────────────────────────────────────────────────────
-app.patch('/api/staff/:id/deploy', requireLogin, requirePermission('staff'), function(req, res) {
+app.patch('/api/staff/:id/deploy', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
     if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
     emp.deployStatus = req.body.deployStatus || emp.deployStatus || 'inactive';
     if (req.body.currentSite !== undefined) emp.currentSite = req.body.currentSite;
-    saveStaff(emp, emp._folderPath);
+    await saveStaff(emp, emp._folderPath);
     res.json({ ok: true });
   } catch(e) {
     console.error(e);
@@ -1826,13 +2237,13 @@ app.patch('/api/staff/:id/deploy', requireLogin, requirePermission('staff'), fun
 });
 
 // ── TRAINING ──────────────────────────────────────────────────────────────────
-app.patch('/api/staff/:id/training', requireLogin, requirePermission('staff'), function(req, res) {
+app.patch('/api/staff/:id/training', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
     if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
     emp.training = req.body.training || {};
-    saveStaff(emp, emp._folderPath);
+    await saveStaff(emp, emp._folderPath);
     res.json({ ok: true });
   } catch(e) {
     console.error(e);
@@ -1851,7 +2262,7 @@ function generateRegistrationCode() {
 
 // Ops Manager / Director generate & share this with a staff member so they
 // can self-register their own portal login.
-app.get('/api/staff/:id/registration-code', requireLogin, requirePermission('pending_review'), function(req, res) {
+app.get('/api/staff/:id/registration-code', requireLogin, requirePermission('pending_review'), async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -1859,7 +2270,7 @@ app.get('/api/staff/:id/registration-code', requireLogin, requirePermission('pen
     if (emp.registration_claimed) return res.json({ ok: true, claimed: true, code: null });
     if (!emp.registration_code) {
       emp.registration_code = generateRegistrationCode();
-      saveStaff(emp, emp._folderPath);
+      await saveStaff(emp, emp._folderPath);
     }
     res.json({ ok: true, claimed: false, code: emp.registration_code });
   } catch (e) {
@@ -1867,14 +2278,14 @@ app.get('/api/staff/:id/registration-code', requireLogin, requirePermission('pen
   }
 });
 
-app.post('/api/staff/:id/registration-code/regenerate', requireLogin, requirePermission('pending_review'), function(req, res) {
+app.post('/api/staff/:id/registration-code/regenerate', requireLogin, requirePermission('pending_review'), async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
     if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
     emp.registration_code = generateRegistrationCode();
     emp.registration_claimed = false;
-    saveStaff(emp, emp._folderPath);
+    await saveStaff(emp, emp._folderPath);
     res.json({ ok: true, code: emp.registration_code });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -1884,6 +2295,7 @@ app.post('/api/staff/:id/registration-code/regenerate', requireLogin, requirePer
 function sanitizeForStaffView(emp) {
   var copy = Object.assign({}, emp);
   delete copy._folderPath;
+  delete copy._pgId;
   // Manager-only docs (credit check, social media check) are stripped
   // entirely from what a staff member's own profile fetch returns unless
   // explicitly marked visibleToStaff — the row shouldn't just be hidden in
@@ -1942,7 +2354,7 @@ function applyPendingProfileFields(emp, fields) {
 
 // Staff submit changes here — they land in pending_submission and do NOT
 // touch the live compliance record until a manager approves them.
-app.post('/api/my-profile', requireLogin, requireRole('staff'), function(req, res) {
+app.post('/api/my-profile', requireLogin, requireRole('staff'), async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.user.staff_id; });
@@ -1954,7 +2366,7 @@ app.post('/api/my-profile', requireLogin, requireRole('staff'), function(req, re
     // overwrite a later edit the next time this staff member reopens the
     // wizard (see wizard_draft below).
     delete emp.wizard_draft;
-    saveStaff(emp, emp._folderPath);
+    await saveStaff(emp, emp._folderPath);
     // Without this, a submission landed in pending_submission with no signal
     // anywhere that a manager needed to look — the bell never rang, so it
     // only ever got noticed if someone happened to open Pending Review.
@@ -1978,7 +2390,7 @@ app.post('/api/my-profile', requireLogin, requireRole('staff'), function(req, re
 // it's never shown to a manager, never triggers a notification, and gets
 // cleared the moment a real submission promotes it (above) — it's purely a
 // private resume-buffer for the person still filling the form in.
-app.put('/api/my-profile/draft', requireLogin, requireRole('staff'), function(req, res) {
+app.put('/api/my-profile/draft', requireLogin, requireRole('staff'), async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.user.staff_id; });
@@ -1990,59 +2402,71 @@ app.put('/api/my-profile/draft', requireLogin, requireRole('staff'), function(re
       if (body[field] !== undefined) draft[field] = body[field];
     });
     emp.wizard_draft = draft;
-    saveStaff(emp, emp._folderPath);
+    await saveStaff(emp, emp._folderPath);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-app.post('/api/my-profile/photo', requireLogin, requireRole('staff'), function(req, res) {
+app.post('/api/my-profile/photo', requireLogin, requireRole('staff'), async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.user.staff_id; });
-    if (!emp || !emp._folderPath) return res.status(404).json({ ok: false, error: 'Profile not found' });
+    if (!emp || !emp._pgId) return res.status(404).json({ ok: false, error: 'Profile not found' });
 
     var chunks = [];
     req.on('data', function(c) { chunks.push(c); });
-    req.on('end', function() {
-      var buf = Buffer.concat(chunks);
-      var ext = '.jpg';
-      if (buf[0] === 0x89 && buf[1] === 0x50) ext = '.png';
-      else if (buf[0] === 0xFF && buf[1] === 0xD8) ext = '.jpg';
+    req.on('end', async function() {
+      try {
+        var buf = Buffer.concat(chunks);
+        var ext = detectExtFromBuffer(buf, '.jpg');
+        await saveStaffDocFile(emp._pgId, 'photo', 'pending', buf, ext, {});
 
-      ['.jpg', '.jpeg', '.png', '.webp'].forEach(function(e) {
-        var old = path.join(emp._folderPath, 'pending-profile' + e);
-        if (fs.existsSync(old)) fs.unlinkSync(old);
-      });
-      fs.writeFileSync(path.join(emp._folderPath, 'pending-profile' + ext), buf);
-
-      emp.pending_submission = Object.assign({}, emp.pending_submission, {
-        submitted_at: new Date().toISOString(),
-        photo_pending: true,
-      });
-      saveStaff(emp, emp._folderPath);
-      res.json({ ok: true });
+        emp.pending_submission = Object.assign({}, emp.pending_submission, {
+          submitted_at: new Date().toISOString(),
+          photo_pending: true,
+        });
+        await saveStaff(emp, emp._folderPath);
+        res.json({ ok: true });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: e.message });
+      }
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-function findPendingPhoto(folderPath) { return findFileByExts(folderPath, 'pending-profile'); }
+// Moves the pending photo into the live 'profile' slot on approve — reuses
+// saveStaffDocFile so the same old-extension cleanup + metadata upsert logic
+// runs as any other photo write, rather than a bespoke fs.renameSync.
+async function promotePendingPhoto(employeeId) {
+  var pendingRow = await getStaffDocRow(employeeId, 'photo', 'pending');
+  if (!pendingRow) return;
+  var srcPath = path.join(staffDocDir(employeeId), pendingRow.filename);
+  if (fs.existsSync(srcPath)) {
+    var buf = fs.readFileSync(srcPath);
+    var ext = path.extname(pendingRow.filename) || '.jpg';
+    await saveStaffDocFile(employeeId, 'photo', 'profile', buf, ext, {});
+  }
+  await deleteStaffDocFile(employeeId, 'photo', 'pending');
+}
 
-app.get('/api/staff/:id/pending-photo', requireLogin, requirePermission('pending_review'), function(req, res) {
+app.get('/api/staff/:id/pending-photo', requireLogin, requirePermission('pending_review'), async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
-    if (!emp || !emp._folderPath) return res.status(404).end();
-    var photo = findPendingPhoto(emp._folderPath);
-    if (!photo) return res.status(404).end();
-    var ext = path.extname(photo).toLowerCase();
+    if (!emp || !emp._pgId) return res.status(404).end();
+    var row = await getStaffDocRow(emp._pgId, 'photo', 'pending');
+    if (!row) return res.status(404).end();
+    var fp = path.join(staffDocDir(emp._pgId), row.filename);
+    if (!fs.existsSync(fp)) return res.status(404).end();
+    var ext = path.extname(fp).toLowerCase();
     var mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
     res.setHeader('Content-Type', mime);
     res.setHeader('Cache-Control', 'no-store');
-    res.send(fs.readFileSync(photo));
+    res.send(fs.readFileSync(fp));
   } catch (e) {
     res.status(500).end();
   }
@@ -2062,7 +2486,7 @@ app.get('/api/staff/pending-review', requireLogin, requirePermission('pending_re
   }
 });
 
-app.post('/api/staff/:id/approve', requireLogin, requirePermission('pending_review'), function(req, res) {
+app.post('/api/staff/:id/approve', requireLogin, requirePermission('pending_review'), async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -2074,42 +2498,33 @@ app.post('/api/staff/:id/approve', requireLogin, requirePermission('pending_revi
       if (pending[field] !== undefined) emp[field] = pending[field];
     });
 
-    if (pending.photo_pending && emp._folderPath) {
-      var pendingPhoto = findPendingPhoto(emp._folderPath);
-      if (pendingPhoto) {
-        var ext = path.extname(pendingPhoto);
-        ['.jpg', '.jpeg', '.png', '.webp'].forEach(function(e) {
-          var old = path.join(emp._folderPath, 'profile' + e);
-          if (fs.existsSync(old)) fs.unlinkSync(old);
-        });
-        fs.renameSync(pendingPhoto, path.join(emp._folderPath, 'profile' + ext));
-      }
+    if (pending.photo_pending && emp._pgId) {
+      await promotePendingPhoto(emp._pgId);
     }
 
     delete emp.pending_submission;
     delete emp.rejection_reason;
-    saveStaff(emp, emp._folderPath);
+    await saveStaff(emp, emp._folderPath);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-app.post('/api/staff/:id/reject', requireLogin, requirePermission('pending_review'), function(req, res) {
+app.post('/api/staff/:id/reject', requireLogin, requirePermission('pending_review'), async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
     if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
     if (!emp.pending_submission) return res.status(400).json({ ok: false, error: 'No pending submission for this staff member' });
 
-    if (emp._folderPath) {
-      var pendingPhoto = findPendingPhoto(emp._folderPath);
-      if (pendingPhoto) fs.unlinkSync(pendingPhoto);
+    if (emp._pgId) {
+      await deleteStaffDocFile(emp._pgId, 'photo', 'pending');
     }
 
     emp.rejection_reason = String(req.body.reason || 'Please review and resubmit your details.').trim();
     delete emp.pending_submission;
-    saveStaff(emp, emp._folderPath);
+    await saveStaff(emp, emp._folderPath);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -2117,18 +2532,21 @@ app.post('/api/staff/:id/reject', requireLogin, requirePermission('pending_revie
 });
 
 // ── DEPLOYMENT SITES CRUD ─────────────────────────────────────────────────────
-app.get('/api/sites', requireLogin, function(req, res) {
-  res.json({ sites: loadSites() });
+app.get('/api/sites', requireLogin, async function(req, res) {
+  try {
+    res.json({ sites: await loadSites() });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
-app.post('/api/sites', requireLogin, requirePermission('sites'), function(req, res) {
+app.post('/api/sites', requireLogin, requirePermission('sites'), async function(req, res) {
   try {
     var name = String(req.body.name || '').trim();
     if (!name) return res.status(400).json({ ok: false, error: 'Site name required' });
-    var sites = loadSites();
-    if (sites.some(function(s){ return s.name.toLowerCase() === name.toLowerCase(); })) {
-      return res.status(409).json({ ok: false, error: 'Site already exists' });
-    }
+    var dupe = await pgPool.query('SELECT 1 FROM sites WHERE LOWER(name) = LOWER($1)', [name]);
+    if (dupe.rows.length) return res.status(409).json({ ok: false, error: 'Site already exists' });
+
     var site = {
       id: Date.now().toString(),
       name: name,
@@ -2143,22 +2561,27 @@ app.post('/api/sites', requireLogin, requirePermission('sites'), function(req, r
       status: String(req.body.status || 'active').trim(),
       notes: String(req.body.notes || '').trim(),
     };
-    sites.push(site);
-    saveSites(sites);
+    await pgPool.query(
+      `INSERT INTO sites (id, name, type, client_name, client_phone, client_email, address,
+                          supervisor_name, supervisor_phone, supervisor_email, status, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [site.id, site.name, site.type, site.client_name, site.client_phone, site.client_email,
+       site.address, site.supervisor_name, site.supervisor_phone, site.supervisor_email, site.status, site.notes]
+    );
+    site.welfare_items = [];
+    site.assigned_staff = [];
     res.json({ ok: true, site: site });
   } catch(e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-app.patch('/api/sites/:id', requireLogin, requirePermission('sites'), function(req, res) {
+app.patch('/api/sites/:id', requireLogin, requirePermission('sites'), async function(req, res) {
   try {
-    var sites = loadSites();
-    var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
-    if (idx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    var o = await getSiteById(req.params.id);
+    if (!o) return res.status(404).json({ ok: false, error: 'Site not found' });
     var b = req.body;
-    var o = sites[idx];
-    sites[idx] = Object.assign({}, o, {
+    var updated = {
       name:             String(b.name             !== undefined ? b.name             : o.name             || '').trim(),
       type:             String(b.type             !== undefined ? b.type             : o.type             || 'other').trim(),
       client_name:      String(b.client_name      !== undefined ? b.client_name      : o.client_name      || '').trim(),
@@ -2170,18 +2593,26 @@ app.patch('/api/sites/:id', requireLogin, requirePermission('sites'), function(r
       supervisor_email: String(b.supervisor_email !== undefined ? b.supervisor_email : o.supervisor_email || '').trim(),
       status:           String(b.status           !== undefined ? b.status           : o.status           || 'active').trim(),
       notes:            String(b.notes            !== undefined ? b.notes            : o.notes            || '').trim(),
-    });
-    saveSites(sites);
-    res.json({ ok: true, site: sites[idx] });
+    };
+    await pgPool.query(
+      `UPDATE sites SET name=$1, type=$2, client_name=$3, client_phone=$4, client_email=$5, address=$6,
+              supervisor_name=$7, supervisor_phone=$8, supervisor_email=$9, status=$10, notes=$11, updated_at=NOW()
+       WHERE id=$12`,
+      [updated.name, updated.type, updated.client_name, updated.client_phone, updated.client_email, updated.address,
+       updated.supervisor_name, updated.supervisor_phone, updated.supervisor_email, updated.status, updated.notes, req.params.id]
+    );
+    res.json({ ok: true, site: await getSiteById(req.params.id) });
   } catch(e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-app.delete('/api/sites/:id', requireLogin, requirePermission('sites'), function(req, res) {
+app.delete('/api/sites/:id', requireLogin, requirePermission('sites'), async function(req, res) {
   try {
-    var sites = loadSites().filter(function(s){ return s.id !== req.params.id; });
-    saveSites(sites);
+    // ON DELETE CASCADE on site_documents/site_welfare_items/site_staff_assignments
+    // handles the DB-side child rows; the physical docs directory is a
+    // filesystem concern the DB knows nothing about, so it's still removed here.
+    await pgPool.query('DELETE FROM sites WHERE id = $1', [req.params.id]);
     var docsDir = path.join(SITE_DOCS_DIR, req.params.id);
     if (fs.existsSync(docsDir)) {
       try { fs.rmSync(docsDir, { recursive: true, force: true }); } catch (e) {}
@@ -2194,6 +2625,8 @@ app.delete('/api/sites/:id', requireLogin, requirePermission('sites'), function(
 
 // ── SITE DOCUMENTATION ─────────────────────────────────────────────────────────
 // Per-site file library: general documentation, presentations, induction packs.
+// Files stay on disk under SITE_DOCS_DIR; site_documents holds only metadata
+// (same split as message_attachments/incident_attachments elsewhere in this file).
 
 function ensureSiteDocsDir(siteId) {
   var dir = path.join(SITE_DOCS_DIR, siteId);
@@ -2201,23 +2634,23 @@ function ensureSiteDocsDir(siteId) {
   return dir;
 }
 
-function loadSiteDocs(siteId) {
-  return loadJsonFile(path.join(SITE_DOCS_DIR, siteId, 'index.json'));
+function docRowToItem(row) {
+  return { filename: row.filename, originalName: row.original_name, category: row.category, size: row.size_bytes, uploadedAt: row.uploaded_at };
 }
 
-function saveSiteDocs(siteId, docs) {
-  ensureSiteDocsDir(siteId);
-  fs.writeFileSync(path.join(SITE_DOCS_DIR, siteId, 'index.json'), JSON.stringify(docs, null, 2), 'utf8');
-}
-
-app.get('/api/sites/:id/documents', requireLogin, requirePermission('sites'), function(req, res) {
-  res.json({ ok: true, items: loadSiteDocs(path.basename(req.params.id)) });
+app.get('/api/sites/:id/documents', requireLogin, requirePermission('sites'), async function(req, res) {
+  try {
+    var r = await pgPool.query('SELECT * FROM site_documents WHERE site_id = $1 ORDER BY uploaded_at', [path.basename(req.params.id)]);
+    res.json({ ok: true, items: r.rows.map(docRowToItem) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
-app.post('/api/sites/:id/documents', requireLogin, requirePermission('sites'), function(req, res) {
+app.post('/api/sites/:id/documents', requireLogin, requirePermission('sites'), async function(req, res) {
   try {
     var siteId = path.basename(req.params.id);
-    var site = loadSites().find(function(s) { return s.id === siteId; });
+    var site = await getSiteById(siteId);
     if (!site) return res.status(404).json({ ok: false, error: 'Site not found' });
 
     ensureSiteDocsDir(siteId);
@@ -2231,17 +2664,16 @@ app.post('/api/sites/:id/documents', requireLogin, requirePermission('sites'), f
 
     var chunks = [];
     req.on('data', function(c) { chunks.push(c); });
-    req.on('end', function() {
+    req.on('end', async function() {
       try {
         var buf = Buffer.concat(chunks);
         fs.writeFileSync(filePath, buf);
 
-        var docs = loadSiteDocs(siteId);
-        var doc = { filename: filename, originalName: originalName, category: category, size: buf.length, uploadedAt: new Date().toISOString() };
-        docs.push(doc);
-        saveSiteDocs(siteId, docs);
-
-        res.json({ ok: true, doc: doc });
+        var r = await pgPool.query(
+          'INSERT INTO site_documents (site_id, filename, original_name, category, size_bytes) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+          [siteId, filename, originalName, category, buf.length]
+        );
+        res.json({ ok: true, doc: docRowToItem(r.rows[0]) });
       } catch (e) {
         res.status(500).json({ ok: false, error: e.message });
       }
@@ -2254,16 +2686,15 @@ app.post('/api/sites/:id/documents', requireLogin, requirePermission('sites'), f
   }
 });
 
-app.get('/api/sites/:id/documents/:filename', requireLogin, requirePermission('sites'), function(req, res) {
+app.get('/api/sites/:id/documents/:filename', requireLogin, requirePermission('sites'), async function(req, res) {
   try {
     var siteId = path.basename(req.params.id);
     var filename = path.basename(req.params.filename);
     var filePath = path.join(SITE_DOCS_DIR, siteId, filename);
     if (!fs.existsSync(filePath)) return res.status(404).end();
 
-    var docs = loadSiteDocs(siteId);
-    var doc = docs.find(function(d) { return d.filename === filename; });
-    var originalName = doc ? doc.originalName : filename;
+    var r = await pgPool.query('SELECT original_name FROM site_documents WHERE site_id = $1 AND filename = $2', [siteId, filename]);
+    var originalName = r.rows.length ? r.rows[0].original_name : filename;
 
     res.setHeader('Content-Disposition', 'inline; filename="' + originalName.replace(/"/g, '\\"') + '"');
     res.setHeader('Cache-Control', 'no-store');
@@ -2273,16 +2704,14 @@ app.get('/api/sites/:id/documents/:filename', requireLogin, requirePermission('s
   }
 });
 
-app.delete('/api/sites/:id/documents/:filename', requireLogin, requirePermission('sites'), function(req, res) {
+app.delete('/api/sites/:id/documents/:filename', requireLogin, requirePermission('sites'), async function(req, res) {
   try {
     var siteId = path.basename(req.params.id);
     var filename = path.basename(req.params.filename);
     var filePath = path.join(SITE_DOCS_DIR, siteId, filename);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
-    var docs = loadSiteDocs(siteId);
-    docs = docs.filter(function(d) { return d.filename !== filename; });
-    saveSiteDocs(siteId, docs);
+    await pgPool.query('DELETE FROM site_documents WHERE site_id = $1 AND filename = $2', [siteId, filename]);
 
     res.json({ ok: true });
   } catch (e) {
@@ -2291,56 +2720,64 @@ app.delete('/api/sites/:id/documents/:filename', requireLogin, requirePermission
 });
 
 // ── SITE STAFF ASSIGNMENT ─────────────────────────────────────────────────────
-app.get('/api/sites/:id/staff', requireLogin, function(req, res) {
-  var site = loadSites().find(function(s){ return s.id === req.params.id; });
-  if (!site) return res.status(404).json({ ok: false, error: 'Site not found' });
-  var assignedIds = site.assigned_staff || [];
-  var allStaff = loadAllStaff();
-  var assigned = allStaff.filter(function(s){ return assignedIds.indexOf(s.id) !== -1; })
-    .map(function(s){ return { id: s.id, name: s.name, overall: s.overall }; });
-  res.json({ ok: true, staff: assigned, count: assigned.length });
+app.get('/api/sites/:id/staff', requireLogin, async function(req, res) {
+  try {
+    var siteCheck = await pgPool.query('SELECT 1 FROM sites WHERE id = $1', [req.params.id]);
+    if (!siteCheck.rows.length) return res.status(404).json({ ok: false, error: 'Site not found' });
+    var assignedRows = await pgPool.query('SELECT employee_legacy_id FROM site_staff_assignments WHERE site_id = $1 ORDER BY assigned_at', [req.params.id]);
+    var assignedIds = assignedRows.rows.map(function(r){ return r.employee_legacy_id; });
+    var allStaff = loadAllStaff();
+    var assigned = allStaff.filter(function(s){ return assignedIds.indexOf(s.id) !== -1; })
+      .map(function(s){ return { id: s.id, name: s.name, overall: s.overall }; });
+    res.json({ ok: true, staff: assigned, count: assigned.length });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
-app.post('/api/sites/:id/staff', requireLogin, requirePermission('sites'), function(req, res) {
+app.post('/api/sites/:id/staff', requireLogin, requirePermission('sites'), async function(req, res) {
   try {
-    var sites = loadSites();
-    var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
-    if (idx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
+    var siteCheck = await pgPool.query('SELECT 1 FROM sites WHERE id = $1', [req.params.id]);
+    if (!siteCheck.rows.length) return res.status(404).json({ ok: false, error: 'Site not found' });
     var staffId = String(req.body.staff_id || '').trim();
     if (!staffId) return res.status(400).json({ ok: false, error: 'staff_id required' });
-    if (!sites[idx].assigned_staff) sites[idx].assigned_staff = [];
-    if (sites[idx].assigned_staff.indexOf(staffId) === -1) {
-      sites[idx].assigned_staff.push(staffId);
-      saveSites(sites);
-    }
+    await pgPool.query(
+      'INSERT INTO site_staff_assignments (site_id, employee_legacy_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+      [req.params.id, staffId]
+    );
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-app.delete('/api/sites/:id/staff/:staffId', requireLogin, requirePermission('sites'), function(req, res) {
+app.delete('/api/sites/:id/staff/:staffId', requireLogin, requirePermission('sites'), async function(req, res) {
   try {
-    var sites = loadSites();
-    var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
-    if (idx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
-    sites[idx].assigned_staff = (sites[idx].assigned_staff || []).filter(function(id){ return id !== req.params.staffId; });
-    saveSites(sites);
+    var siteCheck = await pgPool.query('SELECT 1 FROM sites WHERE id = $1', [req.params.id]);
+    if (!siteCheck.rows.length) return res.status(404).json({ ok: false, error: 'Site not found' });
+    await pgPool.query('DELETE FROM site_staff_assignments WHERE site_id = $1 AND employee_legacy_id = $2', [req.params.id, req.params.staffId]);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ── SITE WELFARE / ASSETS ─────────────────────────────────────────────────────
-app.get('/api/sites/:id/welfare', requireLogin, function(req, res) {
-  var site = loadSites().find(function(s){ return s.id === req.params.id; });
-  if (!site) return res.status(404).json({ ok: false, error: 'Site not found' });
-  res.json({ ok: true, items: site.welfare_items || [] });
+function welfareRowToItem(row) {
+  return { id: row.id, name: row.name, quantity: row.quantity, condition: row.condition, serial_number: row.serial_number, notes: row.notes, image_ext: row.image_ext };
+}
+
+app.get('/api/sites/:id/welfare', requireLogin, async function(req, res) {
+  try {
+    var siteCheck = await pgPool.query('SELECT 1 FROM sites WHERE id = $1', [req.params.id]);
+    if (!siteCheck.rows.length) return res.status(404).json({ ok: false, error: 'Site not found' });
+    var r = await pgPool.query('SELECT * FROM site_welfare_items WHERE site_id = $1 ORDER BY created_at', [req.params.id]);
+    res.json({ ok: true, items: r.rows.map(welfareRowToItem) });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
-app.post('/api/sites/:id/welfare', requireLogin, requirePermission('sites'), function(req, res) {
+app.post('/api/sites/:id/welfare', requireLogin, requirePermission('sites'), async function(req, res) {
   try {
-    var sites = loadSites();
-    var idx = sites.findIndex(function(s){ return s.id === req.params.id; });
-    if (idx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
-    if (!sites[idx].welfare_items) sites[idx].welfare_items = [];
+    var siteCheck = await pgPool.query('SELECT 1 FROM sites WHERE id = $1', [req.params.id]);
+    if (!siteCheck.rows.length) return res.status(404).json({ ok: false, error: 'Site not found' });
     var item = {
       id: Date.now().toString(),
       name: String(req.body.name || '').trim(),
@@ -2351,52 +2788,47 @@ app.post('/api/sites/:id/welfare', requireLogin, requirePermission('sites'), fun
       image_ext: '',
     };
     if (!item.name) return res.status(400).json({ ok: false, error: 'Item name required' });
-    sites[idx].welfare_items.push(item);
-    saveSites(sites);
+    await pgPool.query(
+      `INSERT INTO site_welfare_items (id, site_id, name, quantity, condition, serial_number, notes, image_ext)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [item.id, req.params.id, item.name, item.quantity, item.condition, item.serial_number, item.notes, item.image_ext]
+    );
     res.json({ ok: true, item: item });
   } catch(e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-app.patch('/api/sites/:id/welfare/:itemId', requireLogin, requirePermission('sites'), function(req, res) {
+app.patch('/api/sites/:id/welfare/:itemId', requireLogin, requirePermission('sites'), async function(req, res) {
   try {
-    var sites = loadSites();
-    var sIdx = sites.findIndex(function(s){ return s.id === req.params.id; });
-    if (sIdx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
-    var items = sites[sIdx].welfare_items || [];
-    var iIdx = items.findIndex(function(i){ return i.id === req.params.itemId; });
-    if (iIdx === -1) return res.status(404).json({ ok: false, error: 'Item not found' });
-    var b = req.body; var o = items[iIdx];
-    items[iIdx] = {
-      id: o.id,
+    var r = await pgPool.query('SELECT * FROM site_welfare_items WHERE site_id = $1 AND id = $2', [req.params.id, req.params.itemId]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Item not found' });
+    var b = req.body; var o = r.rows[0];
+    var updated = {
       name:          String(b.name          !== undefined ? b.name          : o.name          || '').trim(),
       quantity:      parseInt(b.quantity     !== undefined ? b.quantity      : o.quantity)    || 1,
       condition:     String(b.condition      !== undefined ? b.condition     : o.condition     || 'good').trim(),
       serial_number: String(b.serial_number  !== undefined ? b.serial_number : o.serial_number || '').trim(),
       notes:         String(b.notes          !== undefined ? b.notes         : o.notes         || '').trim(),
-      image_ext:     o.image_ext || '',
     };
-    sites[sIdx].welfare_items = items;
-    saveSites(sites);
-    res.json({ ok: true, item: items[iIdx] });
+    await pgPool.query(
+      'UPDATE site_welfare_items SET name=$1, quantity=$2, condition=$3, serial_number=$4, notes=$5 WHERE site_id=$6 AND id=$7',
+      [updated.name, updated.quantity, updated.condition, updated.serial_number, updated.notes, req.params.id, req.params.itemId]
+    );
+    res.json({ ok: true, item: { id: o.id, name: updated.name, quantity: updated.quantity, condition: updated.condition, serial_number: updated.serial_number, notes: updated.notes, image_ext: o.image_ext } });
   } catch(e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-app.delete('/api/sites/:id/welfare/:itemId', requireLogin, requirePermission('sites'), function(req, res) {
+app.delete('/api/sites/:id/welfare/:itemId', requireLogin, requirePermission('sites'), async function(req, res) {
   try {
-    var sites = loadSites();
-    var sIdx = sites.findIndex(function(s){ return s.id === req.params.id; });
-    if (sIdx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
-    var item = (sites[sIdx].welfare_items || []).find(function(i){ return i.id === req.params.itemId; });
-    if (item && item.image_ext) {
-      var imgPath = path.join(BASE, 'site-welfare-images', req.params.id, req.params.itemId + '.' + item.image_ext);
+    var r = await pgPool.query('SELECT image_ext FROM site_welfare_items WHERE site_id = $1 AND id = $2', [req.params.id, req.params.itemId]);
+    if (r.rows.length && r.rows[0].image_ext) {
+      var imgPath = path.join(BASE, 'site-welfare-images', req.params.id, req.params.itemId + '.' + r.rows[0].image_ext);
       try { fs.unlinkSync(imgPath); } catch(e2) {}
     }
-    sites[sIdx].welfare_items = (sites[sIdx].welfare_items || []).filter(function(i){ return i.id !== req.params.itemId; });
-    saveSites(sites);
+    await pgPool.query('DELETE FROM site_welfare_items WHERE site_id = $1 AND id = $2', [req.params.id, req.params.itemId]);
     res.json({ ok: true });
   } catch(e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -2404,17 +2836,13 @@ app.delete('/api/sites/:id/welfare/:itemId', requireLogin, requirePermission('si
 });
 
 // Welfare item image upload
-app.post('/api/sites/:id/welfare/:itemId/image', requireLogin, requirePermission('sites'), function(req, res) {
+app.post('/api/sites/:id/welfare/:itemId/image', requireLogin, requirePermission('sites'), async function(req, res) {
   try {
-    var sites = loadSites();
-    var sIdx = sites.findIndex(function(s){ return s.id === req.params.id; });
-    if (sIdx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
-    var items = sites[sIdx].welfare_items || [];
-    var iIdx = items.findIndex(function(i){ return i.id === req.params.itemId; });
-    if (iIdx === -1) return res.status(404).json({ ok: false, error: 'Item not found' });
+    var r = await pgPool.query('SELECT image_ext FROM site_welfare_items WHERE site_id = $1 AND id = $2', [req.params.id, req.params.itemId]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Item not found' });
     var chunks = [];
     req.on('data', function(c){ chunks.push(c); });
-    req.on('end', function() {
+    req.on('end', async function() {
       try {
         var buf = Buffer.concat(chunks);
         var ext = 'jpg';
@@ -2422,14 +2850,12 @@ app.post('/api/sites/:id/welfare/:itemId/image', requireLogin, requirePermission
         var dir = path.join(BASE, 'site-welfare-images', req.params.id);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         // remove old image if different ext
-        var oldExt = items[iIdx].image_ext;
+        var oldExt = r.rows[0].image_ext;
         if (oldExt && oldExt !== ext) {
           try { fs.unlinkSync(path.join(dir, req.params.itemId + '.' + oldExt)); } catch(e2) {}
         }
         fs.writeFileSync(path.join(dir, req.params.itemId + '.' + ext), buf);
-        items[iIdx].image_ext = ext;
-        sites[sIdx].welfare_items = items;
-        saveSites(sites);
+        await pgPool.query('UPDATE site_welfare_items SET image_ext = $1 WHERE site_id = $2 AND id = $3', [ext, req.params.id, req.params.itemId]);
         res.json({ ok: true, image_ext: ext });
       } catch(e) {
         res.status(500).json({ ok: false, error: e.message });
@@ -2441,21 +2867,14 @@ app.post('/api/sites/:id/welfare/:itemId/image', requireLogin, requirePermission
 });
 
 // Welfare item image delete
-app.delete('/api/sites/:id/welfare/:itemId/image', requireLogin, requirePermission('sites'), function(req, res) {
+app.delete('/api/sites/:id/welfare/:itemId/image', requireLogin, requirePermission('sites'), async function(req, res) {
   try {
-    var sites = loadSites();
-    var sIdx = sites.findIndex(function(s){ return s.id === req.params.id; });
-    if (sIdx === -1) return res.status(404).json({ ok: false, error: 'Site not found' });
-    var items = sites[sIdx].welfare_items || [];
-    var iIdx = items.findIndex(function(i){ return i.id === req.params.itemId; });
-    if (iIdx === -1) return res.status(404).json({ ok: false, error: 'Item not found' });
-    var ext = items[iIdx].image_ext;
+    var r = await pgPool.query('SELECT image_ext FROM site_welfare_items WHERE site_id = $1 AND id = $2', [req.params.id, req.params.itemId]);
+    var ext = r.rows.length ? r.rows[0].image_ext : null;
     if (ext) {
       var imgPath = path.join(BASE, 'site-welfare-images', req.params.id, req.params.itemId + '.' + ext);
       try { fs.unlinkSync(imgPath); } catch(e2) {}
-      items[iIdx].image_ext = '';
-      sites[sIdx].welfare_items = items;
-      saveSites(sites);
+      await pgPool.query("UPDATE site_welfare_items SET image_ext = '' WHERE site_id = $1 AND id = $2", [req.params.id, req.params.itemId]);
     }
     res.json({ ok: true });
   } catch(e) {
@@ -2464,16 +2883,13 @@ app.delete('/api/sites/:id/welfare/:itemId/image', requireLogin, requirePermissi
 });
 
 // Welfare item image serve
-app.get('/api/sites/:id/welfare/:itemId/image', requireLogin, function(req, res) {
+app.get('/api/sites/:id/welfare/:itemId/image', requireLogin, async function(req, res) {
   try {
-    var sites = loadSites();
-    var site = sites.find(function(s){ return s.id === req.params.id; });
-    if (!site) return res.status(404).end();
-    var item = (site.welfare_items || []).find(function(i){ return i.id === req.params.itemId; });
-    if (!item || !item.image_ext) return res.status(404).end();
-    var imgPath = path.join(BASE, 'site-welfare-images', req.params.id, req.params.itemId + '.' + item.image_ext);
+    var r = await pgPool.query('SELECT image_ext FROM site_welfare_items WHERE site_id = $1 AND id = $2', [req.params.id, req.params.itemId]);
+    if (!r.rows.length || !r.rows[0].image_ext) return res.status(404).end();
+    var imgPath = path.join(BASE, 'site-welfare-images', req.params.id, req.params.itemId + '.' + r.rows[0].image_ext);
     if (!fs.existsSync(imgPath)) return res.status(404).end();
-    var mime = item.image_ext === 'png' ? 'image/png' : 'image/jpeg';
+    var mime = r.rows[0].image_ext === 'png' ? 'image/png' : 'image/jpeg';
     res.setHeader('Content-Type', mime);
     res.setHeader('Cache-Control', 'no-store');
     res.send(fs.readFileSync(imgPath));
@@ -2482,12 +2898,10 @@ app.get('/api/sites/:id/welfare/:itemId/image', requireLogin, function(req, res)
   }
 });
 
-app.put('/api/staff/:id', requireLogin, requirePermission('staff'), function(req, res) {
+app.put('/api/staff/:id', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
     var emp = req.body;
-    var all = loadAllStaff();
-    var old = all.find(function(e){ return e.id === req.params.id; });
-    saveStaff(emp, old ? old._folderPath : null);
+    await saveStaff(emp, null);
     updateComplianceTracker(emp);
     updateReferenceTracker(emp);
     refreshOverview();
@@ -2505,24 +2919,18 @@ app.post('/api/staff', requireLogin, requirePermission('staff'), async function(
     delete emp.confirmDifferentPerson;
     if (!emp.id) emp.id = emp.name.toLowerCase().replace(/[^a-z0-9]/g,'-');
 
-    // "Add Staff" must only ever create a NEW record. saveStaff() writes to
-    // folderForEmp(emp) unconditionally, so without this check, submitting
-    // the same name again (e.g. someone re-adding a person who looked like
-    // they'd disappeared, per the Abu Baker incident) silently overwrites
-    // that person's existing staff_data.json — destroying their real SIA/
+    // "Add Staff" must only ever create a NEW record. Without this check,
+    // submitting the same name again (e.g. someone re-adding a person who
+    // looked like they'd disappeared, per the Abu Baker incident) silently
+    // overwrites that person's existing record — destroying their real SIA/
     // CSCS/RTW data with whatever bare fields were in this new submission,
-    // with no warning. Matched by NAME ONLY (ignoring the emoji compliance-
-    // status prefix), not folderForEmp(emp) directly — emp.overall isn't
-    // calculated yet at this point (that happens inside saveStaff), so a
-    // brand-new submission's default/incomplete status almost never matches
-    // the existing person's actual emoji, which let the very first version
-    // of this check miss the exact collision it was meant to catch. Checked
-    // against the disk directly rather than loadAllStaff() so this can't be
-    // bypassed by whatever caused them to seem hidden in the first place.
+    // with no warning. Matched by NAME ONLY. Queried fresh from Postgres,
+    // not STAFF_CACHE — this exact guard exists to catch cases where
+    // something already caused a person to seem hidden/missing, so it must
+    // never trust a cache that could be part of that same problem.
     var addTargetName = safeName(emp.name).toUpperCase();
-    var addCollision = fs.existsSync(ACTIVE_DIR) && fs.readdirSync(ACTIVE_DIR).some(function(d) {
-      return cleanFolderName(d) === addTargetName;
-    });
+    var activeNames = (await pgPool.query("SELECT name FROM employees WHERE status = 'active'")).rows;
+    var addCollision = activeNames.some(function(r) { return safeName(r.name).toUpperCase() === addTargetName; });
 
     if (addCollision && !confirmDifferentPerson) {
       // Two different people can genuinely share a name — don't just block
@@ -2545,31 +2953,15 @@ app.post('/api/staff', requireLogin, requirePermission('staff'), async function(
 
     if (addCollision && confirmDifferentPerson) {
       // Confirmed as a different person with the same name — disambiguate
-      // where they're STORED, never the name displayed anywhere in the UI,
-      // so the two never collide on folder or id again.
-      var suffixN = nextFreeNameSuffix(emp.name);
-      emp._nameSuffix = ' (' + suffixN + ')';
+      // the STORED id (legacy_id must stay unique), never the displayed name.
+      var suffixN = await nextFreeIdSuffix(emp.id);
       emp.id = emp.id + '-' + suffixN;
     }
 
-    saveStaff(emp, null);
+    await saveStaff(emp, null);
     updateComplianceTracker(emp);
     updateReferenceTracker(emp);
     refreshOverview();
-
-    // Messaging, incident-report attribution, and acknowledgment links all
-    // resolve a staff member via employees.legacy_id (never a real FK, see
-    // debug note near ensureEventInstructionsSchema) — without this row,
-    // every one of those features 404s or silently drops attribution for
-    // this person forever. The historical migration only backfilled staff
-    // that existed at the time it ran, so every "Add Staff" since then needs
-    // its own insert here.
-    await pgPool.query(
-      `INSERT INTO employees (legacy_id, name, email, phone, nationality, legacy_folder_path, added_date)
-       VALUES ($1,$2,$3,$4,$5,$6,CURRENT_DATE)
-       ON CONFLICT (legacy_id) DO NOTHING`,
-      [emp.id, emp.name, emp.email || null, emp.phone || null, emp.nationality || null, emp._folderPath || null]
-    );
 
     res.json({ ok: true });
   } catch(e) {
@@ -2578,36 +2970,20 @@ app.post('/api/staff', requireLogin, requirePermission('staff'), async function(
   }
 });
 
-app.delete('/api/staff/:id', requireLogin, requirePermission('staff'), function(req, res) {
+app.delete('/api/staff/:id', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
-    if (!emp) return res.status(404).json({ ok: false, error: 'Staff not found' });
+    if (!emp || !emp._pgId) return res.status(404).json({ ok: false, error: 'Staff not found' });
 
-    var folderPath = emp._folderPath;
-    if (!folderPath || !fs.existsSync(folderPath)) {
-      return res.status(404).json({ ok: false, error: 'Folder not found: ' + folderPath });
-    }
-
-    var exStaffDir = path.join(BASE, '02 - Vetting & Screening', 'Ex-Staff');
-    if (!fs.existsSync(exStaffDir)) fs.mkdirSync(exStaffDir, { recursive: true });
-
-    // Block duplicate — check if ANY folder in Ex-Staff matches this person's name
-    var empNameClean = safeName(emp.name).toUpperCase();
-    var alreadyExists = fs.readdirSync(exStaffDir).some(function(d) {
-      var clean = d.replace(/^[\u{1F7E2}\u{1F7E1}\u{1F534}⚪️⃣]/gu, '').trim().toUpperCase();
-      return clean === empNameClean;
-    });
-    if (alreadyExists) {
-      return res.status(409).json({ ok: false, error: emp.name + ' is already in Ex-Staff.' });
-    }
-
-    var destFolder = path.join(exStaffDir, path.basename(folderPath));
-    fs.renameSync(folderPath, destFolder);
-
+    // No same-name-in-Ex-Staff collision check needed any more — each
+    // employees row has its own UUID, so there's nothing left for two
+    // archived people sharing a name to actually collide on.
+    await pgPool.query("UPDATE employees SET status='archived', archived_at=NOW(), archive_reason='left_employment' WHERE id=$1", [emp._pgId]);
+    await refreshStaffCacheEntry(emp._pgId);
     refreshOverview();
 
-    console.log('[DELETE] Moved to Ex-Staff:', path.basename(folderPath));
+    console.log('[DELETE] Archived (moved to Ex-Staff):', emp.name);
     res.json({ ok: true });
   } catch(e) {
     console.error(e);
@@ -2617,24 +2993,8 @@ app.delete('/api/staff/:id', requireLogin, requirePermission('staff'), function(
 
 app.get('/api/exstaff', requireLogin, requirePermission('staff'), function(req, res) {
   try {
-    var exDir = path.join(BASE, '02 - Vetting & Screening', 'Ex-Staff');
-    if (!fs.existsSync(exDir)) return res.json([]);
-    var list = [];
-    fs.readdirSync(exDir).forEach(function(d) {
-      var fp = path.join(exDir, d);
-      if (!fs.statSync(fp).isDirectory()) return;
-      var jp = path.join(fp, 'staff_data.json');
-      if (!fs.existsSync(jp)) return;
-      try {
-        var emp = JSON.parse(fs.readFileSync(jp, 'utf8'));
-        list.push({
-          folderId: d,
-          name: emp.name || d,
-          nationality: emp.nationality || '',
-          gender: emp.gender || '',
-          overall: emp.overall || 'unknown'
-        });
-      } catch(e) {}
+    var list = loadExStaff().map(function(e) {
+      return { folderId: e.id, name: e.name || e.id, nationality: e.nationality || '', gender: e.gender || '', overall: e.overall || 'unknown' };
     });
     list.sort(function(a,b){ return a.name.localeCompare(b.name); });
     res.json(list);
@@ -2643,57 +3003,68 @@ app.get('/api/exstaff', requireLogin, requirePermission('staff'), function(req, 
   }
 });
 
-// Permanently delete an ex-staff folder (director only)
-app.delete('/api/exstaff/permanent', requireLogin, requireRole('director'), function(req, res) {
+// Permanently delete an ex-staff record (director only). Retention-guarded:
+// BS7858/GDPR expect vetting records kept ~7 years after someone leaves, and
+// migrating this off a filesystem move (fs.rmSync) onto a one-line DELETE
+// made it structurally easier to invoke than before — this guard exists so
+// that ease doesn't translate into an easier compliance mistake. A record
+// with no recorded archive date (migrated in before this safeguard existed)
+// can never be confirmed to have cleared retention, so it's never eligible.
+app.delete('/api/exstaff/permanent', requireLogin, requireRole('director'), async function(req, res) {
   try {
-    var folderId = req.body.folderId;
-    if (!folderId) return res.status(400).json({ ok: false, error: 'No folderId provided' });
-    var safeFolderId = path.basename(folderId);
-    var exDir = path.join(BASE, '02 - Vetting & Screening', 'Ex-Staff');
-    var targetFolder = path.join(exDir, safeFolderId);
-    if (!fs.existsSync(targetFolder)) return res.status(404).json({ ok: false, error: 'Ex-staff folder not found' });
-    var resolvedTarget = path.resolve(targetFolder);
-    var resolvedExDir  = path.resolve(exDir);
-    if (!resolvedTarget.startsWith(resolvedExDir + path.sep)) {
-      return res.status(400).json({ ok: false, error: 'Invalid folder path' });
+    var legacyId = req.body.folderId;
+    if (!legacyId) return res.status(400).json({ ok: false, error: 'No folderId provided' });
+    var r = await pgPool.query("SELECT id, name, archived_at FROM employees WHERE legacy_id = $1 AND status = 'archived'", [legacyId]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Ex-staff record not found' });
+    var row = r.rows[0];
+
+    var archivedAt = row.archived_at ? new Date(row.archived_at) : null;
+    var retentionCutoff = new Date();
+    retentionCutoff.setFullYear(retentionCutoff.getFullYear() - 7);
+    if (!archivedAt || archivedAt > retentionCutoff) {
+      return res.status(403).json({
+        ok: false,
+        error: archivedAt
+          ? 'Archived on ' + archivedAt.toISOString().slice(0, 10) + ' — BS7858/GDPR requires keeping vetting records for 7 years. Not eligible for permanent deletion until ' +
+            new Date(archivedAt.getFullYear() + 7, archivedAt.getMonth(), archivedAt.getDate()).toISOString().slice(0, 10) + '.'
+          : 'No recorded archive date on file (this record predates this safeguard) — it can never be confirmed to have cleared the 7-year retention period, so it cannot be permanently deleted.',
+      });
     }
-    fs.rmSync(targetFolder, { recursive: true, force: true });
-    console.log('[DELETE] Permanently deleted ex-staff:', safeFolderId);
+
+    var confirmPhrase = String(req.body.confirmPhrase || '').trim();
+    if (confirmPhrase !== row.name) {
+      return res.status(400).json({ ok: false, error: 'Type the staff member\'s full name exactly to confirm permanent deletion.', requiresConfirmPhrase: row.name });
+    }
+
+    await pgPool.query('DELETE FROM employees WHERE id = $1', [row.id]);
+    await pgPool.query(
+      `INSERT INTO audit_events (actor_email, action, object_type, object_id, object_name, metadata)
+       VALUES ($1,'STAFF_PERMANENTLY_DELETED','employee',$2,$3,$4)`,
+      [(req.user && req.user.username) || null, row.id, row.name, JSON.stringify({ legacy_id: legacyId, archived_at: row.archived_at })]
+    );
+    STAFF_CACHE = STAFF_CACHE.filter(function(e) { return e._pgId !== row.id; });
+
+    console.log('[DELETE] Permanently deleted ex-staff:', row.name);
     res.json({ ok: true });
   } catch(e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-app.post('/api/exstaff/restore', requireLogin, requirePermission('staff'), function(req, res) {
+app.post('/api/exstaff/restore', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
-    var folderId = req.body.folderId;
-    if (!folderId) return res.status(400).json({ ok: false, error: 'No folderId provided' });
+    var legacyId = req.body.folderId;
+    if (!legacyId) return res.status(400).json({ ok: false, error: 'No folderId provided' });
 
-    var exDir  = path.join(BASE, '02 - Vetting & Screening', 'Ex-Staff');
-    var srcFolder = path.join(exDir, folderId);
-    if (!fs.existsSync(srcFolder)) return res.status(404).json({ ok: false, error: 'Ex-staff folder not found' });
+    var r = await pgPool.query("SELECT id, name FROM employees WHERE legacy_id = $1 AND status = 'archived'", [legacyId]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Ex-staff record not found' });
 
-    var jp = path.join(srcFolder, 'staff_data.json');
-    var emp = JSON.parse(fs.readFileSync(jp, 'utf8'));
-
-    // Recalculate overall so emoji prefix is correct
-    emp.overall = calcOverall(emp);
-    var destFolder = path.join(ACTIVE_DIR, overallEmoji(emp.overall) + ' ' + safeName(emp.name));
-
-    // If name already exists in Active, add suffix
-    if (fs.existsSync(destFolder)) destFolder = destFolder + ' (Returned)';
-
-    fs.renameSync(srcFolder, destFolder);
-
-    // Update staff_data.json with new folder path
-    emp._folderPath = destFolder;
-    fs.writeFileSync(path.join(destFolder, 'staff_data.json'), JSON.stringify(emp, null, 2), 'utf8');
-
+    await pgPool.query("UPDATE employees SET status='active', archived_at=NULL, archive_reason=NULL WHERE id=$1", [r.rows[0].id]);
+    await refreshStaffCacheEntry(r.rows[0].id);
     refreshOverview();
 
-    console.log('[RESTORE] ' + emp.name + ' moved back to Active Staff');
-    res.json({ ok: true, name: emp.name });
+    console.log('[RESTORE] ' + r.rows[0].name + ' moved back to Active Staff');
+    res.json({ ok: true, name: r.rows[0].name });
   } catch(e) {
     console.error(e);
     res.status(500).json({ ok: false, error: e.message });
@@ -2809,7 +3180,7 @@ function nameSimilarity(a, b) {
 var INBOX_DIR      = path.join(BASE, '! New Staff Inbox');
 var INBOX_DONE_DIR = path.join(BASE, '! New Staff Inbox', 'Processed');
 
-function checkNewStaffInbox() {
+async function checkNewStaffInbox() {
   try {
     if (!fs.existsSync(INBOX_DIR)) return;
     if (!fs.existsSync(INBOX_DONE_DIR)) fs.mkdirSync(INBOX_DONE_DIR, {recursive:true});
@@ -2820,7 +3191,7 @@ function checkNewStaffInbox() {
     if (files.length === 0) return;
 
     var created = 0;
-    files.forEach(function(file) {
+    for (const file of files) {
       var filePath = path.join(INBOX_DIR, file);
       try {
         var raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -2829,7 +3200,7 @@ function checkNewStaffInbox() {
         var firstName = String(raw.firstName || raw['First Name'] || '').trim();
         var surname   = String(raw.surname   || raw['Surname']    || '').trim();
         var fullName  = (firstName + ' ' + surname).trim().toUpperCase();
-        if (!fullName) { console.warn('[INBOX] Skipping ' + file + ': no name'); return; }
+        if (!fullName) { console.warn('[INBOX] Skipping ' + file + ': no name'); continue; }
 
         // Prevent duplicates — check existing staff
         var existing = loadAllStaff();
@@ -2839,7 +3210,7 @@ function checkNewStaffInbox() {
         if (already) {
           console.log('[INBOX] Already exists: ' + fullName + ', skipping ' + file);
           fs.renameSync(filePath, path.join(INBOX_DONE_DIR, 'DUPLICATE_' + file));
-          return;
+          continue;
         }
 
         // Map employment history (Employer 1..10)
@@ -2923,7 +3294,7 @@ function checkNewStaffInbox() {
           formFile:    file
         };
 
-        saveStaff(emp, null);
+        await saveStaff(emp, null);
         created++;
         console.log('[INBOX] Created staff record: ' + fullName);
 
@@ -2935,7 +3306,7 @@ function checkNewStaffInbox() {
         // Move to Processed with ERROR_ prefix so it doesn't loop
         try { fs.renameSync(filePath, path.join(INBOX_DONE_DIR, 'ERROR_' + file)); } catch(_) {}
       }
-    });
+    }
 
     if (created > 0) {
       console.log('[INBOX] ' + created + ' new staff record(s) created from form submissions.');
@@ -2946,11 +3317,9 @@ function checkNewStaffInbox() {
   }
 }
 
-function autoDedup() {
+async function autoDedup() {
   try {
     var staff = loadAllStaff();
-    var archiveDir = path.join(BASE, '02 - Vetting & Screening', 'Duplicate Archive');
-    if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, {recursive:true});
 
     var archived = 0;
     var checked  = {};
@@ -2979,26 +3348,28 @@ function autoDedup() {
 
         if (score < 2.5) continue;
 
-        // Keep the record with more complete name; archive the other
+        // Keep the record with more complete name; archive the other.
+        // 'duplicate' is a third status distinct from 'archived' (Ex-Staff)
+        // on purpose — mirrors the old "Duplicate Archive" folder being
+        // invisible to both Active Staff and Ex-Staff views (see
+        // loadAllStaff()/loadExStaff()), so a dedup'd record never shows up
+        // looking like a real leaver.
         var keepIdx = (a.name||'').length >= (b.name||'').length ? i : j;
         var dropIdx = keepIdx === i ? j : i;
         var keep = staff[keepIdx], drop = staff[dropIdx];
 
-        if (!drop._folderPath || !fs.existsSync(drop._folderPath)) continue;
-
-        var dropFolder = path.basename(drop._folderPath);
-        var dest = path.join(archiveDir, dropFolder);
-        if (fs.existsSync(dest)) dest = dest + '_dup_' + Date.now();
+        if (!drop._pgId) continue;
 
         try {
-          fs.renameSync(drop._folderPath, dest);
+          await pgPool.query("UPDATE employees SET status='duplicate', archived_at=NOW(), archive_reason='duplicate_record' WHERE id=$1", [drop._pgId]);
+          await refreshStaffCacheEntry(drop._pgId);
           console.log('[DEDUP] Archived: ' + drop.name + ' — kept: ' + keep.name + ' (score ' + score.toFixed(1) + ')');
           archived++;
           staff.splice(dropIdx, 1);
           if (dropIdx <= i) i--;
           if (dropIdx <= j) j--;
-        } catch(moveErr) {
-          console.log('[DEDUP] Could not move ' + dropFolder + ':', moveErr.message);
+        } catch(dbErr) {
+          console.log('[DEDUP] Could not archive duplicate ' + drop.name + ':', dbErr.message);
         }
       }
     }
@@ -3042,9 +3413,9 @@ app.get('/api/dashboard/stats', requireLogin, async function(req, res) {
       else if (s.overall === 'green') compliant++;
     });
 
-    var vehicleCount = loadVehicles().filter(function(v){ return v.status === 'active'; }).length;
+    var vehicleCount = (await loadVehicles()).filter(function(v){ return v.status === 'active'; }).length;
 
-    var activeSites = loadSites().filter(function(s){ return s.status !== 'inactive'; }).length;
+    var activeSites = (await loadSites()).filter(function(s){ return s.status !== 'inactive'; }).length;
     // Drivers are just staff carrying the "Driver" role now (see driver/staff
     // unification) — no separate fleet-drivers collection to count anymore.
     var driverCount = allStaff.filter(function(s){
@@ -3066,6 +3437,9 @@ app.get('/api/dashboard/stats', requireLogin, async function(req, res) {
 });
 
 // ── VEHICLES ──────────────────────────────────────────────────────────────────
+// Postgres-backed (see ensureVehiclesExtendedSchema above). VEHICLES_FILE is
+// no longer read by any route below — kept only as the source path for the
+// one-time migrate-vehicles.js script.
 var VEHICLES_FILE = path.join(BASE, 'vehicles.json');
 var VEHICLE_PHOTOS_DIR = path.join(BASE, 'vehicle-photos');
 if (!fs.existsSync(VEHICLE_PHOTOS_DIR)) fs.mkdirSync(VEHICLE_PHOTOS_DIR, { recursive: true });
@@ -3077,15 +3451,6 @@ function ensureVehicleDocsDir(vehicleId) {
   var dir = path.join(VEHICLE_DOCS_DIR, vehicleId);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
-}
-
-function loadVehicleDocs(vehicleId) {
-  return loadJsonFile(path.join(VEHICLE_DOCS_DIR, vehicleId, 'index.json'));
-}
-
-function saveVehicleDocs(vehicleId, docs) {
-  var dir = ensureVehicleDocsDir(vehicleId);
-  fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify(docs, null, 2), 'utf8');
 }
 
 // ── EXCEL EXPORT HELPER ────────────────────────────────────────────────────────
@@ -3106,48 +3471,159 @@ function loadJsonFile(filePath, defaultVal) {
   catch (e) { return defaultVal; }
 }
 
-function loadVehicles() { return loadJsonFile(VEHICLES_FILE); }
-
-function saveVehicles(vehicles) {
-  fs.writeFileSync(VEHICLES_FILE, JSON.stringify(vehicles, null, 2), 'utf8');
-}
+// vehicle_type is the real column name (set by the dormant schema-phase3.sql
+// table, long before this migration) — aliased back to `type` here so every
+// route/response/frontend field stays exactly what it was pre-migration.
+// mot/insurance/road_tax/service dates are ::text-cast explicitly: node-postgres
+// returns a plain DATE column as a JS Date object by default, which JSON.stringify
+// turns into a full ISO timestamp — breaking `<input type="date">` elsewhere
+// in this app (see the same issue already worked around client-side for
+// agency_deployments.event_date). Casting to text here keeps the wire format
+// as the plain YYYY-MM-DD string the old vehicles.json always had.
+var VEHICLE_JOIN_SQL =
+  "SELECT v.id, v.legacy_id, v.registration, v.make, v.model, v.vehicle_type AS type, v.year, v.colour, v.status, v.notes, v.mileage, " +
+  "  (SELECT vc.expiry_date::text FROM vehicle_compliance vc WHERE vc.vehicle_id = v.id AND vc.document_type = 'MOT' ORDER BY vc.created_at DESC LIMIT 1) AS mot_expiry, " +
+  "  (SELECT vc.expiry_date::text FROM vehicle_compliance vc WHERE vc.vehicle_id = v.id AND vc.document_type = 'INSURANCE' ORDER BY vc.created_at DESC LIMIT 1) AS insurance_expiry, " +
+  "  (SELECT vc.expiry_date::text FROM vehicle_compliance vc WHERE vc.vehicle_id = v.id AND vc.document_type = 'ROAD_TAX' ORDER BY vc.created_at DESC LIMIT 1) AS road_tax_expiry, " +
+  "  (SELECT vc.expiry_date::text FROM vehicle_compliance vc WHERE vc.vehicle_id = v.id AND vc.document_type = 'SERVICE' ORDER BY vc.created_at DESC LIMIT 1) AS service_due, " +
+  "  (SELECT e.legacy_id FROM vehicle_assignments va JOIN employees e ON e.id = va.employee_id " +
+  "     WHERE va.vehicle_id = v.id AND va.unassigned_date IS NULL ORDER BY va.assigned_date DESC LIMIT 1) AS \"assignedDriverId\" " +
+  "FROM vehicles v";
 
 function findVehiclePhoto(id) { return findFileByExts(VEHICLE_PHOTOS_DIR, id); }
 
-app.get('/api/vehicles', requireLogin, requirePermission('fleet'), function(req, res) {
-  res.json({ vehicles: loadVehicles() });
-});
+// has_photo was never authoritative pre-migration either — the photo-serving
+// route always re-checked disk regardless of this flag — so it's computed
+// live here rather than stored, which can never drift from reality.
+function attachHasPhoto(row) {
+  row.has_photo = !!findVehiclePhoto(row.id);
+  return row;
+}
 
-app.post('/api/vehicles', requireLogin, requirePermission('fleet'), function(req, res) {
+async function loadVehicles() {
+  var r = await pgPool.query(VEHICLE_JOIN_SQL + " ORDER BY v.created_at");
+  return r.rows.map(attachHasPhoto);
+}
+async function getVehicleById(id) {
+  var r = await pgPool.query(VEHICLE_JOIN_SQL + " WHERE v.id = $1", [id]);
+  return r.rows.length ? attachHasPhoto(r.rows[0]) : null;
+}
+
+async function setVehicleComplianceDate(vehicleId, docType, expiryDate) {
+  var existing = await pgPool.query(
+    'SELECT id FROM vehicle_compliance WHERE vehicle_id = $1 AND document_type = $2 ORDER BY created_at DESC LIMIT 1',
+    [vehicleId, docType]
+  );
+  if (!expiryDate) {
+    if (existing.rows.length) await pgPool.query('DELETE FROM vehicle_compliance WHERE id = $1', [existing.rows[0].id]);
+    return;
+  }
+  if (existing.rows.length) {
+    await pgPool.query('UPDATE vehicle_compliance SET expiry_date = $1 WHERE id = $2', [expiryDate, existing.rows[0].id]);
+  } else {
+    await pgPool.query('INSERT INTO vehicle_compliance (vehicle_id, document_type, expiry_date) VALUES ($1,$2,$3)', [vehicleId, docType, expiryDate]);
+  }
+}
+
+var VEHICLE_COMPLIANCE_FIELD_MAP = [['mot_expiry', 'MOT'], ['insurance_expiry', 'INSURANCE'], ['road_tax_expiry', 'ROAD_TAX'], ['service_due', 'SERVICE']];
+
+async function applyVehicleComplianceFields(vehicleId, b, isCreate) {
+  for (var i = 0; i < VEHICLE_COMPLIANCE_FIELD_MAP.length; i++) {
+    var key = VEHICLE_COMPLIANCE_FIELD_MAP[i][0], docType = VEHICLE_COMPLIANCE_FIELD_MAP[i][1];
+    if (isCreate) {
+      if (b[key]) await setVehicleComplianceDate(vehicleId, docType, b[key]);
+    } else if (b[key] !== undefined) {
+      await setVehicleComplianceDate(vehicleId, docType, b[key] || null);
+    }
+  }
+}
+
+// vehicle_assignments models assignment HISTORY (assigned_date/unassigned_date)
+// rather than a flat field — "current driver" is whichever row has no
+// unassigned_date yet. Closing the old row before opening a new one keeps
+// that invariant (at most one open assignment per vehicle) intact.
+async function setVehicleDriver(vehicleId, newLegacyId) {
+  var openRow = await pgPool.query(
+    "SELECT va.id, e.legacy_id FROM vehicle_assignments va JOIN employees e ON e.id = va.employee_id " +
+    "WHERE va.vehicle_id = $1 AND va.unassigned_date IS NULL ORDER BY va.assigned_date DESC LIMIT 1",
+    [vehicleId]
+  );
+  var currentLegacyId = openRow.rows.length ? openRow.rows[0].legacy_id : null;
+  if ((newLegacyId || null) === currentLegacyId) return;
+  if (openRow.rows.length) {
+    await pgPool.query('UPDATE vehicle_assignments SET unassigned_date = CURRENT_DATE WHERE id = $1', [openRow.rows[0].id]);
+  }
+  if (newLegacyId) {
+    var empId = await resolveEmpId(newLegacyId);
+    // Silently no-op if the legacy id doesn't resolve to an employees row —
+    // mirrors the old system's total lack of validation on this field rather
+    // than 500ing an otherwise-valid PATCH over one bad driver id.
+    if (empId) {
+      await pgPool.query('INSERT INTO vehicle_assignments (vehicle_id, employee_id, is_primary_driver) VALUES ($1,$2,true)', [vehicleId, empId]);
+    }
+  }
+}
+
+function vehicleDocRowToItem(row) {
+  return { filename: row.filename, originalName: row.original_name, docType: row.doc_type, size: row.size_bytes, uploadedAt: row.uploaded_at };
+}
+
+app.get('/api/vehicles', requireLogin, requirePermission('fleet'), async function(req, res) {
   try {
-    var vehicles = loadVehicles();
-    var newVehicle = Object.assign({}, req.body, { id: Date.now().toString() });
-    vehicles.push(newVehicle);
-    saveVehicles(vehicles);
-    res.json({ ok: true, vehicle: newVehicle });
+    res.json({ vehicles: await loadVehicles() });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-app.patch('/api/vehicles/:id', requireLogin, requirePermission('fleet'), function(req, res) {
+app.post('/api/vehicles', requireLogin, requirePermission('fleet'), async function(req, res) {
   try {
-    var vehicles = loadVehicles();
-    var idx = vehicles.findIndex(function(v) { return v.id === req.params.id; });
-    if (idx === -1) return res.status(404).json({ ok: false, error: 'Vehicle not found' });
-    vehicles[idx] = Object.assign({}, vehicles[idx], req.body);
-    saveVehicles(vehicles);
-    res.json({ ok: true, vehicle: vehicles[idx] });
+    var b = req.body || {};
+    var registration = String(b.registration || '').trim();
+    if (!registration) return res.status(400).json({ ok: false, error: 'Registration is required' });
+    var r = await pgPool.query(
+      `INSERT INTO vehicles (legacy_id, registration, make, model, vehicle_type, year, colour, status, notes, mileage)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+      [Date.now().toString(), registration, b.make || null, b.model || null, b.type || 'other',
+       b.year || null, b.colour || null, b.status || 'active', b.notes || null, b.mileage || null]
+    );
+    var vehicleId = r.rows[0].id;
+    await applyVehicleComplianceFields(vehicleId, b, true);
+    if (b.assignedDriverId) await setVehicleDriver(vehicleId, b.assignedDriverId);
+    res.json({ ok: true, vehicle: await getVehicleById(vehicleId) });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-app.delete('/api/vehicles/:id', requireLogin, requirePermission('fleet'), function(req, res) {
+app.patch('/api/vehicles/:id', requireLogin, requirePermission('fleet'), async function(req, res) {
   try {
-    var vehicles = loadVehicles();
-    vehicles = vehicles.filter(function(v) { return v.id !== req.params.id; });
-    saveVehicles(vehicles);
+    var existing = await pgPool.query('SELECT id FROM vehicles WHERE id = $1', [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ ok: false, error: 'Vehicle not found' });
+
+    var b = req.body || {};
+    var colMap = { registration: 'registration', make: 'make', model: 'model', type: 'vehicle_type', year: 'year', colour: 'colour', status: 'status', notes: 'notes', mileage: 'mileage' };
+    var sets = []; var params = []; var i = 1;
+    Object.keys(colMap).forEach(function(jsonKey) {
+      if (b[jsonKey] !== undefined) { sets.push(colMap[jsonKey] + ' = $' + i); params.push(b[jsonKey]); i++; }
+    });
+    if (sets.length) {
+      params.push(req.params.id);
+      await pgPool.query('UPDATE vehicles SET ' + sets.join(', ') + ', updated_at = NOW() WHERE id = $' + i, params);
+    }
+    await applyVehicleComplianceFields(req.params.id, b, false);
+    if (b.assignedDriverId !== undefined) await setVehicleDriver(req.params.id, b.assignedDriverId || null);
+    res.json({ ok: true, vehicle: await getVehicleById(req.params.id) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/vehicles/:id', requireLogin, requirePermission('fleet'), async function(req, res) {
+  try {
+    // ON DELETE CASCADE on vehicle_compliance/vehicle_assignments/vehicle_documents
+    // handles the DB-side child rows; photo + docs dir are filesystem concerns.
+    await pgPool.query('DELETE FROM vehicles WHERE id = $1', [req.params.id]);
     var oldPhoto = findVehiclePhoto(req.params.id);
     if (oldPhoto) fs.unlinkSync(oldPhoto);
     var docsDir = path.join(VEHICLE_DOCS_DIR, req.params.id);
@@ -3174,11 +3650,10 @@ app.get('/api/vehicles/:id/photo', requireLogin, function(req, res) {
   }
 });
 
-app.post('/api/vehicles/:id/photo', requireLogin, requirePermission('fleet'), function(req, res) {
+app.post('/api/vehicles/:id/photo', requireLogin, requirePermission('fleet'), async function(req, res) {
   try {
-    var vehicles = loadVehicles();
-    var idx = vehicles.findIndex(function(v) { return v.id === req.params.id; });
-    if (idx === -1) return res.status(404).json({ ok: false, error: 'Vehicle not found' });
+    var existing = await pgPool.query('SELECT id FROM vehicles WHERE id = $1', [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ ok: false, error: 'Vehicle not found' });
 
     var chunks = [];
     req.on('data', function(c) { chunks.push(c); });
@@ -3194,8 +3669,6 @@ app.post('/api/vehicles/:id/photo', requireLogin, requirePermission('fleet'), fu
       });
 
       fs.writeFileSync(path.join(VEHICLE_PHOTOS_DIR, req.params.id + ext), buf);
-      vehicles[idx].has_photo = true;
-      saveVehicles(vehicles);
       res.json({ ok: true });
     });
   } catch (e) {
@@ -3205,15 +3678,19 @@ app.post('/api/vehicles/:id/photo', requireLogin, requirePermission('fleet'), fu
 
 // ── VEHICLE DOCUMENTS ─────────────────────────────────────────────────────────
 
-app.get('/api/vehicles/:id/docs', requireLogin, requirePermission('fleet'), function(req, res) {
-  res.json(loadVehicleDocs(req.params.id));
+app.get('/api/vehicles/:id/docs', requireLogin, requirePermission('fleet'), async function(req, res) {
+  try {
+    var r = await pgPool.query('SELECT * FROM vehicle_documents WHERE vehicle_id = $1 ORDER BY uploaded_at', [req.params.id]);
+    res.json(r.rows.map(vehicleDocRowToItem));
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
-app.post('/api/vehicles/:id/docs', requireLogin, requirePermission('fleet'), function(req, res) {
+app.post('/api/vehicles/:id/docs', requireLogin, requirePermission('fleet'), async function(req, res) {
   try {
-    var vehicles = loadVehicles();
-    var idx = vehicles.findIndex(function(v) { return v.id === req.params.id; });
-    if (idx === -1) return res.status(404).json({ ok: false, error: 'Vehicle not found' });
+    var existing = await pgPool.query('SELECT id FROM vehicles WHERE id = $1', [req.params.id]);
+    if (!existing.rows.length) return res.status(404).json({ ok: false, error: 'Vehicle not found' });
 
     ensureVehicleDocsDir(req.params.id);
     var originalName = 'document';
@@ -3226,17 +3703,16 @@ app.post('/api/vehicles/:id/docs', requireLogin, requirePermission('fleet'), fun
 
     var chunks = [];
     req.on('data', function(c) { chunks.push(c); });
-    req.on('end', function() {
+    req.on('end', async function() {
       try {
         var buf = Buffer.concat(chunks);
         fs.writeFileSync(filePath, buf);
 
-        var docs = loadVehicleDocs(req.params.id);
-        var doc = { filename: filename, originalName: originalName, docType: docType, size: buf.length, uploadedAt: new Date().toISOString() };
-        docs.push(doc);
-        saveVehicleDocs(req.params.id, docs);
-
-        res.json({ ok: true, doc: doc });
+        var r = await pgPool.query(
+          'INSERT INTO vehicle_documents (vehicle_id, filename, original_name, doc_type, size_bytes) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+          [req.params.id, filename, originalName, docType, buf.length]
+        );
+        res.json({ ok: true, doc: vehicleDocRowToItem(r.rows[0]) });
       } catch (e) {
         res.status(500).json({ ok: false, error: e.message });
       }
@@ -3249,15 +3725,14 @@ app.post('/api/vehicles/:id/docs', requireLogin, requirePermission('fleet'), fun
   }
 });
 
-app.get('/api/vehicles/:id/docs/:filename', requireLogin, function(req, res) {
+app.get('/api/vehicles/:id/docs/:filename', requireLogin, async function(req, res) {
   try {
     var filename = path.basename(req.params.filename);
     var filePath = path.join(VEHICLE_DOCS_DIR, req.params.id, filename);
     if (!fs.existsSync(filePath)) return res.status(404).end();
 
-    var docs = loadVehicleDocs(req.params.id);
-    var doc = docs.find(function(d) { return d.filename === filename; });
-    var originalName = doc ? doc.originalName : filename;
+    var r = await pgPool.query('SELECT original_name FROM vehicle_documents WHERE vehicle_id = $1 AND filename = $2', [req.params.id, filename]);
+    var originalName = r.rows.length ? r.rows[0].original_name : filename;
 
     res.setHeader('Content-Disposition', 'attachment; filename="' + originalName.replace(/"/g, '\\"') + '"');
     res.setHeader('Cache-Control', 'no-store');
@@ -3267,15 +3742,13 @@ app.get('/api/vehicles/:id/docs/:filename', requireLogin, function(req, res) {
   }
 });
 
-app.delete('/api/vehicles/:id/docs/:filename', requireLogin, requirePermission('fleet'), function(req, res) {
+app.delete('/api/vehicles/:id/docs/:filename', requireLogin, requirePermission('fleet'), async function(req, res) {
   try {
     var filename = path.basename(req.params.filename);
     var filePath = path.join(VEHICLE_DOCS_DIR, req.params.id, filename);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
-    var docs = loadVehicleDocs(req.params.id);
-    docs = docs.filter(function(d) { return d.filename !== filename; });
-    saveVehicleDocs(req.params.id, docs);
+    await pgPool.query('DELETE FROM vehicle_documents WHERE vehicle_id = $1 AND filename = $2', [req.params.id, filename]);
 
     res.json({ ok: true });
   } catch (e) {
@@ -3284,9 +3757,9 @@ app.delete('/api/vehicles/:id/docs/:filename', requireLogin, requirePermission('
 });
 
 // ── FLEET EXCEL EXPORTS ───────────────────────────────────────────────────────
-app.get('/api/vehicles/export', requireLogin, requirePermission('fleet'), function(req, res) {
+app.get('/api/vehicles/export', requireLogin, requirePermission('fleet'), async function(req, res) {
   try {
-    var all = loadVehicles();
+    var all = await loadVehicles();
     var staff = loadAllStaff();
     var ids = req.query.ids ? String(req.query.ids).split(',') : null;
     var list = ids ? all.filter(function(v) { return ids.indexOf(v.id) !== -1; }) : all;
@@ -4351,9 +4824,8 @@ app.get('/api/agencies/:agencyId/staff/available', requireLogin, requireOwnAgenc
 // Site bookings for agency cover guards. Guard certification auto-block and
 // unavailability exclusion (debug note #11) are enforced here server-side —
 // a 409 rejection, not a UI hint that a direct API call could bypass.
-function getSiteById(siteId) {
-  return loadSites().find(function(s) { return s.id === siteId; }) || null;
-}
+// getSiteById() is now Postgres-backed — defined up with loadSites() near the
+// other site functions, not here.
 
 // Shared validation for POST (new deployment) and PATCH (re-assign staff) —
 // checks every agency_staff_id belongs to this agency and is active, rejects
@@ -4436,7 +4908,7 @@ app.post('/api/agencies/:agencyId/deployments', requireLogin, requireOwnAgencyOr
     if (!siteId)    return res.status(400).json({ ok: false, error: 'site_id is required.' });
     if (!eventDate) return res.status(400).json({ ok: false, error: 'event_date is required.' });
     if (!staffReq.length) return res.status(400).json({ ok: false, error: 'At least one guard must be assigned.' });
-    if (!getSiteById(siteId)) return res.status(400).json({ ok: false, error: 'Unknown site_id.' });
+    if (!(await getSiteById(siteId))) return res.status(400).json({ ok: false, error: 'Unknown site_id.' });
 
     try {
       await validateDeploymentStaff(agencyId, staffReq, eventDate);
@@ -4487,7 +4959,7 @@ app.get('/api/agencies/:agencyId/deployments', requireLogin, requireOwnAgencyOrP
       'WHERE ' + conditions.join(' AND ') + ' GROUP BY d.id ORDER BY d.event_date DESC',
       params
     );
-    var deployments = result.rows.map(function(row) { row.site = getSiteById(row.site_id); return row; });
+    var deployments = await Promise.all(result.rows.map(async function(row) { row.site = await getSiteById(row.site_id); return row; }));
     res.json({ ok: true, deployments: deployments });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -4756,7 +5228,7 @@ app.get('/api/admin/deployments', requireLogin, requirePermission('staff'), asyn
       ' GROUP BY d.id, a.name ORDER BY d.event_date DESC';
 
     var result = await pgPool.query(sql, params);
-    var deployments = result.rows.map(function(row) { row.site = getSiteById(row.site_id); return row; });
+    var deployments = await Promise.all(result.rows.map(async function(row) { row.site = await getSiteById(row.site_id); return row; }));
     res.json({ ok: true, deployments: deployments });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -4789,8 +5261,10 @@ app.get('/api/manager-directory', requireLogin, requirePermission('staff'), asyn
 // Covers BOTH agency cover guards and GuardTec's own staff — one consolidated
 // acknowledgment_forms table, one link-generation mechanism, two respondent
 // types (debug notes #3/#4). Instructions stand alone or link to a site —
-// site_id TEXT, same JSON-backed id as agency_deployments.site_id, no FK
-// (debug note #1); respondent_id is resolved the same way, at the app layer.
+// site_id TEXT, same id space as agency_deployments.site_id — now backed by
+// a real `sites` row (see ensureSitesSchema/migrate-sites.js) with a real FK
+// added once that migration has run (ensureSiteForeignKeysSchema); respondent_id
+// is still resolved at the app layer, unrelated to the site_id question.
 
 // Generates one secure, single-use link for one respondent — a deployment's
 // guards, or a list of GuardTec staff, always get their own individually
@@ -4848,7 +5322,7 @@ app.post('/api/event-instructions', requireLogin, requirePermission('staff'), as
     if (!title) return res.status(400).json({ ok: false, error: 'title is required.' });
 
     var siteId = b.site_id ? String(b.site_id).trim() : '';
-    if (siteId && !getSiteById(siteId)) return res.status(400).json({ ok: false, error: 'Unknown site_id.' });
+    if (siteId && !(await getSiteById(siteId))) return res.status(400).json({ ok: false, error: 'Unknown site_id.' });
 
     var status = b.status === 'published' ? 'published' : 'draft';
     var requirements = Array.isArray(b.requirements) ? b.requirements : [];
@@ -4887,7 +5361,7 @@ app.get('/api/event-instructions', requireLogin, requirePermission('staff'), asy
       (conditions.length ? ' WHERE ' + conditions.join(' AND ') : '') +
       ' ORDER BY created_at DESC';
     var result = await pgPool.query(sql, params);
-    var instructions = result.rows.map(function(row) { row.site = row.site_id ? getSiteById(row.site_id) : null; return row; });
+    var instructions = await Promise.all(result.rows.map(async function(row) { row.site = row.site_id ? await getSiteById(row.site_id) : null; return row; }));
     res.json({ ok: true, instructions: instructions });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -4899,7 +5373,7 @@ app.get('/api/event-instructions/:id', requireLogin, requirePermission('staff'),
     var r = await pgPool.query('SELECT * FROM event_instructions WHERE id = $1', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Instruction not found.' });
     var instruction = r.rows[0];
-    instruction.site = instruction.site_id ? getSiteById(instruction.site_id) : null;
+    instruction.site = instruction.site_id ? await getSiteById(instruction.site_id) : null;
 
     var formsResult = await pgPool.query(
       `SELECT id, respondent_type, respondent_id, respondent_name_snapshot, instruction_version,
@@ -4927,7 +5401,7 @@ app.patch('/api/event-instructions/:id', requireLogin, requirePermission('staff'
     var siteIdVal = current.site_id;
     if (b.site_id !== undefined) {
       siteIdVal = String(b.site_id || '').trim() || null;
-      if (siteIdVal && !getSiteById(siteIdVal)) return res.status(400).json({ ok: false, error: 'Unknown site_id.' });
+      if (siteIdVal && !(await getSiteById(siteIdVal))) return res.status(400).json({ ok: false, error: 'Unknown site_id.' });
     }
 
     var title            = b.title !== undefined ? String(b.title).trim() : current.title;
@@ -5511,7 +5985,7 @@ app.post('/api/custom-forms/:id/submit', requireLogin, async function(req, res) 
           var emp = all.find(function(e) { return e.id === respondent.id; });
           if (emp) {
             applyPendingProfileFields(emp, mapped);
-            saveStaff(emp, emp._folderPath);
+            await saveStaff(emp, emp._folderPath);
           }
         } else if (respondent.type === 'agency') {
           var agencySets = [];
@@ -5722,17 +6196,27 @@ app.get('/api/my-incident-reports', requireLogin, requireRole('staff'), async fu
 // ── Incident Reports: management — view all ──
 app.get('/api/incident-reports', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
+    // Flagged (inappropriate-content) reports are hidden from the normal
+    // queue for everyone by default — director-only, and only on request,
+    // since reviewing them is a deliberate moderation action, not routine
+    // triage. Never based on reporter identity (there isn't one to filter
+    // on) — purely the report's own flagged_inappropriate column.
+    var includeFlagged = req.query.includeFlagged === 'true' && req.user.role === 'director';
     var result = await pgPool.query(
       `SELECT ir.*,
          CASE WHEN ir.is_anonymous THEN NULL ELSE e.name END AS reporter_name,
          u.full_name AS reviewed_by_name,
+         fb.full_name AS flagged_by_name,
          COUNT(ia.id)::int AS attachment_count
        FROM incident_reports ir
        LEFT JOIN employees e ON e.id = ir.reporter_id
        LEFT JOIN users u ON u.id = ir.reviewed_by
+       LEFT JOIN users fb ON fb.id = ir.flagged_by
        LEFT JOIN incident_attachments ia ON ia.incident_id = ir.id
-       GROUP BY ir.id, e.name, u.full_name
-       ORDER BY ir.created_at DESC`
+       WHERE ir.flagged_inappropriate = FALSE OR $1
+       GROUP BY ir.id, e.name, u.full_name, fb.full_name
+       ORDER BY ir.created_at DESC`,
+      [includeFlagged]
     );
     res.json({ ok: true, reports: result.rows });
   } catch (e) {
@@ -5754,6 +6238,44 @@ app.patch('/api/incident-reports/:reportId', requireLogin, requirePermission('st
        WHERE id = $4`,
       [b.status || null, b.resolution_notes || null, req.user.id, req.params.reportId]
     );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Director-only content moderation — flags a report as inappropriate (e.g.
+// abusive language) to pull it out of the normal management queue. Operates
+// solely on the report row; never touches reporter_id/is_anonymous, so an
+// anonymous submitter's identity is never at risk of exposure through this
+// route, by design (see the schema comment above for why a "reveal identity"
+// feature was considered and deliberately rejected instead of this).
+app.patch('/api/incident-reports/:reportId/flag', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var reason = String((req.body && req.body.reason) || '').trim();
+    var r = await pgPool.query(
+      `UPDATE incident_reports
+       SET flagged_inappropriate = TRUE, flagged_at = NOW(), flagged_by = $1, flagged_reason = $2, updated_at = NOW()
+       WHERE id = $3 RETURNING id`,
+      [req.user.id, reason || null, req.params.reportId]
+    );
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Report not found.' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Reverses a flag made in error — same director-only, identity-blind scope.
+app.patch('/api/incident-reports/:reportId/unflag', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var r = await pgPool.query(
+      `UPDATE incident_reports
+       SET flagged_inappropriate = FALSE, flagged_at = NULL, flagged_by = NULL, flagged_reason = NULL, updated_at = NOW()
+       WHERE id = $1 RETURNING id`,
+      [req.params.reportId]
+    );
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Report not found.' });
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -6272,9 +6794,9 @@ function requireN8nToken(req, res, next) {
 }
 
 // GET /api/internal/fleet — returns all vehicles with pre-computed days_until_* fields
-app.get('/api/internal/fleet', requireN8nToken, function(req, res) {
+app.get('/api/internal/fleet', requireN8nToken, async function(req, res) {
   try {
-    var vehicles = loadVehicles();
+    var vehicles = await loadVehicles();
     var now = Date.now();
     function daysUntil(dateStr) {
       if (!dateStr) return null;
@@ -6345,7 +6867,7 @@ app.post('/api/ai-chat', requireLogin, async function(req, res) {
 
   try {
     var staffList = loadAllStaff();
-    var vehicles  = loadVehicles();
+    var vehicles  = await loadVehicles();
 
     var staffData = staffList.map(function(s) {
       return {
@@ -6389,22 +6911,31 @@ app.post('/api/ai-chat', requireLogin, async function(req, res) {
 });
 
 // ── START ─────────────────────────────────────────────────────────────────────
-console.log('\nInitialising staff data from spreadsheet...');
-initFromSpreadsheet();
+// loadAllStaff() must be callable synchronously the instant the server
+// starts accepting requests, so STAFF_CACHE has to be warm BEFORE
+// app.listen() — unlike the schema-repair IIFEs above (which are fine
+// racing in the background), an empty cache on the first real request would
+// mean an empty staff roster, not just a slow one.
+(async function startServer() {
+  await employeesExtendedSchemaReady;
+  await refreshStaffCacheFull();
+  console.log('\nInitialising staff data from spreadsheet...');
+  await initFromSpreadsheet();
 
-app.listen(PORT, function() {
-  console.log('\n========================================');
-  console.log('  GuardTec Compliance App is RUNNING');
-  console.log('  Open Chrome: http://localhost:' + PORT);
-  console.log('  Press Ctrl+C to stop');
-  console.log('========================================\n');
+  app.listen(PORT, function() {
+    console.log('\n========================================');
+    console.log('  GuardTec Compliance App is RUNNING');
+    console.log('  Open Chrome: http://localhost:' + PORT);
+    console.log('  Press Ctrl+C to stop');
+    console.log('========================================\n');
 
-  // Duplicate check on every startup, then every hour automatically
-  setTimeout(autoDedup, 3000);
-  setInterval(autoDedup, 60 * 60 * 1000);
+    // Duplicate check on every startup, then every hour automatically
+    setTimeout(autoDedup, 3000);
+    setInterval(autoDedup, 60 * 60 * 1000);
 
-  // New Staff Inbox — check every 30 seconds for Power Automate form submissions
-  checkNewStaffInbox();
-  setInterval(checkNewStaffInbox, 30 * 1000);
-  console.log('[INBOX] Watching ! New Staff Inbox/ for new form submissions...');
-});
+    // New Staff Inbox — check every 30 seconds for Power Automate form submissions
+    checkNewStaffInbox();
+    setInterval(checkNewStaffInbox, 30 * 1000);
+    console.log('[INBOX] Watching ! New Staff Inbox/ for new form submissions...');
+  });
+})();

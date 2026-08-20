@@ -232,6 +232,7 @@ export default function StaffPage() {
   const [restoringId, setRestoringId] = useState<string | null>(null)
   const [exError, setExError]         = useState("")
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [confirmDeleteText, setConfirmDeleteText] = useState("")
   const [permDeleting, setPermDeleting]       = useState(false)
 
   // Ex-Staff search
@@ -362,14 +363,16 @@ export default function StaffPage() {
     }
   }
 
-  async function permanentDelete(folderId: string) {
+  async function permanentDelete(folderId: string, confirmPhrase: string) {
     setPermDeleting(true); setExError("")
     try {
-      await api.delete("/api/exstaff/permanent", { folderId })
+      await api.delete("/api/exstaff/permanent", { folderId, confirmPhrase })
       setExStaff(prev => prev.filter(e => e.folderId !== folderId))
-      setConfirmDeleteId(null)
-    } catch {
-      setExError("Network error.")
+      setConfirmDeleteId(null); setConfirmDeleteText("")
+    } catch (err) {
+      // Surfaces the server's actual reason — e.g. the 7-year retention
+      // block, or "type the name exactly" — instead of a generic message.
+      setExError(err instanceof ApiError ? err.message : "Network error.")
     } finally {
       setPermDeleting(false)
     }
@@ -1255,7 +1258,7 @@ export default function StaffPage() {
                                 : <RotateCcw className="h-3.5 w-3.5" />}
                               Restore
                             </button>
-                            <button onClick={() => setConfirmDeleteId(e.folderId)}
+                            <button onClick={() => { setConfirmDeleteId(e.folderId); setConfirmDeleteText(""); setExError("") }}
                               className="flex items-center gap-1.5 rounded-md bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20">
                               <Trash2 className="h-3.5 w-3.5" />
                               Delete
@@ -1264,13 +1267,20 @@ export default function StaffPage() {
                         </div>
 
                         {confirmDeleteId === e.folderId && (
-                          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 flex items-center justify-between gap-3">
-                            <p className="text-xs text-destructive font-medium">Permanently delete {e.name.split(" ")[0]}'s record? This cannot be undone.</p>
-                            <div className="flex gap-2 shrink-0">
-                              <button onClick={() => setConfirmDeleteId(null)}
-                                className="rounded px-2.5 py-1 text-xs border hover:bg-muted transition-colors">Cancel</button>
-                              <button onClick={() => permanentDelete(e.folderId)} disabled={permDeleting}
-                                className="rounded px-2.5 py-1 text-xs bg-destructive text-white hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1">
+                          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 space-y-2">
+                            <p className="text-xs text-destructive font-medium">
+                              Permanently delete {e.name}'s record? This cannot be undone, and BS7858/GDPR retention
+                              rules mean it will be blocked unless this record has been archived for 7+ years.
+                            </p>
+                            <p className="text-xs text-muted-foreground">Type <span className="font-semibold text-foreground">{e.name}</span> to confirm:</p>
+                            <div className="flex items-center gap-2">
+                              <Input value={confirmDeleteText} onChange={ev => setConfirmDeleteText(ev.target.value)}
+                                placeholder={e.name} className="h-8 text-xs" autoFocus />
+                              <button onClick={() => { setConfirmDeleteId(null); setConfirmDeleteText("") }}
+                                className="rounded px-2.5 py-1.5 text-xs border hover:bg-muted transition-colors shrink-0">Cancel</button>
+                              <button onClick={() => permanentDelete(e.folderId, confirmDeleteText)}
+                                disabled={permDeleting || confirmDeleteText.trim() !== e.name.trim()}
+                                className="rounded px-2.5 py-1.5 text-xs bg-destructive text-white hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1 shrink-0">
                                 {permDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                                 Yes, Delete
                               </button>
