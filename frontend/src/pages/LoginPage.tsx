@@ -311,10 +311,10 @@ export default function LoginPage() {
             <Globe className="h-3 w-3" /> guardtec-security.co.uk
           </span>
         </div>
-        <p className="text-[10px] text-[#E40613]/70 font-display tracking-wider">
+        <p className="text-xs text-[#E40613] font-display font-semibold tracking-wider">
           © {new Date().getFullYear()} GuardTec Security Ltd
         </p>
-        <p className="text-[9px] text-[#E40613]/70 font-display uppercase tracking-[0.25em]">
+        <p className="text-[11px] text-[#E40613] font-display font-semibold uppercase tracking-[0.25em]">
           Designed &amp; Built by Asrar Khan
         </p>
       </motion.div>
