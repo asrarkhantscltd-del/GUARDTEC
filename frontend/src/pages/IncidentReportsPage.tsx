@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/AuthContext"
 import {
   Flag, Loader2, ChevronDown, ChevronUp, Paperclip,
   FileVideo, FileText, Image as ImageIcon, Download,
-  EyeOff, User as UserIcon, ShieldAlert, ShieldOff,
+  EyeOff, User as UserIcon, ShieldAlert, ShieldOff, Trash2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
@@ -116,6 +116,22 @@ export default function IncidentReportsPage() {
     }
   }
 
+  // Director-only, and only for resolved/closed reports — enforced again on
+  // the backend, this is just the UI's own gate so the button never even
+  // appears for a report that's still open/under review.
+  async function deleteReport(id: string) {
+    setUpdating(id)
+    try {
+      await api.delete(`/api/incident-reports/${id}`)
+      toast.success("Report permanently deleted.")
+      setReports(prev => prev.filter(r => r.id !== id))
+    } catch {
+      toast.error("Failed to delete report.")
+    } finally {
+      setUpdating(null)
+    }
+  }
+
   async function toggleExpand(id: string) {
     const next = !expanded[id]
     setExpanded(p => ({ ...p, [id]: next }))
@@ -197,6 +213,7 @@ export default function IncidentReportsPage() {
               onUpdate={updateStatus}
               onFlag={flagReport}
               onUnflag={unflagReport}
+              onDelete={deleteReport}
             />
           ))}
         </section>
@@ -218,6 +235,7 @@ export default function IncidentReportsPage() {
               onUpdate={updateStatus}
               onFlag={flagReport}
               onUnflag={unflagReport}
+              onDelete={deleteReport}
             />
           ))}
         </section>
@@ -226,7 +244,7 @@ export default function IncidentReportsPage() {
   )
 }
 
-function ReportCard({ rep, isOpen, updating, isDirector, onToggle, onUpdate, onFlag, onUnflag }: {
+function ReportCard({ rep, isOpen, updating, isDirector, onToggle, onUpdate, onFlag, onUnflag, onDelete }: {
   rep: Report
   isOpen: boolean
   updating: boolean
@@ -235,11 +253,14 @@ function ReportCard({ rep, isOpen, updating, isDirector, onToggle, onUpdate, onF
   onUpdate: (id: string, status: string, notes: string) => void
   onFlag: (id: string, reason: string) => void
   onUnflag: (id: string) => void
+  onDelete: (id: string) => void
 }) {
   const [notes, setNotes]   = useState(rep.resolution_notes ?? "")
   const [status, setStatus] = useState(rep.status)
   const [flagReason, setFlagReason] = useState("")
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const cfg = STATUS_CFG[rep.status] ?? STATUS_CFG.open
+  const isClosed = rep.status === "resolved" || rep.status === "closed"
 
   return (
     <div className={`surface rounded-lg border bg-card shadow-sm overflow-hidden ${rep.flagged_inappropriate ? "border-destructive/40" : ""}`}>
@@ -380,6 +401,35 @@ function ReportCard({ rep, isOpen, updating, isDirector, onToggle, onUpdate, onF
             <div className="rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
               <span className="font-medium">Resolution: </span>{rep.resolution_notes}
             </div>
+          )}
+
+          {/* Permanent delete — director only, and only once closed/resolved
+              (enforced again server-side). Deletion is logged to audit_events
+              on the backend even though the row itself is gone. */}
+          {isDirector && isClosed && (
+            confirmDelete ? (
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 flex flex-col gap-2">
+                <p className="text-xs text-destructive font-medium">
+                  Permanently delete this report? This cannot be undone.
+                </p>
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setConfirmDelete(false)}
+                    className="rounded px-2.5 py-1 text-xs border hover:bg-muted transition-colors">Cancel</button>
+                  <button onClick={() => onDelete(rep.id)} disabled={updating}
+                    className="rounded px-2.5 py-1 text-xs bg-destructive text-white hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1">
+                    {updating ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                    Yes, delete permanently
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="border-t pt-3">
+                <Button size="sm" variant="outline" onClick={() => setConfirmDelete(true)}
+                  className="gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10">
+                  <Trash2 className="h-3.5 w-3.5" />Delete report
+                </Button>
+              </div>
+            )
           )}
         </div>
       )}

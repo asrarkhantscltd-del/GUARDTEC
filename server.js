@@ -6384,6 +6384,45 @@ app.patch('/api/incident-reports/:reportId/unflag', requireLogin, requireRole('d
   }
 });
 
+// Hard delete — director-only, and only once a report is no longer active
+// (status 'resolved'/'closed'; not 'open'/'under_review') — "once it's been
+// reviewed", per the user's own framing. Incident reports can allege
+// harassment/discrimination/misconduct, so this isn't offered as a casual
+// action: gating on review-complete avoids a still-open complaint being
+// deleted before anyone's actually looked at it, and the deletion itself is
+// logged to audit_events (same pattern as /api/exstaff/permanent) so there's
+// still a trace even though the record itself is gone. reporter_id is never
+// read/logged here beyond what's already on the row — deleting doesn't
+// require or cause any extra exposure of an anonymous submitter's identity.
+app.delete('/api/incident-reports/:reportId', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var r = await pgPool.query('SELECT * FROM incident_reports WHERE id = $1', [req.params.reportId]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Report not found.' });
+    var report = r.rows[0];
+    if (report.status !== 'resolved' && report.status !== 'closed') {
+      return res.status(400).json({ ok: false, error: 'Only a resolved/closed report can be deleted — update its status first.' });
+    }
+
+    var attachments = await pgPool.query('SELECT filename FROM incident_attachments WHERE incident_id = $1', [req.params.reportId]);
+
+    await pgPool.query('DELETE FROM incident_reports WHERE id = $1', [req.params.reportId]); // cascades incident_attachments rows
+    attachments.rows.forEach(function(a) {
+      try { fs.unlinkSync(path.join(INCIDENT_ATTACH_DIR, a.filename)); } catch (e) { /* file already gone — fine */ }
+    });
+
+    await pgPool.query(
+      `INSERT INTO audit_events (actor_email, action, object_type, object_id, object_name, metadata)
+       VALUES ($1,'INCIDENT_REPORT_DELETED','incident_report',$2,$3,$4)`,
+      [(req.user && req.user.username) || null, report.id, report.incident_type,
+       JSON.stringify({ status: report.status, is_anonymous: report.is_anonymous, report_date: report.report_date })]
+    );
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── Incident Attachments ──────────────────────────────────────────────────────
 var INCIDENT_ATTACH_DIR = path.join(BASE, 'incident-attachments');
 if (!fs.existsSync(INCIDENT_ATTACH_DIR)) fs.mkdirSync(INCIDENT_ATTACH_DIR, { recursive: true });
