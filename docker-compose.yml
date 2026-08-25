@@ -12,7 +12,7 @@ services:
     ports:
       - "3001:3000"
     volumes:
-      - "C:\\Users\\WORKSTATION\\First Call Site Services\\FCSS - Managers\\HR and Legal\\Asrar\\GuardTec Compliance:/data"
+      - "${HOST_DATA_PATH}:/data"
     environment:
       - DATA_PATH=/data
       - N8N_AI_WEBHOOK=http://n8n:5678/webhook/ai-chat
