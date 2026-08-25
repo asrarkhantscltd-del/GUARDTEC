@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo } from "react"
+import { motion } from "framer-motion"
+import { makeStagger } from "@/lib/motion"
 import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import {
@@ -111,6 +113,8 @@ const VEHICLE_STATUS_STYLE: Record<string, string> = {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
+
+const fleetStagger = makeStagger(0.07, 0.4)
 
 export default function FleetPage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -565,16 +569,23 @@ export default function FleetPage() {
                 />
                 <span className="text-xs text-muted-foreground">Select all</span>
               </div>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <motion.div
+                className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+                variants={fleetStagger.container}
+                initial="initial"
+                animate="animate"
+              >
                 {filteredVehicles.map(v => (
-                  <VehicleCard key={v.id} v={v} staff={staffOptions}
-                    selected={selectedVehicleIds.has(v.id)}
-                    onToggleSelect={() => toggleSelected(v.id, setSelectedVehicleIds)}
-                    onEdit={() => openEditVehicle(v)}
-                    onDelete={() => setDeleteVehicleId(v.id)}
-                    onDocs={() => openDocsPanel(v.id)} />
+                  <motion.div key={v.id} variants={fleetStagger.item}>
+                    <VehicleCard v={v} staff={staffOptions}
+                      selected={selectedVehicleIds.has(v.id)}
+                      onToggleSelect={() => toggleSelected(v.id, setSelectedVehicleIds)}
+                      onEdit={() => openEditVehicle(v)}
+                      onDelete={() => setDeleteVehicleId(v.id)}
+                      onDocs={() => openDocsPanel(v.id)} />
+                  </motion.div>
                 ))}
-              </div>
+              </motion.div>
             </div>
       )}
 

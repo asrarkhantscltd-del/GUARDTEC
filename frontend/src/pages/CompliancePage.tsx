@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from "react"
+import { motion } from "framer-motion"
 import { api, ApiError } from "@/lib/api"
 import { daysUntil, formatDate } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
@@ -240,8 +241,8 @@ export default function CompliancePage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y">
-              {rows.map(s => {
+            <tbody className="divide-y divide-border">
+              {rows.map((s, i) => {
                 const isBritish = (s.nationality ?? "").toLowerCase().includes("british")
                 const rtwStatus: ComplianceStatus = isBritish ? "good" : statusOf(daysUntil(s.visa?.expiry))
                 const worst = worstStatus(statusOf(daysUntil(s.sia?.expiry)), statusOf(daysUntil(s.cscs?.expiry)), rtwStatus)
@@ -250,7 +251,13 @@ export default function CompliancePage() {
                   worst === "expiring" ? "bg-amber-50/40 dark:bg-amber-950/10" : ""
 
                 return (
-                  <tr key={s.id} className={`transition-colors hover:bg-muted/30 ${rowBg}`}>
+                  <motion.tr
+                    key={s.id}
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.35, delay: i * 0.04, ease: [0.16, 1, 0.3, 1] }}
+                    className={`transition-colors hover:bg-muted/40 ${rowBg}`}
+                  >
                     <td className="px-4 py-3">
                       <div className="font-medium">{s.name}</div>
                       {s.jobRole && <div className="text-xs text-muted-foreground">{s.jobRole}</div>}
@@ -273,7 +280,7 @@ export default function CompliancePage() {
                     <td className="px-4 py-3">
                       <StatusChip status={worst} />
                     </td>
-                  </tr>
+                  </motion.tr>
                 )
               })}
             </tbody>
