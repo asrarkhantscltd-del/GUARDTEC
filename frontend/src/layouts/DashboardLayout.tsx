@@ -171,10 +171,11 @@ export default function DashboardLayout() {
     closeReports()
   }
 
-  // Close alert dropdown when clicking outside
+  // Close alert dropdown when clicking outside — also mark all as seen on close
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (alertsRef.current && !alertsRef.current.contains(e.target as Node)) {
+        clearAllNotifications()
         setShowAlerts(false)
       }
     }
@@ -264,40 +265,53 @@ export default function DashboardLayout() {
 
         {/* Nav — grouped by area */}
         <nav className="flex-1 overflow-y-auto p-3">
-          {navGroups.map(({ key, label }) => {
-            const items = visibleNav.filter(item => (item.group ?? "core") === key)
-            if (items.length === 0) return null
-            return (
-              <div key={key} className="mb-1">
-                {label && (
-                  <p className="px-3 pb-1 pt-3 text-[9px] font-bold uppercase tracking-[0.18em] text-sidebar-foreground/30">
-                    {label}
-                  </p>
-                )}
-                <div className="space-y-0.5">
-                  {items.map((item) => (
-                    <NavLink key={item.to} to={item.to} end={item.to === "/"}
-                      onClick={() => setSidebarOpen(false)}
-                      className={({ isActive }) =>
-                        `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ${
-                          isActive
-                            ? "bg-gradient-to-r from-primary to-primary/80 text-white shadow-[0_4px_14px_-2px_rgba(228,6,19,0.4)]"
-                            : "hover:translate-x-0.5 hover:bg-sidebar-accent"
-                        }`
-                      }>
-                      {({ isActive }) => (
-                        <>
-                          {isActive && <span className="absolute -left-3 h-5 w-1 rounded-r-full bg-primary" />}
-                          <span className={`transition-transform duration-200 ${!isActive ? "group-hover:scale-110" : ""}`}>{item.icon}</span>
-                          {item.label}
-                        </>
-                      )}
-                    </NavLink>
-                  ))}
+          {(() => {
+            let navIdx = 0
+            return navGroups.map(({ key, label }) => {
+              const items = visibleNav.filter(item => (item.group ?? "core") === key)
+              if (items.length === 0) return null
+              return (
+                <div key={key} className="mb-1">
+                  {label && (
+                    <p className="px-3 pb-1 pt-3 text-[9px] font-bold uppercase tracking-[0.18em] text-sidebar-foreground/30">
+                      {label}
+                    </p>
+                  )}
+                  <div className="space-y-0.5">
+                    {items.map((item) => {
+                      const delay = navIdx++ * 0.05
+                      return (
+                        <motion.div
+                          key={item.to}
+                          initial={{ opacity: 0, x: -16 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ duration: 0.4, delay, ease: [0.16, 1, 0.3, 1] }}
+                        >
+                          <NavLink to={item.to} end={item.to === "/"}
+                            onClick={() => setSidebarOpen(false)}
+                            className={({ isActive }) =>
+                              `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ${
+                                isActive
+                                  ? "bg-gradient-to-r from-primary to-primary/80 text-white shadow-[0_4px_14px_-2px_rgba(228,6,19,0.4)]"
+                                  : "hover:translate-x-0.5 hover:bg-sidebar-accent"
+                              }`
+                            }>
+                            {({ isActive }) => (
+                              <>
+                                {isActive && <span className="absolute -left-3 h-5 w-1 rounded-r-full bg-primary" />}
+                                <span className={`transition-transform duration-200 ${!isActive ? "group-hover:scale-110" : ""}`}>{item.icon}</span>
+                                {item.label}
+                              </>
+                            )}
+                          </NavLink>
+                        </motion.div>
+                      )
+                    })}
+                  </div>
                 </div>
-              </div>
-            )
-          })}
+              )
+            })
+          })()}
         </nav>
 
         {/* Footer — user info + actions */}
@@ -382,7 +396,12 @@ export default function DashboardLayout() {
 
                 {/* Reports dropdown panel */}
                 {showReports && (
-                  <div className="absolute right-0 top-12 z-50 w-72 rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
+                  <motion.div
+                    initial={{ opacity: 0, y: -8, scale: 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -8, scale: 0.97 }}
+                    transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                    className="absolute right-0 top-12 z-50 w-72 rounded-2xl glass shadow-2xl overflow-hidden">
                     <div className="flex items-center justify-between border-b border-border px-4 py-3">
                       <div className="flex items-center gap-2">
                         {reportType && (
@@ -519,7 +538,7 @@ export default function DashboardLayout() {
                         <Button size="sm" className="w-full" onClick={generateReport}>Generate Report</Button>
                       </div>
                     )}
-                  </div>
+                </motion.div>
                 )}
               </div>
             )}
@@ -541,7 +560,12 @@ export default function DashboardLayout() {
 
               {/* Notifications dropdown panel */}
               {showAlerts && (
-                <div className="absolute right-0 top-12 z-50 w-80 rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
+                <motion.div
+                  initial={{ opacity: 0, y: -8, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8, scale: 0.97 }}
+                  transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute right-0 top-12 z-50 w-80 rounded-2xl glass shadow-2xl overflow-hidden">
                   <div className="flex items-center justify-between border-b border-border px-4 py-3">
                     <p className="text-sm font-semibold">Notifications</p>
                     <div className="flex items-center gap-1">
@@ -551,7 +575,7 @@ export default function DashboardLayout() {
                           Clear all
                         </button>
                       )}
-                      <button onClick={() => setShowAlerts(false)}
+                      <button onClick={() => { clearAllNotifications(); setShowAlerts(false) }}
                         className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
                         <X className="h-3.5 w-3.5" />
                       </button>
@@ -617,7 +641,7 @@ export default function DashboardLayout() {
                     )}
                   </div>
 
-                </div>
+                </motion.div>
               )}
             </div>
 

@@ -281,3 +281,93 @@ input:-webkit-autofill:focus {
   animation: scan-line 4s ease-in-out infinite;
   pointer-events: none;
 }
+
+/* ── Glassmorphism — premium frosted-glass panel ─────────────────────────── */
+.glass {
+  background: color-mix(in srgb, var(--color-card) 80%, transparent);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+}
+
+/* ── Premium button glow — wraps primary buttons ─────────────────────────── */
+.btn-glow {
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow 0.2s ease, transform 0.15s ease;
+}
+.btn-glow:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px -4px rgba(228, 6, 19, 0.45);
+}
+.btn-glow:active {
+  transform: translateY(0);
+}
+
+/* ── Premium table row — left accent border on hover ─────────────────────── */
+.table-row-premium {
+  position: relative;
+  transition: background 0.15s ease;
+}
+.table-row-premium::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: hsl(354 96% 46%);
+  transform: scaleY(0);
+  transform-origin: center;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  border-radius: 0 2px 2px 0;
+}
+.table-row-premium:hover::before {
+  transform: scaleY(1);
+}
+
+/* ── Shimmer on card hover ────────────────────────────────────────────────── */
+@keyframes card-shimmer {
+  0%   { transform: translateX(-100%) skewX(-15deg); }
+  100% { transform: translateX(200%) skewX(-15deg); }
+}
+.surface-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.surface-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255,255,255,0.06) 50%,
+    transparent 100%
+  );
+  transform: translateX(-100%) skewX(-15deg);
+  pointer-events: none;
+}
+.surface-shimmer:hover::after {
+  animation: card-shimmer 0.6s ease forwards;
+}
+
+/* ── Gradient border — premium selected/active state ─────────────────────── */
+.gradient-border {
+  position: relative;
+  background-clip: padding-box;
+  border: 1px solid transparent;
+}
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, #E40613 0%, #ff5757 50%, #E40613 100%);
+  z-index: -1;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.gradient-border:hover::before {
+  opacity: 1;
+}

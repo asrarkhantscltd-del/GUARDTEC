@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react"
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 import { useNavigate, useOutletContext } from "react-router-dom"
@@ -9,10 +10,24 @@ import {
   ArrowUpRight, Sparkles, ChevronRight,
 } from "lucide-react"
 import { ShaderGradientCanvas, ShaderGradient } from "@shadergradient/react"
-import { motion } from "framer-motion"
+import { motion, animate } from "framer-motion"
 import { makeStagger } from "@/lib/motion"
 
 const stagger = makeStagger(0.07, 0.4)
+
+function useCountUp(to: number | string) {
+  const [display, setDisplay] = useState<number | string>(typeof to === "number" ? 0 : to)
+  useEffect(() => {
+    if (typeof to !== "number") { setDisplay(to); return }
+    const controls = animate(0, to, {
+      duration: 0.9,
+      ease: "easeOut",
+      onUpdate: (v) => setDisplay(Math.round(v)),
+    })
+    return () => controls.stop()
+  }, [to])
+  return display
+}
 
 interface DashboardStats {
   totalStaff: number
@@ -285,12 +300,12 @@ export default function DashboardPage() {
               <div key={label} className="flex items-center gap-3">
                 <p className="w-24 shrink-0 text-xs text-muted-foreground">{label}</p>
                 <div className="flex-1 overflow-hidden rounded-full bg-muted" style={{ height: "6px" }}>
-                  <div
-                    className="h-full rounded-full transition-[width] duration-700"
-                    style={{
-                      width: `${Math.min(100, Math.round((value / stats.totalStaff) * 100))}%`,
-                      background: color,
-                    }}
+                  <motion.div
+                    className="h-full rounded-full"
+                    style={{ background: color }}
+                    initial={{ width: "0%" }}
+                    animate={{ width: `${Math.min(100, Math.round((value / stats.totalStaff) * 100))}%` }}
+                    transition={{ duration: 0.9, ease: "easeOut", delay: 0.15 }}
                   />
                 </div>
                 <p className="w-7 shrink-0 text-right text-xs font-bold tabular-nums" style={{ color }}>{value}</p>
@@ -418,10 +433,11 @@ interface StatCardProps {
 
 function StatCard({ label, value, sub, icon, tint, highlight, clickable, onClick }: StatCardProps) {
   const t = TINTS[tint]
+  const displayValue = useCountUp(value)
   return (
     <div
       onClick={onClick}
-      className={`surface relative overflow-hidden p-4 pl-5 ${highlight ? "border-[#ef4444]/40" : ""} ${clickable ? "surface-hover cursor-pointer" : ""}`}
+      className={`surface surface-shimmer relative overflow-hidden p-4 pl-5 ${highlight ? "border-[#ef4444]/40" : ""} ${clickable ? "surface-hover cursor-pointer" : ""}`}
     >
       {/* Status strip */}
       <div className="absolute left-0 top-0 h-full w-[3px] rounded-l-xl" style={{ background: t.strip }} />
@@ -433,7 +449,7 @@ function StatCard({ label, value, sub, icon, tint, highlight, clickable, onClick
         <div className={`icon-badge ${t.bg} ${t.text}`}>{icon}</div>
         {clickable && <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground/40" />}
       </div>
-      <p className={`font-display text-3xl font-black tracking-tight tabular-nums ${highlight ? "text-[#ef4444]" : ""}`}>{value}</p>
+      <p className={`font-display text-3xl font-black tracking-tight tabular-nums ${highlight ? "text-[#ef4444]" : ""}`}>{displayValue}</p>
       <p className="mt-0.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className="text-[11px] text-muted-foreground/60">{sub}</p>
     </div>
