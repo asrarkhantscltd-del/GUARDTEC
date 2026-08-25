@@ -113,6 +113,11 @@ export default function DashboardLayout() {
     return () => clearInterval(id)
   }, [])
 
+  function clearAllNotifications() {
+    setNotifications([])
+    api.post('/api/notifications/seen-all').catch(() => {})
+  }
+
   function goToNotification(n: { id: string; type: string; link_staff_id?: string; link_tab?: string; link_incident_id?: string; link_agency_id?: string }) {
     setNotifications(prev => prev.filter(x => x.id !== n.id))
     api.post(`/api/notifications/${n.id}/seen`).catch(() => {})
@@ -539,10 +544,18 @@ export default function DashboardLayout() {
                 <div className="absolute right-0 top-12 z-50 w-80 rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
                   <div className="flex items-center justify-between border-b border-border px-4 py-3">
                     <p className="text-sm font-semibold">Notifications</p>
-                    <button onClick={() => setShowAlerts(false)}
-                      className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
-                      <X className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      {notifications.length > 0 && (
+                        <button onClick={clearAllNotifications}
+                          className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                          Clear all
+                        </button>
+                      )}
+                      <button onClick={() => setShowAlerts(false)}
+                        className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
 
                   <div className="p-3 space-y-2 max-h-[420px] overflow-y-auto">

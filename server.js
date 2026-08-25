@@ -7052,6 +7052,15 @@ app.post('/api/notifications/:id/seen', requireLogin, requirePermission('staff')
   }
 });
 
+app.post('/api/notifications/seen-all', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    await pgPool.query('UPDATE notifications SET seen_at = NOW() WHERE seen_at IS NULL');
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── AI CHAT ───────────────────────────────────────────────────────────────────
 app.post('/api/ai-chat', requireLogin, async function(req, res) {
   var message = (req.body.message || '').trim();
