@@ -12,9 +12,10 @@ import {
   KeyRound, Bell, ClipboardCheck, Shield,
   Camera, Loader2, Sun, Moon, AlertTriangle, XCircle,
   ChevronDown, UserCog, Eye, EyeOff, FileSpreadsheet,
+  Building2, CalendarDays, FileText, ListChecks,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
-import AiChat from "@/components/AiChat"
+// import AiChat from "@/components/AiChat" — see the note by its (commented-out) render call below
 
 interface NavItem {
   label: string
@@ -40,6 +41,11 @@ const navItems: NavItem[] = [
   { label: "Compliance",       to: "/compliance",      icon: <ShieldCheck className="h-4 w-4" />,      permission: "compliance",     group: "compliance" },
   { label: "Pending Review",   to: "/pending-review",  icon: <ClipboardCheck className="h-4 w-4" />,  permission: "pending_review", group: "compliance" },
   { label: "Incident Reports", to: "/incident-reports",icon: <AlertTriangle className="h-4 w-4" />,    permission: "staff",          group: "compliance" },
+  { label: "Agencies",         to: "/admin/agencies",           icon: <Building2 className="h-4 w-4" />,     permission: "staff",  group: "operations" },
+  { label: "Agency Deployments", to: "/admin/deployments",       icon: <CalendarDays className="h-4 w-4" />, permission: "staff",  group: "operations" },
+  { label: "Agency Performance", to: "/admin/agencies-dashboard", icon: <ShieldCheck className="h-4 w-4" />, permission: "staff",  group: "compliance" },
+  { label: "Event Instructions", to: "/admin/event-instructions", icon: <ListChecks className="h-4 w-4" />,  permission: "staff",  group: "compliance" },
+  { label: "Custom Forms",     to: "/custom-forms",              icon: <FileText className="h-4 w-4" />,     permission: "staff",  group: "admin" },
   { label: "Team Access",      to: "/users",           icon: <KeyRound className="h-4 w-4" />,         directorOnly: true,           group: "admin" },
   { label: "Manage Roles",     to: "/roles",           icon: <Shield className="h-4 w-4" />,           directorOnly: true,           group: "admin" },
 ]
@@ -56,7 +62,7 @@ export default function DashboardLayout() {
   const [alertCount, setAlertCount] = useState(0)
   const [notifications, setNotifications] = useState<{
     id: string; type: string; actor_name: string; summary: string
-    link_staff_id?: string; link_tab?: string; link_incident_id?: string; created_at: string
+    link_staff_id?: string; link_tab?: string; link_incident_id?: string; link_agency_id?: string; created_at: string
   }[]>([])
   const [showAlerts, setShowAlerts] = useState(false)
   const alertsRef = useRef<HTMLDivElement>(null)
@@ -107,11 +113,13 @@ export default function DashboardLayout() {
     return () => clearInterval(id)
   }, [])
 
-  function goToNotification(n: { id: string; type: string; link_staff_id?: string; link_tab?: string; link_incident_id?: string }) {
+  function goToNotification(n: { id: string; type: string; link_staff_id?: string; link_tab?: string; link_incident_id?: string; link_agency_id?: string }) {
     setNotifications(prev => prev.filter(x => x.id !== n.id))
     api.post(`/api/notifications/${n.id}/seen`).catch(() => {})
     setShowAlerts(false)
     if (n.type === "incident_report") navigate("/incident-reports")
+    else if (n.type === "profile_submission") navigate("/pending-review")
+    else if (n.link_agency_id) navigate(`/admin/agencies/${n.link_agency_id}${n.link_tab ? `?tab=${n.link_tab}` : ""}`)
     else if (n.link_staff_id) navigate(`/staff/${n.link_staff_id}${n.link_tab ? `?tab=${n.link_tab}` : ""}`)
   }
 
@@ -234,16 +242,19 @@ export default function DashboardLayout() {
         {/* Logo area — full-width brand zone */}
         <button
           onClick={() => { navigate("/"); setSidebarOpen(false) }}
-          className="relative flex h-32 w-full shrink-0 items-center justify-center overflow-hidden border-b border-sidebar-border transition-colors hover:bg-sidebar-accent"
+          className="relative flex w-full shrink-0 flex-col items-center justify-center gap-1 overflow-hidden border-b border-sidebar-border py-5 transition-colors hover:bg-sidebar-accent"
         >
           {/* Red glow behind logo */}
-          <div className="glow-blob absolute left-1/2 top-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 opacity-50" />
+          <div className="glow-blob absolute left-1/2 top-1/2 h-48 w-48 -translate-x-1/2 -translate-y-1/2 opacity-40" />
           {/* The logo SVGs carry their own background — clip to the container */}
           <img
             src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
             alt="GuardTec Security"
-            className="relative z-10 w-[200px] h-auto"
+            className="relative z-10 w-[220px] h-auto"
           />
+          <span className="relative z-10 font-display text-[9px] font-medium tracking-[0.35em] text-sidebar-foreground/40 uppercase mt-1">
+            Compliance Platform
+          </span>
         </button>
 
         {/* Nav — grouped by area */}
@@ -335,10 +346,16 @@ export default function DashboardLayout() {
               alt="GuardTec"
               className="h-9 w-auto md:hidden rounded-sm"
             />
-            <div className="hidden md:flex items-center gap-2.5">
-              <div className="h-2 w-2 rounded-full bg-success shadow-[0_0_6px_rgba(34,197,94,0.8)]" />
-              <h1 className="text-base font-bold tracking-tight">GuardTec</h1>
-              <span className="text-xs font-medium text-muted-foreground">Compliance Platform</span>
+            <div className="hidden md:flex items-center gap-3">
+              <div className="relative">
+                <div className="h-2.5 w-2.5 rounded-full bg-success shadow-[0_0_8px_rgba(34,197,94,0.8)]" />
+                <div className="absolute inset-0 h-2.5 w-2.5 rounded-full bg-success animate-ping opacity-40" />
+              </div>
+              <h1 className="font-display text-lg font-bold tracking-wider uppercase">
+                Guard<span className="text-primary">Tec</span>
+              </h1>
+              <div className="h-4 w-px bg-border" />
+              <span className="font-display text-[10px] font-medium tracking-[0.2em] text-muted-foreground uppercase">Compliance Platform</span>
             </div>
           </div>
 
@@ -789,8 +806,12 @@ export default function DashboardLayout() {
         onChange={e => handleMyPhotoUpload(e.target.files?.[0] ?? null)}
       />
 
-      {/* AI Compliance Assistant — floating chat widget */}
-      <AiChat />
+      {/* AI Compliance Assistant — floating chat widget, hidden 2026-08-20:
+          the n8n webhook it calls (/api/ai-chat -> N8N_AI_WEBHOOK) is
+          returning 404, so every question just failed. Pulled from view
+          rather than deleted — the plan is a rebuilt version answering
+          directly off Postgres (no n8n hop), not restoring this one as-is. */}
+      {/* <AiChat /> */}
     </div>
   )
 }

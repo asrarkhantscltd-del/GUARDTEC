@@ -17,7 +17,15 @@ services:
       - DATA_PATH=/data
       - N8N_AI_WEBHOOK=http://n8n:5678/webhook/ai-chat
       - PORT=3000
-      - DATABASE_URL=postgresql://guardtec:Guardtec@2026@db:5432/guardtec
+      # Without this, acknowledgment-form links default to
+      # http://localhost:<PORT> where PORT is the CONTAINER's internal port
+      # (3000) — not the host-reachable frontend URL. On this machine
+      # port 3000 is a completely unrelated container (open-webui), so every
+      # generated link silently pointed at the wrong app entirely. The
+      # acknowledgment page itself is a frontend route (/acknowledge/:token),
+      # so this must be the frontend's externally-reachable origin.
+      - BASE_URL=http://localhost:5173
+      - DATABASE_URL=postgresql://guardtec:${POSTGRES_PASSWORD}@db:5432/guardtec
       - JWT_SECRET=${JWT_SECRET}
       - ADMIN_USERNAME=${ADMIN_USERNAME}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
@@ -30,28 +38,29 @@ services:
     image: postgres:16-alpine
     environment:
       - POSTGRES_USER=guardtec
-      - POSTGRES_PASSWORD=Guardtec@2026
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=guardtec
     volumes:
       - guardtec-db-data:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ./schema-phase3.sql:/docker-entrypoint-initdb.d/02-schema-phase3.sql:ro
+      - ./schema-phase4.sql:/docker-entrypoint-initdb.d/03-schema-phase4.sql:ro
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432" # was 0.0.0.0 — reachable from the whole LAN with a weak, reused password; bound to localhost so only this machine can connect directly (e.g. via pgAdmin), everything else still reaches Postgres over the internal Docker network
     restart: unless-stopped
 
   n8n:
     image: n8nio/n8n
     ports:
-      - "5678:5678"
+      - "127.0.0.1:5678:5678" # was 0.0.0.0 — same reasoning as db above; guardtec-app still reaches n8n internally via http://n8n:5678
     volumes:
       - n8n-data:/home/node/.n8n
     environment:
       - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=asrar
-      - N8N_BASIC_AUTH_PASSWORD=Guardtec@2026
+      - N8N_BASIC_AUTH_USER=${N8N_USERNAME}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
       - N8N_USER_MANAGEMENT_DISABLED=true
-      - GROQ_API_KEY=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
+      - GROQ_API_KEY=${GROQ_API_KEY}
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
       - TZ=Europe/London
       - GENERIC_TIMEZONE=Europe/London
@@ -60,7 +69,7 @@ services:
       - DB_POSTGRESDB_PORT=5432
       - DB_POSTGRESDB_DATABASE=guardtec
       - DB_POSTGRESDB_USER=guardtec
-      - DB_POSTGRESDB_PASSWORD=Guardtec@2026
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
     depends_on:
       - db
     restart: unless-stopped

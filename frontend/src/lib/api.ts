@@ -10,10 +10,15 @@
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  // Full parsed error JSON, when the endpoint sent structured detail beyond
+  // just a message (e.g. POST /api/staff's 409 includes the colliding
+  // person's own details so the UI can show a same-name comparison).
+  data?: unknown
+  constructor(status: number, message: string, data?: unknown) {
     super(message)
     this.name = "ApiError"
     this.status = status
+    this.data = data
   }
 }
 
@@ -32,7 +37,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
   }
   if (!res.ok) {
     const data = await res.json().catch(() => ({}) as { error?: string })
-    throw new ApiError(res.status, data.error || `Request failed (${res.status})`)
+    throw new ApiError(res.status, data.error || `Request failed (${res.status})`, data)
   }
   if (res.status === 204) return undefined as T
   const contentType = res.headers.get("content-type") || ""

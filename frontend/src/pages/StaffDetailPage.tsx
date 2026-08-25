@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext"
 import type { StaffMember, DiscRecord, TrainingItem, ExtraTrainingItem, TrainingRecord } from "@/types/staff"
 import { RoleChipPicker, parseRoles } from "@/components/ui/role-picker"
 import { daysUntil, fmtDate, discTypeLabels, discTypeCls } from "@/lib/utils"
+import { api, ApiError } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,12 +15,13 @@ import {
   ArrowLeft, Phone, Mail, User, ShieldCheck, CreditCard, FileText,
   Loader2, Upload, Eye, CheckCircle2, AlertCircle, Clock, FileQuestion,
   Fingerprint, Building2, GraduationCap, ClipboardList, UserCheck,
-  HeartPulse, Flame, Swords, HardHat, Camera, Briefcase,
+  HeartPulse, Flame, Swords, HardHat, Camera, Briefcase, Car,
   MapPin, Contact, BadgeAlert, Pencil, Trash2, Plus, X as XIcon,
   KeyRound, Copy, RefreshCw, Check, UserX,
   MessageSquare, Package, Send,
-  Paperclip, FileVideo, Image as ImageIcon, Download, Landmark,
+  Paperclip, FileVideo, Image as ImageIcon, Download, Landmark, ShieldAlert,
 } from "lucide-react"
+import { ConfidentialDocManagerRow, CONFIDENTIAL_STAFF_DOCS } from "@/components/profile/ProfileShared"
 
 // ── Shared UI pieces ──────────────────────────────────────────────────────────
 
@@ -78,6 +80,12 @@ function DocRow({
             <a href={viewUrl} target="_blank" rel="noopener noreferrer"
               className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="View document">
               <Eye className="h-3.5 w-3.5" />
+            </a>
+          )}
+          {viewUrl && (
+            <a href={viewUrl} download
+              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Download document">
+              <Download className="h-3.5 w-3.5" />
             </a>
           )}
           {onEdit && (
@@ -254,16 +262,15 @@ export default function StaffDetailPage() {
   const [deletingCert, setDeletingCert]   = useState(false)
 
   // Vetting editing
-  const [editingVetting, setEditingVetting] = useState<"dbs" | "bs7858" | "ref1" | "ref2" | null>(null)
+  const [editingVetting, setEditingVetting] = useState<"dbs" | "bs7858" | "ref1" | "ref2" | "driver" | null>(null)
   const [vettingDraft, setVettingDraft]     = useState<Record<string, string | boolean>>({})
   const [vettingSaving, setVettingSaving]   = useState(false)
   const [newHistoryEntry, setNewHistoryEntry] = useState("")
   const [historyAdding, setHistoryAdding]   = useState(false)
 
   useEffect(() => {
-    fetch("/api/staff", { credentials: "include" })
-      .then((r) => r.json())
-      .then((data: StaffMember[]) => {
+    api.get<StaffMember[]>("/api/staff")
+      .then((data) => {
         const found = data.find((s) => s.id === id) ?? null
         setStaff(found)
         if (found?.training) setTrainingData(found.training)
@@ -271,8 +278,7 @@ export default function StaffDetailPage() {
       .catch(() => {})
       .finally(() => setLoading(false))
 
-    fetch(`/api/staff/${id}/photo`, { credentials: "include" })
-      .then((r) => (r.ok ? r.blob() : null))
+    api.getBlob(`/api/staff/${id}/photo`)
       .then((blob) => { if (blob) setPhotoUrl(URL.createObjectURL(blob)) })
       .catch(() => {})
   }, [id])
@@ -359,22 +365,11 @@ export default function StaffDetailPage() {
           relationship: profileDraft.ec_rel || undefined,
         },
       }
-      const res = await fetch(`/api/staff/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(body),
-      })
-      const d = await res.json()
-      if (!d.ok) { setEditError(d.error ?? "Failed to save."); setEditSaving(false); return }
-      const refreshRes = await fetch("/api/staff", { credentials: "include" })
-      const data: StaffMember[] = await refreshRes.json()
-      const updated = data.find(s => s.id === id) ?? null
-      setStaff(updated)
-      if (updated?.training) setTrainingData(updated.training)
+      await api.put(`/api/staff/${id}`, body)
+      await refreshStaffRecord()
       setEditOpen(false)
-    } catch {
-      setEditError("Network error.")
+    } catch (err) {
+      setEditError(err instanceof ApiError ? err.message : "Network error.")
     } finally {
       setEditSaving(false)
     }
@@ -382,8 +377,7 @@ export default function StaffDetailPage() {
 
   useEffect(() => {
     if (!canManagePortalAccess || !id) return
-    fetch(`/api/staff/${id}/registration-code`, { credentials: "include" })
-      .then((r) => r.json())
+    api.get<{ ok: boolean; code: string; claimed: boolean }>(`/api/staff/${id}/registration-code`)
       .then((d) => { if (d.ok) { setRegCode(d.code); setRegClaimed(d.claimed) } })
       .catch(() => {})
   }, [id, canManagePortalAccess])
@@ -391,8 +385,7 @@ export default function StaffDetailPage() {
   async function regenerateCode() {
     setRegLoading(true)
     try {
-      const res = await fetch(`/api/staff/${id}/registration-code/regenerate`, { method: "POST", credentials: "include" })
-      const d = await res.json()
+      const d = await api.post<{ ok: boolean; code: string }>(`/api/staff/${id}/registration-code/regenerate`)
       if (d.ok) { setRegCode(d.code); setRegClaimed(false) }
     } finally {
       setRegLoading(false)
@@ -411,15 +404,9 @@ export default function StaffDetailPage() {
     if (!file || !id) return
     setUploadingPhoto(true)
     try {
-      await fetch(`/api/staff/${id}/photo`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      })
-      const res = await fetch(`/api/staff/${id}/photo`, { credentials: "include" })
-      if (res.ok) {
-        const blob = await res.blob()
+      await api.post(`/api/staff/${id}/photo`, file)
+      const blob = await api.getBlob(`/api/staff/${id}/photo`)
+      if (blob) {
         if (photoUrl) URL.revokeObjectURL(photoUrl)
         setPhotoUrl(URL.createObjectURL(blob))
       }
@@ -431,12 +418,10 @@ export default function StaffDetailPage() {
   async function moveToExStaff() {
     setExMoving(true); setExError("")
     try {
-      const res = await fetch(`/api/staff/${id}`, { method: "DELETE", credentials: "include" })
-      const d = await res.json()
-      if (!d.ok) { setExError(d.error ?? "Failed to move to Ex-Staff."); setExMoving(false); return }
+      await api.delete(`/api/staff/${id}`)
       navigate("/staff", { replace: true })
-    } catch {
-      setExError("Network error.")
+    } catch (err) {
+      setExError(err instanceof ApiError ? err.message : "Network error.")
       setExMoving(false)
     }
   }
@@ -445,12 +430,7 @@ export default function StaffDetailPage() {
   async function patchTraining(updated: TrainingRecord) {
     setTrainingSaving(true)
     try {
-      await fetch(`/api/staff/${id}/training`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ training: updated }),
-      })
+      await api.patch(`/api/staff/${id}/training`, { training: updated })
     } finally { setTrainingSaving(false) }
   }
 
@@ -523,17 +503,8 @@ export default function StaffDetailPage() {
   async function patchField(updates: Partial<StaffMember>) {
     if (!staff || !id) return
     const merged = { ...staff, ...updates }
-    await fetch(`/api/staff/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify(merged),
-    })
-    const refreshRes = await fetch("/api/staff", { credentials: "include" })
-    const data: StaffMember[] = await refreshRes.json()
-    const updated = data.find(s => s.id === id) ?? null
-    setStaff(updated)
-    if (updated?.training) setTrainingData(updated.training)
+    await api.put(`/api/staff/${id}`, merged)
+    await refreshStaffRecord()
   }
 
   // ── Document helpers ──
@@ -548,22 +519,11 @@ export default function StaffDetailPage() {
     if (!editingDocKey || !id) return
     setUploadingDoc(true)
     try {
-      const res = await fetch(`/api/staff/${id}/documents/${editingDocKey}`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": file.type || "application/octet-stream" },
-        body: file,
-      })
-      const d = await res.json()
+      const d = await api.post<{ ok: boolean; date: string }>(`/api/staff/${id}/documents/${editingDocKey}`, file)
       if (d.ok) {
         setDocDraft({ uploaded: true, date: d.date })
         setDocFileName(file.name)
-        // Refresh staff record so DocRow shows updated status
-        const refreshRes = await fetch("/api/staff", { credentials: "include" })
-        const data: StaffMember[] = await refreshRes.json()
-        const updated = data.find(s => s.id === id) ?? null
-        setStaff(updated)
-        if (updated?.training) setTrainingData(updated.training)
+        await refreshStaffRecord()
       }
     } finally {
       setUploadingDoc(false)
@@ -584,8 +544,7 @@ export default function StaffDetailPage() {
 
   async function refreshStaffRecord() {
     if (!id) return
-    const res = await fetch("/api/staff", { credentials: "include" })
-    const data: StaffMember[] = await res.json()
+    const data = await api.get<StaffMember[]>("/api/staff")
     const updated = data.find(s => s.id === id) ?? null
     setStaff(updated)
     if (updated?.training) setTrainingData(updated.training)
@@ -595,14 +554,9 @@ export default function StaffDetailPage() {
     if (!id) return
     setDeletingDoc(true)
     try {
-      const res = await fetch(`/api/staff/${id}/documents/${docKey}`, { method: "DELETE", credentials: "include" })
-      const d = await res.json()
-      if (d.ok) {
-        await refreshStaffRecord()
-        toast.success("Document removed")
-      } else {
-        toast.error(d.error ?? "Failed to remove document")
-      }
+      await api.delete(`/api/staff/${id}/documents/${docKey}`)
+      await refreshStaffRecord()
+      toast.success("Document removed")
     } catch {
       toast.error("Network error — please try again")
     } finally {
@@ -625,14 +579,9 @@ export default function StaffDetailPage() {
     if (!id) return
     setDeletingCert(true)
     try {
-      const res = await fetch(`/api/staff/${id}/training/${courseKey}/certificate`, { method: "DELETE", credentials: "include" })
-      const d = await res.json()
-      if (d.ok) {
-        await refreshStaffRecord()
-        toast.success("Certificate removed")
-      } else {
-        toast.error(d.error ?? "Failed to remove certificate")
-      }
+      await api.delete(`/api/staff/${id}/training/${courseKey}/certificate`)
+      await refreshStaffRecord()
+      toast.success("Certificate removed")
     } catch {
       toast.error("Network error — please try again")
     } finally {
@@ -642,7 +591,7 @@ export default function StaffDetailPage() {
   }
 
   // ── Vetting helpers ──
-  function openVettingEdit(section: "dbs" | "bs7858" | "ref1" | "ref2") {
+  function openVettingEdit(section: "dbs" | "bs7858" | "ref1" | "ref2" | "driver") {
     if (!staff) return
     setEditingVetting(section)
     if (section === "dbs") {
@@ -650,6 +599,17 @@ export default function StaffDetailPage() {
         type:          staff.dbs?.type ?? "",
         checkDate:     staff.dbs?.checkDate ?? "",
         certificateNo: staff.dbs?.certificateNo ?? "",
+      })
+    } else if (section === "driver") {
+      setVettingDraft({
+        fuelCardNumber: staff.driverAssignment?.fuelCardNumber ?? "",
+        tachoCard:      staff.driverAssignment?.tachoCard ?? "",
+        tachoExpiry:    staff.driverAssignment?.tachoExpiry ?? "",
+        dbsNumber:      staff.driverAssignment?.dbsNumber ?? "",
+        dbsDate:        staff.driverAssignment?.dbsDate ?? "",
+        lastAssessment: staff.driverAssignment?.lastAssessment ?? "",
+        status:         staff.driverAssignment?.status ?? "active",
+        notes:          staff.driverAssignment?.notes ?? "",
       })
     } else if (section === "bs7858") {
       setVettingDraft({
@@ -688,6 +648,19 @@ export default function StaffDetailPage() {
           reviewer:       (vettingDraft.reviewer as string) || undefined,
         },
       })
+    } else if (editingVetting === "driver") {
+      await patchField({
+        driverAssignment: {
+          fuelCardNumber: (vettingDraft.fuelCardNumber as string) || undefined,
+          tachoCard:      (vettingDraft.tachoCard as string) || undefined,
+          tachoExpiry:    (vettingDraft.tachoExpiry as string) || undefined,
+          dbsNumber:      (vettingDraft.dbsNumber as string) || undefined,
+          dbsDate:        (vettingDraft.dbsDate as string) || undefined,
+          lastAssessment: (vettingDraft.lastAssessment as string) || undefined,
+          status:         (vettingDraft.status as "active" | "suspended" | "on_leave") || "active",
+          notes:          (vettingDraft.notes as string) || undefined,
+        },
+      })
     } else {
       await patchField({
         references: {
@@ -710,8 +683,7 @@ export default function StaffDetailPage() {
     if (!id) return
     setDiscLoading(true)
     try {
-      const res = await fetch(`/api/staff/${id}/disciplinary`, { credentials: "include" })
-      const d = await res.json()
+      const d = await api.get<{ ok: boolean; records: DiscRecord[] }>(`/api/staff/${id}/disciplinary`)
       if (d.ok) setDiscRecords(d.records)
     } finally {
       setDiscLoading(false)
@@ -725,24 +697,19 @@ export default function StaffDetailPage() {
     }
     setDiscSaving(true); setDiscError("")
     try {
-      const res = await fetch(`/api/staff/${id}/disciplinary`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(discDraft),
-      })
-      const d = await res.json()
-      if (!d.ok) { setDiscError(d.error ?? "Failed to save."); return }
+      await api.post(`/api/staff/${id}/disciplinary`, discDraft)
       setDiscForm(false)
       setDiscDraft({ incident_date: "", type: "warning", description: "", action_taken: "" })
       await loadDiscRecords()
+    } catch (err) {
+      setDiscError(err instanceof ApiError ? err.message : "Failed to save.")
     } finally {
       setDiscSaving(false)
     }
   }
 
   async function deleteDiscRecord(recordId: string) {
-    await fetch(`/api/disciplinary/${recordId}`, { method: "DELETE", credentials: "include" })
+    await api.delete(`/api/disciplinary/${recordId}`)
     await loadDiscRecords()
   }
 
@@ -750,8 +717,7 @@ export default function StaffDetailPage() {
     if (!id) return
     setMsgLoading(true)
     try {
-      const res = await fetch(`/api/staff/${id}/messages`, { credentials: "include" })
-      const d = await res.json()
+      const d = await api.get<{ ok: boolean; messages: typeof messages }>(`/api/staff/${id}/messages`)
       if (d.ok) {
         setMessages(d.messages)
         setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100)
@@ -765,14 +731,7 @@ export default function StaffDetailPage() {
     if (!msgDraft.trim() && !msgFile) return
     setMsgSending(true)
     try {
-      const res = await fetch(`/api/staff/${id}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ message: msgDraft.trim() || `📎 ${msgFile?.name}` }),
-      })
-      const d = await res.json()
-      if (!d.ok) { toast.error(d.error ?? "Failed to send."); return }
+      const d = await api.post<{ ok: boolean; message: { id: string } }>(`/api/staff/${id}/messages`, { message: msgDraft.trim() || `📎 ${msgFile?.name}` })
       if (msgFile) {
         const buf = await msgFile.arrayBuffer()
         const attRes = await fetch(`/api/messages/${d.message.id}/attachment`, {
@@ -802,10 +761,9 @@ export default function StaffDetailPage() {
   async function deleteMessage(messageId: string) {
     setDeletingMsg(true)
     try {
-      const res = await fetch(`/api/messages/${messageId}`, { method: "DELETE", credentials: "include" })
-      const d = await res.json()
-      if (d.ok) { setMessages(prev => prev.filter(m => m.id !== messageId)); toast.success("Message removed") }
-      else toast.error(d.error ?? "Failed to remove message")
+      await api.delete(`/api/messages/${messageId}`)
+      setMessages(prev => prev.filter(m => m.id !== messageId))
+      toast.success("Message removed")
     } finally {
       setDeletingMsg(false)
       setConfirmDeleteMsgId(null)
@@ -823,8 +781,7 @@ export default function StaffDetailPage() {
     if (!id) return
     setProvLoading(true)
     try {
-      const res = await fetch(`/api/staff/${id}/provisions`, { credentials: "include" })
-      const d = await res.json()
+      const d = await api.get<{ ok: boolean; provisions: any[] }>(`/api/staff/${id}/provisions`)
       if (d.ok) setProvisions(d.provisions)
     } finally {
       setProvLoading(false)
@@ -835,17 +792,13 @@ export default function StaffDetailPage() {
     setProvSaving(true)
     try {
       const itemStr = `${provDraft.itemType} × ${provDraft.quantity}`
-      const res = await fetch(`/api/staff/${id}/provisions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ item: itemStr, provided: provDraft.provided, date_given: provDraft.date_given, date_returned: provDraft.date_returned, notes: provDraft.notes }),
-      })
-      const d = await res.json()
+      const d = await api.post<{ ok: boolean; error?: string }>(`/api/staff/${id}/provisions`, { item: itemStr, provided: provDraft.provided, date_given: provDraft.date_given, date_returned: provDraft.date_returned, notes: provDraft.notes })
       if (!d.ok) { toast.error(d.error ?? "Failed to save."); return }
       setProvForm(false)
       setProvDraft({ itemType: "Security Jacket", quantity: 1, provided: true, date_given: "", date_returned: "", notes: "" })
       await loadProvisions()
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Failed to save.")
     } finally {
       setProvSaving(false)
     }
@@ -853,38 +806,34 @@ export default function StaffDetailPage() {
 
   async function loadContractInfo() {
     if (!id) return
-    const res = await fetch(`/api/staff/${id}/contract/info`, { credentials: "include" })
-    const d = await res.json()
-    if (d.ok) setContractExists(d.exists)
+    try {
+      const d = await api.get<{ ok: boolean; exists: boolean }>(`/api/staff/${id}/contract/info`)
+      if (d.ok) setContractExists(d.exists)
+    } catch {}
   }
 
   async function uploadContract(file: File) {
     setContractUploading(true)
     try {
-      const buf = await file.arrayBuffer()
-      const res = await fetch(`/api/staff/${id}/contract`, {
-        method: "POST",
-        headers: { "Content-Type": file.type || "application/pdf" },
-        credentials: "include",
-        body: buf,
-      })
-      const d = await res.json()
+      const d = await api.post<{ ok: boolean; error?: string }>(`/api/staff/${id}/contract`, new Blob([await file.arrayBuffer()], { type: file.type || "application/pdf" }))
       if (!d.ok) { toast.error(d.error ?? "Upload failed."); return }
       toast.success("Contract uploaded.")
       setContractExists(true)
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Upload failed.")
     } finally {
       setContractUploading(false)
     }
   }
 
   async function deleteContract() {
-    await fetch(`/api/staff/${id}/contract`, { method: "DELETE", credentials: "include" })
+    await api.delete(`/api/staff/${id}/contract`)
     setContractExists(false)
     toast.success("Contract removed.")
   }
 
   async function deleteProvision(provId: string) {
-    await fetch(`/api/provisions/${provId}`, { method: "DELETE", credentials: "include" })
+    await api.delete(`/api/provisions/${provId}`)
     await loadProvisions()
   }
 
@@ -989,7 +938,7 @@ export default function StaffDetailPage() {
                 onChange={e => handlePhotoUpload(e.target.files?.[0] ?? null)} />
             </label>
             <div className="flex-1 min-w-0">
-              <h2 className="text-xl font-bold truncate">{staff.name}</h2>
+              <h2 className="font-display text-xl font-bold truncate">{staff.name}</h2>
               {staff.jobRole && (
                 <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                   <Briefcase className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -1111,8 +1060,11 @@ export default function StaffDetailPage() {
                 { label: "Gender",             val: staff.gender },
                 { label: "Place of Birth",     val: staff.placeOfBirth },
                 { label: "NI Number",          val: staff.ni },
+                { label: "UTR",                val: staff.utrNotApplicable ? "Not applicable" : staff.uniqueTaxpayerReference },
+                { label: "Previous Names",     val: staff.previousNames },
                 { label: "Driving Licence",    val: staff.drivingLicence },
                 { label: "Address",            val: staff.address },
+                { label: "Years at Address",   val: staff.yearsAtCurrentAddress != null ? String(staff.yearsAtCurrentAddress) : null },
                 { label: "Contract",           val: staff.contract },
               ].filter((r) => r.val).map(({ label, val }) => (
                 <div key={label}>
@@ -1339,6 +1291,210 @@ export default function StaffDetailPage() {
                 onEdit={canEdit ? () => openDocEdit("assignmentInstructions") : undefined} {...docDeleteProps("assignmentInstructions")} />
             </CardContent>
           </Card>
+
+          {canEdit && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4" />Confidential Checks
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-4 space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Upload results here after you've reviewed them yourself. Uploads always start hidden from{" "}
+                  {staff.name} — use the visibility toggle to reveal one only if you choose to.
+                </p>
+                {CONFIDENTIAL_STAFF_DOCS.map(doc => {
+                  const meta = docs[doc.key as keyof typeof docs] as { uploaded?: boolean; date?: string; visibleToStaff?: boolean } | undefined
+                  return (
+                    <ConfidentialDocManagerRow key={doc.key} label={doc.label}
+                      uploadUrl={`/api/staff/${id}/documents/${doc.key}`}
+                      visibilityUrl={`/api/staff/${id}/documents/${doc.key}/visibility`}
+                      downloadUrl={`/api/staff/${id}/documents/${doc.key}`}
+                      uploaded={meta?.uploaded} date={meta?.date} visibleToSubject={meta?.visibleToStaff}
+                      subjectLabel={staff.name} onChanged={refreshStaffRecord} />
+                  )
+                })}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* ── Driver (only for staff carrying the "Driver" role) ── */}
+          {parseRoles(staff.jobRole).includes("Driver") && (
+            <>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Car className="h-4 w-4" />Driving Licence &amp; Qualifications
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="px-4 space-y-3">
+                  {/* This used to render unconditionally, so it kept claiming
+                      a submission was "subject to your approval" even after
+                      Pending Review genuinely showed 0 pending and the data
+                      below was already the approved, live version — confirmed
+                      via staff_data.json that pending_submission was null.
+                      Gate it on the submission actually still being there. */}
+                  {staff.pending_submission?.driverLicence && (
+                    <p className="text-xs text-muted-foreground">
+                      Submitted by {staff.name} via their own profile — subject to your approval on the Pending Review queue.
+                    </p>
+                  )}
+                  <div className="grid sm:grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Licence Number</p>
+                      <p className="mt-0.5 font-mono">{staff.driverLicence?.licenceNumber || "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Licence Expiry</p>
+                      <p className="mt-0.5">{staff.driverLicence?.licenceExpiry ? fmtDate(staff.driverLicence.licenceExpiry) : "—"}</p>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Licence Categories</p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {staff.driverLicence?.licenceCategories?.length
+                          ? staff.driverLicence.licenceCategories.map(c => (
+                              <span key={c} className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold">{c}</span>
+                            ))
+                          : <span className="text-muted-foreground">—</span>}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">CPC Card No.</p>
+                      <p className="mt-0.5 font-mono">{staff.driverLicence?.cpcCard || "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">CPC Expiry</p>
+                      <p className="mt-0.5">{staff.driverLicence?.cpcExpiry ? fmtDate(staff.driverLicence.cpcExpiry) : "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Medical Cert Expiry</p>
+                      <p className="mt-0.5">{staff.driverLicence?.medicalExpiry ? fmtDate(staff.driverLicence.medicalExpiry) : "—"}</p>
+                    </div>
+                  </div>
+                  <DocRow icon={<FileText className="h-4 w-4" />} label="Driving Licence (scan)"
+                    status={docStatusOf(docs.driverLicenceCopy?.uploaded)} uploadedDate={docs.driverLicenceCopy?.date}
+                    viewUrl={docs.driverLicenceCopy?.uploaded ? `/api/staff/${id}/documents/driverLicenceCopy` : undefined}
+                    onEdit={canEdit ? () => openDocEdit("driverLicenceCopy") : undefined} {...docDeleteProps("driverLicenceCopy")} />
+                  <DocRow icon={<FileText className="h-4 w-4" />} label="Driver CPC Card (scan)"
+                    status={docStatusOf(docs.driverCpcCard?.uploaded)} uploadedDate={docs.driverCpcCard?.date}
+                    viewUrl={docs.driverCpcCard?.uploaded ? `/api/staff/${id}/documents/driverCpcCard` : undefined}
+                    onEdit={canEdit ? () => openDocEdit("driverCpcCard") : undefined} {...docDeleteProps("driverCpcCard")} />
+                  <DocRow icon={<FileText className="h-4 w-4" />} label="Driver Medical Certificate"
+                    status={docStatusOf(docs.driverMedicalCert?.uploaded)} uploadedDate={docs.driverMedicalCert?.date}
+                    viewUrl={docs.driverMedicalCert?.uploaded ? `/api/staff/${id}/documents/driverMedicalCert` : undefined}
+                    onEdit={canEdit ? () => openDocEdit("driverMedicalCert") : undefined} {...docDeleteProps("driverMedicalCert")} />
+                </CardContent>
+              </Card>
+
+              {canEdit && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Car className="h-4 w-4" />Driver — Company Assigned
+                      </CardTitle>
+                      {editingVetting !== "driver" && (
+                        <button onClick={() => openVettingEdit("driver")}
+                          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Edit">
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </CardHeader>
+                  <CardContent className="px-4 py-3">
+                    {editingVetting === "driver" ? (
+                      <div className="space-y-3">
+                        <div className="grid sm:grid-cols-2 gap-3">
+                          {[
+                            { field: "fuelCardNumber", label: "Fuel Card Number", type: "text" },
+                            { field: "tachoCard",       label: "Tachograph Card No.", type: "text" },
+                            { field: "tachoExpiry",     label: "Tachograph Expiry", type: "date" },
+                            { field: "dbsNumber",       label: "DBS Certificate No.", type: "text" },
+                            { field: "dbsDate",         label: "DBS Issue Date", type: "date" },
+                            { field: "lastAssessment",  label: "Last Assessment", type: "date" },
+                          ].map(({ field, label, type }) => (
+                            <div key={field}>
+                              <p className="text-xs text-muted-foreground mb-0.5">{label}</p>
+                              <input type={type} value={vettingDraft[field] as string}
+                                onChange={e => setVettingDraft(p => ({ ...p, [field]: e.target.value }))}
+                                className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
+                            </div>
+                          ))}
+                          <div>
+                            <p className="text-xs text-muted-foreground mb-0.5">Status</p>
+                            <select value={vettingDraft.status as string}
+                              onChange={e => setVettingDraft(p => ({ ...p, status: e.target.value }))}
+                              className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring">
+                              <option value="active">Active</option>
+                              <option value="suspended">Suspended</option>
+                              <option value="on_leave">On Leave</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-0.5">Notes</p>
+                          <textarea rows={2} value={vettingDraft.notes as string}
+                            onChange={e => setVettingDraft(p => ({ ...p, notes: e.target.value }))}
+                            className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring resize-none" />
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" className="h-7 text-xs" onClick={saveVetting} disabled={vettingSaving}>
+                            {vettingSaving ? "Saving…" : "Save"}
+                          </Button>
+                          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingVetting(null)}>Cancel</Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="grid sm:grid-cols-2 gap-3 text-sm">
+                        {[
+                          { label: "Fuel Card Number",     val: staff.driverAssignment?.fuelCardNumber ?? "—" },
+                          { label: "Tachograph Card No.",  val: staff.driverAssignment?.tachoCard ?? "—" },
+                          { label: "Tachograph Expiry",    val: staff.driverAssignment?.tachoExpiry ? fmtDate(staff.driverAssignment.tachoExpiry) : "—" },
+                          { label: "DBS Certificate No.",  val: staff.driverAssignment?.dbsNumber ?? "—" },
+                          { label: "DBS Issue Date",       val: staff.driverAssignment?.dbsDate ? fmtDate(staff.driverAssignment.dbsDate) : "—" },
+                          { label: "Last Assessment",      val: staff.driverAssignment?.lastAssessment ? fmtDate(staff.driverAssignment.lastAssessment) : "—" },
+                          { label: "Status",               val: staff.driverAssignment?.status ?? "active" },
+                        ].map(({ label, val }) => (
+                          <div key={label}>
+                            <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">{label}</p>
+                            <p className="mt-0.5 capitalize">{val}</p>
+                          </div>
+                        ))}
+                        {staff.driverAssignment?.notes && (
+                          <div className="sm:col-span-2">
+                            <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Notes</p>
+                            <p className="mt-0.5">{staff.driverAssignment.notes}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                  <CardContent className="px-4 pb-4 pt-0 space-y-3">
+                    <p className="text-xs text-muted-foreground">
+                      Upload results here after you've reviewed them yourself. Uploads always start hidden from{" "}
+                      {staff.name} — use the visibility toggle to reveal one only if you choose to.
+                    </p>
+                    {[
+                      { key: "driverTachoCard",        label: "Tachograph Card (scan)" },
+                      { key: "driverDbsCheck",          label: "Driver DBS Certificate" },
+                      { key: "driverAssessmentReport",  label: "Driving Assessment Report" },
+                    ].map(doc => {
+                      const meta = docs[doc.key as keyof typeof docs] as { uploaded?: boolean; date?: string; visibleToStaff?: boolean } | undefined
+                      return (
+                        <ConfidentialDocManagerRow key={doc.key} label={doc.label}
+                          uploadUrl={`/api/staff/${id}/documents/${doc.key}`}
+                          visibilityUrl={`/api/staff/${id}/documents/${doc.key}/visibility`}
+                          downloadUrl={`/api/staff/${id}/documents/${doc.key}`}
+                          uploaded={meta?.uploaded} date={meta?.date} visibleToSubject={meta?.visibleToStaff}
+                          subjectLabel={staff.name} onChanged={refreshStaffRecord} />
+                      )
+                    })}
+                  </CardContent>
+                </Card>
+              )}
+            </>
+          )}
         </div>
       )}
 
@@ -2286,18 +2442,16 @@ export default function StaffDetailPage() {
 
       {/* ── Edit Profile slide-over ── */}
       {editOpen && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/40" onClick={() => setEditOpen(false)} />
-          <div className="flex w-full max-w-md flex-col bg-background shadow-xl overflow-hidden">
-            <div className="flex items-center justify-between border-b px-5 py-4">
-              <h3 className="text-base font-semibold">Edit Profile — {staff.name}</h3>
-              <button onClick={() => setEditOpen(false)}
-                className="rounded-md p-1 text-muted-foreground hover:bg-muted transition-colors">
-                <XIcon className="h-5 w-5" />
-              </button>
-            </div>
+        <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-background">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <h3 className="text-base font-semibold">Edit Profile — {staff.name}</h3>
+            <button onClick={() => setEditOpen(false)}
+              className="rounded-md p-1 text-muted-foreground hover:bg-muted transition-colors">
+              <XIcon className="h-5 w-5" />
+            </button>
+          </div>
 
-            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
+          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-5 py-5 space-y-6">
               {editError && (
                 <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{editError}</p>
               )}
@@ -2481,14 +2635,13 @@ export default function StaffDetailPage() {
                   </div>
                 </div>
               </section>
-            </div>
+          </div>
 
-            <div className="flex gap-2 border-t px-5 py-4">
-              <Button variant="outline" className="flex-1" onClick={() => setEditOpen(false)}>Cancel</Button>
-              <Button className="flex-1" onClick={saveEdit} disabled={editSaving}>
-                {editSaving ? "Saving…" : "Save changes"}
-              </Button>
-            </div>
+          <div className="mx-auto flex w-full max-w-2xl gap-2 border-t px-5 py-4">
+            <Button variant="outline" className="flex-1" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button className="flex-1" onClick={saveEdit} disabled={editSaving}>
+              {editSaving ? "Saving…" : "Save changes"}
+            </Button>
           </div>
         </div>
       )}

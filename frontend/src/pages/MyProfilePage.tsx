@@ -3,36 +3,65 @@ import { toast } from "sonner"
 import { discTypeLabels, discTypeCls } from "@/lib/utils"
 import { api, ApiError } from "@/lib/api"
 import {
-  ShieldCheck, AlertTriangle, Clock, Camera, ImageOff,
-  Loader2, Save, User as UserIcon, Upload, BadgeAlert, Flag, EyeOff, Eye,
+  ShieldCheck, AlertTriangle, Clock,
+  Loader2, User as UserIcon, Upload, BadgeAlert, Flag, EyeOff, Eye,
   Paperclip, X, FileVideo, FileText, Image as ImageIcon,
   MessageSquare, Package, Send, Pencil, Download,
 } from "lucide-react"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
-import type { TrainingRecord, BankDetails } from "@/types/staff"
+import OnboardingWizard from "@/components/onboarding/OnboardingWizard"
+import { Section, Field } from "@/components/profile/ProfileShared"
+import type {
+  TrainingRecord, BankDetails, ReferenceDetail,
+  AddressHistoryEntry, EmploymentHistoryEntry, CriminalHistoryEntry,
+  CautionEntry, OtherQualification, OnboardingDeclarations, DriverLicenceInfo,
+} from "@/types/staff"
+import { parseRoles } from "@/components/ui/role-picker"
 
-interface EmergencyContact { name?: string; phone?: string; relationship?: string }
-interface Ref { name?: string; company?: string; email?: string; phone?: string; status?: string }
+const LICENCE_CATS = ["B", "B+E", "C1", "C1+E", "C", "C+E", "D1", "D1+E", "D", "AM"]
+
+interface EmergencyContact { name?: string; phone?: string; relationship?: string; address?: string }
+type Ref = ReferenceDetail
 interface DiscRecord { id: string; incident_date: string; type: string; description: string; action_taken?: string }
 interface IncidentReport { id: string; report_date: string; incident_type: string; status: string; description: string; resolution_notes?: string; attachment_count?: number }
 interface Profile {
   id: string
   name: string
+  jobRole?: string
   email?: string
   phone?: string
   address?: string
   emergencyContact?: EmergencyContact
   bankDetails?: BankDetails
+  driverLicence?: DriverLicenceInfo
   sia?:  { number?: string; expiry?: string; type?: string }
-  cscs?: { number?: string; expiry?: string }
+  cscs?: { number?: string; expiry?: string; cardType?: string }
   visa?: { type?: string; expiry?: string }
   references?: { ref1?: Ref; ref2?: Ref }
-  pending_submission?: { submitted_at?: string; photo_pending?: boolean }
+  pending_submission?: { submitted_at?: string; photo_pending?: boolean; driverLicence?: DriverLicenceInfo }
+  wizard_draft?: Partial<Profile>
   rejection_reason?: string
-  documents?: Record<string, { uploaded?: boolean; date?: string } | undefined>
+  documents?: Record<string, { uploaded?: boolean; date?: string; docType?: string } | undefined>
   training?: TrainingRecord
+
+  // BS7858 onboarding fields
+  dateOfBirth?: string
+  nationality?: string
+  ni?: string
+  uniqueTaxpayerReference?: string
+  utrNotApplicable?: boolean
+  previousNames?: string
+  yearsAtCurrentAddress?: number
+  addressHistory?: AddressHistoryEntry[]
+  employmentHistoryDetail?: EmploymentHistoryEntry[]
+  otherQualifications?: OtherQualification[]
+  hasCriminalHistory?: boolean
+  criminalHistory?: CriminalHistoryEntry[]
+  hasCautions?: boolean
+  cautionsAndInvestigations?: CautionEntry[]
+  declarations?: OnboardingDeclarations
+  onboardingStatus?: "not-started" | "in-progress" | "submitted" | "locked"
+  onboardingSubmittedAt?: string
 }
 
 const BLANK: Profile = { id: "", name: "" }
@@ -89,14 +118,81 @@ export default function MyProfilePage() {
   // Form minimize — collapses to summary after submit
   const [formExpanded, setFormExpanded] = useState(true)
 
+  // Driver licence & qualifications — self-service, saved independently of
+  // the big onboarding form below (own pending_submission field, see
+  // MY_PROFILE_FIELDS in server.js). Only shown once a manager has given
+  // this staff member the "Driver" role via Add/Edit Staff.
+  const [driverDraft, setDriverDraft]     = useState<DriverLicenceInfo>({})
+  const [driverSaving, setDriverSaving]   = useState(false)
+  const [driverSuccess, setDriverSuccess] = useState(false)
+  // Mirrors formExpanded's collapse-after-submit behaviour below — without
+  // this, saving just showed a small banner while the same editable fields
+  // sat there unchanged, which read as "did that actually do anything?".
+  // Defaults to collapsed whenever a submission is already awaiting review;
+  // "Edit" (which sets this true) lets them revise it before it's actioned.
+  const [driverEditOverride, setDriverEditOverride] = useState(false)
+
   async function load() {
     setLoading(true)
     try {
       const d = await api.get<{ profile: Profile }>("/api/my-profile")
-      setProfile(d.profile)
+      // wizard_draft holds whatever was typed but never got as far as a
+      // successful "Submit for Review" — merge it on top of the live/loaded
+      // profile so reopening the wizard resumes where they left off instead
+      // of showing blank/old fields again (see PUT /api/my-profile/draft).
+      setProfile(d.profile.wizard_draft ? { ...d.profile, ...d.profile.wizard_draft } : d.profile)
+      setDriverDraft(d.profile.pending_submission?.driverLicence ?? d.profile.driverLicence ?? {})
     } catch {
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Fire-and-forget autosave of wizard progress, called on each step
+  // navigation (not every keystroke) — see PUT /api/my-profile/draft.
+  // Debounced so rapid Back/Next/tab clicking can't pile up requests.
+  const draftSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  function autosaveDraft(current: Profile) {
+    if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current)
+    draftSaveTimer.current = setTimeout(() => {
+      api.put("/api/my-profile/draft", {
+        phone: current.phone, address: current.address,
+        emergencyContact: current.emergencyContact,
+        bankDetails: current.bankDetails,
+        sia: current.sia, cscs: current.cscs, visa: current.visa,
+        references: current.references,
+        dateOfBirth: current.dateOfBirth, nationality: current.nationality,
+        ni: current.ni, uniqueTaxpayerReference: current.uniqueTaxpayerReference,
+        utrNotApplicable: current.utrNotApplicable,
+        previousNames: current.previousNames, yearsAtCurrentAddress: current.yearsAtCurrentAddress,
+        addressHistory: current.addressHistory, employmentHistoryDetail: current.employmentHistoryDetail,
+        otherQualifications: current.otherQualifications,
+        hasCriminalHistory: current.hasCriminalHistory, criminalHistory: current.criminalHistory,
+        hasCautions: current.hasCautions, cautionsAndInvestigations: current.cautionsAndInvestigations,
+        declarations: current.declarations,
+      }).catch(() => {})
+    }, 600)
+  }
+
+  function toggleDriverCat(cat: string) {
+    setDriverDraft(prev => {
+      const cats = prev.licenceCategories ?? []
+      return { ...prev, licenceCategories: cats.includes(cat) ? cats.filter(c => c !== cat) : [...cats, cat] }
+    })
+  }
+
+  async function saveDriverLicence() {
+    setDriverSaving(true)
+    setDriverSuccess(false)
+    try {
+      await api.post("/api/my-profile", { driverLicence: driverDraft })
+      await load()
+      setDriverSuccess(true)
+      setDriverEditOverride(false)
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Failed to save — please try again.")
+    } finally {
+      setDriverSaving(false)
     }
   }
 
@@ -215,8 +311,7 @@ export default function MyProfilePage() {
     setPhotoPreview(file ? URL.createObjectURL(file) : null)
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  async function handleSubmit() {
     setSaving(true)
     setError("")
     setSuccess(false)
@@ -227,6 +322,15 @@ export default function MyProfilePage() {
         bankDetails: profile.bankDetails,
         sia: profile.sia, cscs: profile.cscs, visa: profile.visa,
         references: profile.references,
+        dateOfBirth: profile.dateOfBirth, nationality: profile.nationality,
+        ni: profile.ni, uniqueTaxpayerReference: profile.uniqueTaxpayerReference,
+        utrNotApplicable: profile.utrNotApplicable,
+        previousNames: profile.previousNames, yearsAtCurrentAddress: profile.yearsAtCurrentAddress,
+        addressHistory: profile.addressHistory, employmentHistoryDetail: profile.employmentHistoryDetail,
+        otherQualifications: profile.otherQualifications,
+        hasCriminalHistory: profile.hasCriminalHistory, criminalHistory: profile.criminalHistory,
+        hasCautions: profile.hasCautions, cautionsAndInvestigations: profile.cautionsAndInvestigations,
+        declarations: profile.declarations,
       })
 
       if (photo) {
@@ -308,14 +412,14 @@ export default function MyProfilePage() {
             : <UserIcon className="h-7 w-7 opacity-60" />}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="font-bold text-lg leading-tight truncate">{profile.name}</p>
+          <p className="font-display font-bold text-lg leading-tight truncate">{profile.name}</p>
           <p className="text-sm opacity-60 truncate">{profile.email}</p>
           <div className="flex gap-2 flex-wrap mt-2">
             {[
               { label: "SIA",  status: siaStatus,  expiry: profile.sia?.expiry },
               { label: "CSCS", status: cscsStatus, expiry: profile.cscs?.expiry },
               { label: "RTW",  status: visaStatus, expiry: profile.visa?.expiry },
-            ].map(({ label, status, expiry }) => (
+            ].map(({ label, status }) => (
               <span key={label} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusCfg[status].cls}`}>
                 {label} · {statusCfg[status].label}
               </span>
@@ -374,7 +478,7 @@ export default function MyProfilePage() {
             ].map(c => (
               <div key={c.label} className={`rounded-xl border p-3 space-y-1 ${statusCfg[c.status].cls}`}>
                 <p className="text-[11px] font-semibold uppercase tracking-wide opacity-70">{c.label}</p>
-                <p className="text-sm font-bold">{statusCfg[c.status].label}</p>
+                <p className="font-display text-sm font-bold">{statusCfg[c.status].label}</p>
                 <p className="text-[11px] opacity-70 truncate">{c.detail}</p>
               </div>
             ))}
@@ -455,6 +559,99 @@ export default function MyProfilePage() {
           {discRecords.length === 0 && provisions.length === 0 && !contractExists && (
             <p className="text-sm text-muted-foreground text-center py-8">Your compliance overview will appear here once your details are on file.</p>
           )}
+
+          {/* Driver licence & qualifications — only for staff carrying the "Driver" role */}
+          {parseRoles(profile.jobRole).includes("Driver") && (
+            <div className="rounded-xl border bg-card p-4 space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                <ShieldCheck className="h-3.5 w-3.5" /> Driving Licence &amp; Qualifications
+              </p>
+
+              {profile.pending_submission?.driverLicence && !driverEditOverride ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/8 px-3 py-2.5">
+                  <p className="text-xs text-warning">Submitted — your manager will review these changes shortly.</p>
+                  <button onClick={() => setDriverEditOverride(true)}
+                    className="shrink-0 rounded-md border bg-background px-2.5 py-1 text-[11px] font-medium hover:bg-muted transition-colors">
+                    Edit
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Fill in what's on your own licence — your office handles fuel cards, tachograph, DBS and assessments separately.
+                  </p>
+                  {driverSuccess && (
+                    <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-success">
+                      <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                      Submitted — your manager will review these changes shortly.
+                    </div>
+                  )}
+              <div className="grid sm:grid-cols-2 gap-3">
+                <Field label="Licence Number">
+                  <input className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-mono uppercase focus:outline-none focus:ring-1 focus:ring-ring"
+                    value={driverDraft.licenceNumber ?? ""}
+                    onChange={e => setDriverDraft(p => ({ ...p, licenceNumber: e.target.value.toUpperCase() }))} />
+                </Field>
+                <Field label="Licence Expiry">
+                  <input type="date" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    value={driverDraft.licenceExpiry ?? ""}
+                    onChange={e => setDriverDraft(p => ({ ...p, licenceExpiry: e.target.value }))} />
+                </Field>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Licence Categories</label>
+                <div className="flex flex-wrap gap-2">
+                  {LICENCE_CATS.map(cat => {
+                    const active = driverDraft.licenceCategories?.includes(cat)
+                    return (
+                      <button key={cat} type="button" onClick={() => toggleDriverCat(cat)}
+                        className={`rounded-md border px-3 py-1 text-xs font-bold transition-colors ${
+                          active ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background hover:bg-muted"
+                        }`}>
+                        {cat}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+              <div className="grid sm:grid-cols-3 gap-3">
+                <Field label="CPC Card Number">
+                  <input className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+                    value={driverDraft.cpcCard ?? ""}
+                    onChange={e => setDriverDraft(p => ({ ...p, cpcCard: e.target.value }))} />
+                </Field>
+                <Field label="CPC Expiry">
+                  <input type="date" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    value={driverDraft.cpcExpiry ?? ""}
+                    onChange={e => setDriverDraft(p => ({ ...p, cpcExpiry: e.target.value }))} />
+                </Field>
+                <Field label="Medical Cert Expiry">
+                  <input type="date" className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    value={driverDraft.medicalExpiry ?? ""}
+                    onChange={e => setDriverDraft(p => ({ ...p, medicalExpiry: e.target.value }))} />
+                </Field>
+              </div>
+              <Button size="sm" onClick={saveDriverLicence} disabled={driverSaving} className="gap-1.5">
+                {driverSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+                {driverSaving ? "Saving…" : "Save Driver Details"}
+              </Button>
+
+              <div className="space-y-2 border-t pt-3">
+                <p className="text-[11px] font-medium text-muted-foreground">Scans — so your manager can check them against what you entered above</p>
+                <SelfUploadDocRow label="Driving licence (scan)" docKey="driverLicenceCopy" staffId={profile.id}
+                  uploaded={profile.documents?.driverLicenceCopy?.uploaded} date={profile.documents?.driverLicenceCopy?.date}
+                  onChanged={load} />
+                <SelfUploadDocRow label="CPC card (scan)" docKey="driverCpcCard" staffId={profile.id}
+                  uploaded={profile.documents?.driverCpcCard?.uploaded} date={profile.documents?.driverCpcCard?.date}
+                  onChanged={load} />
+                <SelfUploadDocRow label="Medical certificate" docKey="driverMedicalCert" staffId={profile.id}
+                  uploaded={profile.documents?.driverMedicalCert?.uploaded} date={profile.documents?.driverMedicalCert?.date}
+                  onChanged={load} />
+              </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -480,224 +677,17 @@ export default function MyProfilePage() {
       )}
 
       {activeTab === "details" && formExpanded && (
-        <form onSubmit={handleSubmit} className="space-y-5">
-        {error && <p className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>}
-
-        {/* Photo */}
-        <Section title="Photo">
-          <div className="flex items-center gap-4">
-            <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-dashed bg-muted/40">
-              {photoPreview
-                ? <img src={photoPreview} alt="Preview" className="h-full w-full object-cover" />
-                : profile.id
-                  ? <img src={`/api/staff/${profile.id}/photo`} alt={profile.name}
-                      className="h-full w-full object-cover"
-                      onError={e => { e.currentTarget.style.display = "none" }} />
-                  : <ImageOff className="h-6 w-6 text-muted-foreground/40" />}
-            </div>
-            <div className="flex-1">
-              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors">
-                <Camera className="h-3.5 w-3.5" />
-                {photo ? "Change photo" : "Upload new photo"}
-                <input type="file" accept="image/*" className="hidden"
-                  onChange={e => pickPhoto(e.target.files?.[0] ?? null)} />
-              </label>
-              <p className="mt-1.5 text-[11px] text-muted-foreground">
-                JPG or PNG. Your new photo will show once your manager approves it.
-              </p>
-            </div>
-          </div>
-        </Section>
-
-        {/* Personal */}
-        <Section title="Personal Details">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Full name">
-              <Input value={profile.name} disabled className="opacity-60" />
-            </Field>
-            <Field label="Email">
-              <Input value={profile.email ?? ""} disabled className="opacity-60" />
-            </Field>
-            <Field label="Phone">
-              <Input type="tel" value={profile.phone ?? ""}
-                onChange={e => set("phone", e.target.value)} />
-            </Field>
-            <Field label="Address">
-              <Input value={profile.address ?? ""}
-                onChange={e => set("address", e.target.value)} />
-            </Field>
-          </div>
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <UserIcon className="h-3 w-3" />Name and email are managed by your office — contact them to change these.
-          </p>
-        </Section>
-
-        {/* Emergency contact */}
-        <Section title="Emergency Contact">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Field label="Name">
-              <Input value={profile.emergencyContact?.name ?? ""}
-                onChange={e => set("emergencyContact", { ...profile.emergencyContact, name: e.target.value })} />
-            </Field>
-            <Field label="Phone">
-              <Input type="tel" value={profile.emergencyContact?.phone ?? ""}
-                onChange={e => set("emergencyContact", { ...profile.emergencyContact, phone: e.target.value })} />
-            </Field>
-            <Field label="Relationship">
-              <Input value={profile.emergencyContact?.relationship ?? ""}
-                onChange={e => set("emergencyContact", { ...profile.emergencyContact, relationship: e.target.value })} />
-            </Field>
-          </div>
-        </Section>
-
-        {/* Bank details */}
-        <Section title="Bank Details">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Account holder name">
-              <Input value={profile.bankDetails?.accountHolderName ?? ""}
-                onChange={e => set("bankDetails", { ...profile.bankDetails, accountHolderName: e.target.value })} />
-            </Field>
-            <Field label="Bank name">
-              <Input value={profile.bankDetails?.bankName ?? ""}
-                onChange={e => set("bankDetails", { ...profile.bankDetails, bankName: e.target.value })} />
-            </Field>
-            <Field label="Sort code">
-              <Input className="font-mono" inputMode="numeric" maxLength={8} placeholder="00-00-00"
-                value={profile.bankDetails?.sortCode ?? ""}
-                onChange={e => set("bankDetails", { ...profile.bankDetails, sortCode: e.target.value })} />
-            </Field>
-            <Field label="Account number">
-              <Input className="font-mono" inputMode="numeric" maxLength={8} placeholder="12345678"
-                value={profile.bankDetails?.accountNumber ?? ""}
-                onChange={e => set("bankDetails", { ...profile.bankDetails, accountNumber: e.target.value })} />
-            </Field>
-          </div>
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <UserIcon className="h-3 w-3" />Used by Accounts to pay your wages — double-check before submitting.
-          </p>
-        </Section>
-
-        {/* SIA */}
-        <Section title="SIA Licence">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Field label="Licence number">
-              <Input className="font-mono" value={profile.sia?.number ?? ""}
-                onChange={e => set("sia", { ...profile.sia, number: e.target.value })} />
-            </Field>
-            <Field label="Licence type">
-              <Input value={profile.sia?.type ?? ""} placeholder="e.g. Door Supervisor"
-                onChange={e => set("sia", { ...profile.sia, type: e.target.value })} />
-            </Field>
-            <Field label="Expiry date">
-              <Input type="date" value={profile.sia?.expiry ?? ""}
-                onChange={e => set("sia", { ...profile.sia, expiry: e.target.value })} />
-            </Field>
-          </div>
-        </Section>
-
-        {/* CSCS */}
-        <Section title="CSCS Card">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Card number">
-              <Input className="font-mono" value={profile.cscs?.number ?? ""}
-                onChange={e => set("cscs", { ...profile.cscs, number: e.target.value })} />
-            </Field>
-            <Field label="Expiry date">
-              <Input type="date" value={profile.cscs?.expiry ?? ""}
-                onChange={e => set("cscs", { ...profile.cscs, expiry: e.target.value })} />
-            </Field>
-          </div>
-        </Section>
-
-        {/* Right to Work */}
-        <Section title="Right to Work / Visa">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Visa / status type">
-              <Input value={profile.visa?.type ?? ""} placeholder="e.g. British citizen, Skilled Worker visa"
-                onChange={e => set("visa", { ...profile.visa, type: e.target.value })} />
-            </Field>
-            <Field label="Expiry date (if applicable)">
-              <Input type="date" value={profile.visa?.expiry ?? ""}
-                onChange={e => set("visa", { ...profile.visa, expiry: e.target.value })} />
-            </Field>
-          </div>
-        </Section>
-
-        {/* References */}
-        <Section title="References">
-          {(["ref1", "ref2"] as const).map((key, i) => (
-            <div key={key} className={i > 0 ? "mt-4 border-t pt-4" : ""}>
-              <p className="mb-2 text-xs font-semibold text-muted-foreground">Reference {i + 1}</p>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Field label="Name">
-                  <Input value={profile.references?.[key]?.name ?? ""}
-                    onChange={e => set("references", { ...profile.references, [key]: { ...profile.references?.[key], name: e.target.value } })} />
-                </Field>
-                <Field label="Company">
-                  <Input value={profile.references?.[key]?.company ?? ""}
-                    onChange={e => set("references", { ...profile.references, [key]: { ...profile.references?.[key], company: e.target.value } })} />
-                </Field>
-                <Field label="Email">
-                  <Input type="email" value={profile.references?.[key]?.email ?? ""}
-                    onChange={e => set("references", { ...profile.references, [key]: { ...profile.references?.[key], email: e.target.value } })} />
-                </Field>
-                <Field label="Phone">
-                  <Input type="tel" value={profile.references?.[key]?.phone ?? ""}
-                    onChange={e => set("references", { ...profile.references, [key]: { ...profile.references?.[key], phone: e.target.value } })} />
-                </Field>
-              </div>
-            </div>
-          ))}
-        </Section>
-
-        {/* Documents */}
-        {profile.id && (
-          <Section title="Supporting Documents">
-            <p className="mb-4 text-xs text-muted-foreground">
-              Upload copies of your compliance documents. Files are stored securely and reviewed by your manager.
-            </p>
-            <div className="space-y-3">
-              {DOC_UPLOADS.map((doc) => (
-                <DocUploadRow
-                  key={doc.key}
-                  label={doc.label}
-                  hint={doc.hint}
-                  staffId={profile.id}
-                  docKey={doc.key}
-                  initialUploaded={!!profile.documents?.[doc.key]?.uploaded}
-                />
-              ))}
-            </div>
-          </Section>
-        )}
-
-        {/* Training certificates */}
-        {profile.id && (
-          <Section title="Training Certificates">
-            <p className="mb-4 text-xs text-muted-foreground">
-              Upload a copy of each certificate you hold. Your office manages the course dates — this is just the certificate file.
-            </p>
-            <div className="space-y-3">
-              {TRAINING_CERT_UPLOADS.map((course) => (
-                <TrainingCertRow
-                  key={course.key}
-                  label={course.label}
-                  staffId={profile.id}
-                  courseKey={course.key}
-                  item={profile.training?.[course.key]}
-                />
-              ))}
-            </div>
-          </Section>
-        )}
-
-        <div className="sticky bottom-4 flex justify-end">
-          <Button type="submit" disabled={saving} className="gap-2 shadow-lg">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            {saving ? "Submitting…" : "Submit for review"}
-          </Button>
-        </div>
-      </form>
+        <OnboardingWizard
+          profile={profile}
+          set={set}
+          photo={photo}
+          photoPreview={photoPreview}
+          pickPhoto={pickPhoto}
+          saving={saving}
+          submitError={error}
+          onSubmit={handleSubmit}
+          onAutosave={() => autosaveDraft(profile)}
+        />
       )}  {/* end details tab */}
 
       {/* ══ REPORT TAB ══ */}
@@ -945,147 +935,47 @@ export default function MyProfilePage() {
   )
 }
 
-// ── Document uploads ──────────────────────────────────────────────────────────
+// Section, Field, DocUploadRow, TrainingCertRow, DOC_UPLOADS, TRAINING_CERT_UPLOADS
+// moved to @/components/profile/ProfileShared — shared with OnboardingWizard.
 
-const DOC_UPLOADS = [
-  { key: "siaPhysical",     label: "SIA Licence Copy",   hint: "Front of your SIA licence card — PDF, JPG or PNG" },
-  { key: "cscsCard",        label: "CSCS Card",           hint: "Front of your CSCS card — PDF, JPG or PNG" },
-  { key: "passport",        label: "Passport / Photo ID", hint: "Photo page of your passport or national ID" },
-  { key: "brpCard",         label: "BRP Card",            hint: "Biometric Residence Permit — if applicable" },
-  { key: "proofOfAddress1", label: "Proof of Address",    hint: "Utility bill or bank statement (within 3 months)" },
-]
-
-function DocUploadRow({ label, hint, staffId, docKey, initialUploaded }: {
-  label: string; hint: string; staffId: string; docKey: string; initialUploaded?: boolean
+// Lets a driver upload their own licence/CPC/medical scans straight from
+// their profile — the backend already allowed this (requireOwnStaffOrPermission
+// on the upload route), the only thing missing was somewhere on this page to
+// do it. Always-visible docs (not confidential), so no visibility toggle —
+// same as cscsCard/siaPhysical elsewhere in the app.
+function SelfUploadDocRow({ label, docKey, staffId, uploaded, date, onChanged }: {
+  label: string; docKey: string; staffId: string; uploaded?: boolean; date?: string; onChanged: () => void
 }) {
   const [uploading, setUploading] = useState(false)
-  const [uploaded, setUploaded] = useState(!!initialUploaded)
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  async function handleFile(file: File) {
-    setUploading(true)
-    try {
-      await api.post(`/api/staff/${staffId}/documents/${docKey}`, file)
-      setUploaded(true)
-      toast.success(`${label} uploaded`)
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Network error — please try again")
-    } finally {
-      setUploading(false)
-      if (inputRef.current) inputRef.current.value = ""
-    }
-  }
-
   return (
-    <div className="flex items-start gap-3 rounded-lg border bg-muted/20 px-4 py-3">
+    <div className="flex items-center gap-3 rounded-lg border bg-background px-3 py-2">
+      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">{label}</div>
-        <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>
+        <div className="text-xs font-medium">{label}</div>
+        <div className="text-[11px] text-muted-foreground">{uploaded ? `Uploaded${date ? ` · ${date}` : ""}` : "Not uploaded"}</div>
       </div>
-      <div className="shrink-0">
-        {uploaded ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-700 dark:bg-green-950/40 dark:text-green-400">
-            <ShieldCheck className="h-3 w-3" /> Uploaded
-          </span>
-        ) : (
-          <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted ${uploading ? "pointer-events-none opacity-50" : ""}`}>
-            {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-            {uploading ? "Uploading…" : "Upload"}
-            <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
-              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
-          </label>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ── Training certificate uploads ────────────────────────────────────────────
-
-type StandardTrainingKey = "siaCertificate" | "firstAid" | "manualHandling" | "fireAwareness" | "conflictManagement" | "bwcTraining" | "cscsTest"
-
-const TRAINING_CERT_UPLOADS: { key: StandardTrainingKey; label: string }[] = [
-  { key: "siaCertificate",     label: "SIA Qualifying Certificate" },
-  { key: "firstAid",           label: "First Aid (Emergency)" },
-  { key: "manualHandling",     label: "Manual Handling" },
-  { key: "fireAwareness",      label: "Fire Awareness" },
-  { key: "conflictManagement", label: "Conflict Management" },
-  { key: "bwcTraining",        label: "Body Worn Camera (BWC)" },
-  { key: "cscsTest",           label: "CSCS Health & Safety Test" },
-]
-
-function TrainingCertRow({ label, staffId, courseKey, item }: {
-  label: string; staffId: string; courseKey: string
-  item?: { completed?: boolean; expiry?: string; certUploaded?: boolean }
-}) {
-  const [uploading, setUploading] = useState(false)
-  const [uploaded, setUploaded] = useState(!!item?.certUploaded)
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  async function handleFile(file: File) {
-    setUploading(true)
-    try {
-      await api.post(`/api/staff/${staffId}/training/${courseKey}/certificate`, file)
-      setUploaded(true)
-      toast.success(`${label} certificate uploaded`)
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Network error — please try again")
-    } finally {
-      setUploading(false)
-      if (inputRef.current) inputRef.current.value = ""
-    }
-  }
-
-  return (
-    <div className="flex items-start gap-3 rounded-lg border bg-muted/20 px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">{label}</div>
-        <div className="mt-0.5 text-xs text-muted-foreground">
-          {item?.completed ? "Marked complete by your office" : "Not yet marked complete"}
-          {item?.expiry ? ` · Expires ${item.expiry}` : ""}
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {uploaded && (
-          <a href={`/api/staff/${staffId}/training/${courseKey}/certificate`} target="_blank" rel="noopener noreferrer"
-            className="text-xs text-primary hover:underline">View</a>
-        )}
-        {uploaded ? (
-          <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted ${uploading ? "pointer-events-none opacity-50" : ""}`}>
-            {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5 text-green-600" />}
-            {uploading ? "Uploading…" : "Replace"}
-            <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
-              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
-          </label>
-        ) : (
-          <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted ${uploading ? "pointer-events-none opacity-50" : ""}`}>
-            {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-            {uploading ? "Uploading…" : "Upload certificate"}
-            <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
-              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
-          </label>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function Section({ title, icon, badge, children }: { title: string; icon?: React.ReactNode; badge?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div className="surface p-5">
-      <h3 className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        {icon}{title}{badge}
-      </h3>
-      {children}
-    </div>
-  )
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <Label className="mb-1 block text-xs font-medium text-muted-foreground">{label}</Label>
-      {children}
+      {uploaded && (
+        <a href={`/api/staff/${staffId}/documents/${docKey}`} target="_blank" rel="noopener noreferrer"
+          className="shrink-0 text-xs text-primary hover:underline">View</a>
+      )}
+      <label className={`inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border bg-background px-2.5 py-1.5 text-[11px] font-medium hover:bg-muted transition-colors ${uploading ? "pointer-events-none opacity-50" : ""}`}>
+        {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+        {uploaded ? "Replace" : "Upload"}
+        <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={async e => {
+          const f = e.target.files?.[0]
+          if (!f) return
+          setUploading(true)
+          try {
+            await api.post(`/api/staff/${staffId}/documents/${docKey}`, f)
+            toast.success(`${label} uploaded`)
+            onChanged()
+          } catch {
+            toast.error("Upload failed — please try again.")
+          } finally {
+            setUploading(false)
+          }
+        }} />
+      </label>
     </div>
   )
 }

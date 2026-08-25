@@ -16,7 +16,7 @@ import {
 } from "lucide-react"
 import { StatusBadge } from "@/components/ui/status-badge"
 import { makeStagger } from "@/lib/motion"
-import { api } from "@/lib/api"
+import { api, ApiError } from "@/lib/api"
 import { runBulk, reportBulk } from "@/lib/bulk"
 import { RoleChipPicker, parseRoles } from "@/components/ui/role-picker"
 
@@ -38,6 +38,11 @@ interface ExStaffMember {
 
 type ViewMode = "details" | "tiles"
 type SortKey = "name" | "sia" | "cscs" | "rtw"
+
+interface SameNameConflict {
+  error: string
+  existing: { id: string; name: string; phone: string | null; email: string | null; nationality: string | null; jobRole: string | null } | null
+}
 
 function normDeploy(raw?: string): "onsite" | "available" | "offduty" | "unknown" {
   const v = (raw ?? "").toLowerCase().replace(/[\s_-]/g, "")
@@ -227,7 +232,11 @@ export default function StaffPage() {
   const [restoringId, setRestoringId] = useState<string | null>(null)
   const [exError, setExError]         = useState("")
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [confirmDeleteText, setConfirmDeleteText] = useState("")
   const [permDeleting, setPermDeleting]       = useState(false)
+
+  // Ex-Staff search
+  const [exSearch, setExSearch] = useState("")
 
   // Ex-Staff multi-select
   const [exSelectedIds, setExSelectedIds]   = useState<Set<string>>(new Set())
@@ -307,6 +316,11 @@ export default function StaffPage() {
   const [addForm, setAddForm]     = useState({ name: "", jobRole: "", email: "", phone: "", nationality: "" })
   const [addSaving, setAddSaving] = useState(false)
   const [addError, setAddError]   = useState("")
+  // Set when the backend finds an active profile with the exact same name —
+  // two different people CAN genuinely share a name, so this isn't a hard
+  // block: it shows a side-by-side comparison and lets the admin either open
+  // the existing profile (the usual case) or confirm it's someone else.
+  const [sameNameConflict, setSameNameConflict] = useState<SameNameConflict | null>(null)
 
   // Row selection for Excel export + bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -338,7 +352,7 @@ export default function StaffPage() {
   }, [])
 
   async function openExStaff() {
-    setExPanel(true); setExLoading(true); setExError("")
+    setExPanel(true); setExLoading(true); setExError(""); setExSearch("")
     try {
       const d = await api.get<ExStaffMember[]>("/api/exstaff")
       setExStaff(Array.isArray(d) ? d : [])
@@ -349,14 +363,16 @@ export default function StaffPage() {
     }
   }
 
-  async function permanentDelete(folderId: string) {
+  async function permanentDelete(folderId: string, confirmPhrase: string) {
     setPermDeleting(true); setExError("")
     try {
-      await api.delete("/api/exstaff/permanent", { folderId })
+      await api.delete("/api/exstaff/permanent", { folderId, confirmPhrase })
       setExStaff(prev => prev.filter(e => e.folderId !== folderId))
-      setConfirmDeleteId(null)
-    } catch {
-      setExError("Network error.")
+      setConfirmDeleteId(null); setConfirmDeleteText("")
+    } catch (err) {
+      // Surfaces the server's actual reason — e.g. the 7-year retention
+      // block, or "type the name exactly" — instead of a generic message.
+      setExError(err instanceof ApiError ? err.message : "Network error.")
     } finally {
       setPermDeleting(false)
     }
@@ -378,10 +394,11 @@ export default function StaffPage() {
   function openAddStaff() {
     setAddForm({ name: "", jobRole: "", email: "", phone: "", nationality: "" })
     setAddError("")
+    setSameNameConflict(null)
     setAddPanel(true)
   }
 
-  async function handleAddStaff() {
+  async function handleAddStaff(confirmDifferentPerson = false) {
     if (!addForm.name.trim()) { setAddError("Full name is required."); return }
     setAddSaving(true); setAddError("")
     try {
@@ -392,12 +409,21 @@ export default function StaffPage() {
         phone:       addForm.phone.trim() || undefined,
         nationality: addForm.nationality.trim() || undefined,
         overall:     "unknown",
+        confirmDifferentPerson: confirmDifferentPerson || undefined,
       })
       await reloadStaff()
       setAddPanel(false)
+      setSameNameConflict(null)
       toast.success("Staff member added successfully")
-    } catch {
-      setAddError("Network error.")
+    } catch (err) {
+      const data = err instanceof ApiError
+        ? (err.data as { sameNameConflict?: boolean; error?: string; existing?: SameNameConflict["existing"] } | undefined)
+        : undefined
+      if (err instanceof ApiError && err.status === 409 && data?.sameNameConflict) {
+        setSameNameConflict({ error: data.error ?? err.message, existing: data.existing ?? null })
+      } else {
+        setAddError(err instanceof ApiError ? err.message : "Network error.")
+      }
     } finally {
       setAddSaving(false)
     }
@@ -541,7 +567,7 @@ export default function StaffPage() {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Staff</h2>
+          <h2 className="font-display text-2xl font-bold tracking-tight">Staff</h2>
           <p className="text-muted-foreground text-sm">{staff.length} active staff members</p>
         </div>
         <div className="flex items-center gap-2">
@@ -934,105 +960,161 @@ export default function StaffPage() {
 
       {/* ── Add Staff panel ── */}
       {addPanel && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/40" onClick={() => setAddPanel(false)} />
-          <div className="flex h-full w-full max-w-md flex-col bg-background shadow-2xl">
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <div>
-                <h2 className="text-lg font-semibold">Add new staff member</h2>
-                <p className="text-xs text-muted-foreground">Basic details — full compliance data is added from their profile page</p>
-              </div>
-              <button onClick={() => setAddPanel(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-              {addError && (
-                <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{addError}</p>
-              )}
-
-              <div className="space-y-1.5">
-                <Label>Full name *</Label>
-                <Input
-                  value={addForm.name}
-                  onChange={(e) => setAddForm((p) => ({ ...p, name: e.target.value }))}
-                  placeholder="e.g. James Okafor"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="flex items-center gap-1.5">
-                  <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
-                  Job role
-                </Label>
-                <RoleChipPicker
-                  value={addForm.jobRole}
-                  onChange={v => setAddForm(p => ({ ...p, jobRole: v }))}
-                />
-                {addForm.jobRole && (
-                  <p className="text-[11px] text-muted-foreground">
-                    Selected: <span className="font-medium text-foreground">{addForm.jobRole}</span>
-                  </p>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Email</Label>
-                  <Input
-                    type="email"
-                    value={addForm.email}
-                    onChange={(e) => setAddForm((p) => ({ ...p, email: e.target.value }))}
-                    placeholder="email@example.com"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Phone</Label>
-                  <Input
-                    type="tel"
-                    value={addForm.phone}
-                    onChange={(e) => setAddForm((p) => ({ ...p, phone: e.target.value }))}
-                    placeholder="+44 7700 000000"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>Nationality</Label>
-                <Input
-                  value={addForm.nationality}
-                  onChange={(e) => setAddForm((p) => ({ ...p, nationality: e.target.value }))}
-                  placeholder="e.g. British"
-                />
-              </div>
-
-              <p className="rounded-lg bg-muted/50 px-3 py-2.5 text-xs text-muted-foreground">
-                SIA licence, CSCS, Right to Work, documents and training are added from the staff member's profile page after creation.
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          <div className="flex items-center justify-between border-b px-6 py-4">
+            <div>
+              <h2 className="text-lg font-semibold">{sameNameConflict ? "Same name already on file" : "Add new staff member"}</h2>
+              <p className="text-xs text-muted-foreground">
+                {sameNameConflict ? "Confirm whether this is the same person or someone else" : "Basic details — full compliance data is added from their profile page"}
               </p>
             </div>
-
-            <div className="flex gap-2 border-t px-6 py-4">
-              <Button variant="outline" className="flex-1" onClick={() => setAddPanel(false)}>
-                Cancel
-              </Button>
-              <Button className="flex-1" onClick={handleAddStaff} disabled={addSaving}>
-                {addSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Adding…</> : "Add staff member"}
-              </Button>
-            </div>
+            <button onClick={() => { setAddPanel(false); setSameNameConflict(null) }} className="rounded-md p-1.5 hover:bg-muted transition-colors">
+              <X className="h-5 w-5" />
+            </button>
           </div>
+
+          {sameNameConflict ? (
+            <>
+              <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                <p className="rounded-lg bg-warning/10 px-3 py-2 text-sm text-warning">{sameNameConflict.error}</p>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1 rounded-lg border p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Existing profile</p>
+                    <p className="text-sm font-medium">{sameNameConflict.existing?.name ?? addForm.name}</p>
+                    <p className="text-xs text-muted-foreground">{sameNameConflict.existing?.jobRole || "No role set"}</p>
+                    <p className="text-xs text-muted-foreground">{sameNameConflict.existing?.email || "No email on file"}</p>
+                    <p className="text-xs text-muted-foreground">{sameNameConflict.existing?.phone || "No phone on file"}</p>
+                    <p className="text-xs text-muted-foreground">{sameNameConflict.existing?.nationality || "No nationality on file"}</p>
+                  </div>
+                  <div className="space-y-1 rounded-lg border border-primary/30 p-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">What you just entered</p>
+                    <p className="text-sm font-medium">{addForm.name}</p>
+                    <p className="text-xs text-muted-foreground">{addForm.jobRole || "No role set"}</p>
+                    <p className="text-xs text-muted-foreground">{addForm.email || "No email"}</p>
+                    <p className="text-xs text-muted-foreground">{addForm.phone || "No phone"}</p>
+                    <p className="text-xs text-muted-foreground">{addForm.nationality || "No nationality"}</p>
+                  </div>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  If the email or phone above are different, this is very likely a different person who just happens to share a name — not the person you already have on file.
+                </p>
+              </div>
+
+              <div className="mx-auto flex w-full max-w-2xl flex-col gap-2 border-t px-6 py-4">
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1" onClick={() => setSameNameConflict(null)}>
+                    Back
+                  </Button>
+                  {sameNameConflict.existing && (
+                    <Button variant="outline" className="flex-1" onClick={() => {
+                      const id = sameNameConflict.existing!.id
+                      setAddPanel(false); setSameNameConflict(null)
+                      navigate(`/staff/${id}`)
+                    }}>
+                      Open existing profile
+                    </Button>
+                  )}
+                </div>
+                <Button className="w-full gap-2" onClick={() => handleAddStaff(true)} disabled={addSaving}>
+                  {addSaving ? <><Loader2 className="h-4 w-4 animate-spin" />Creating…</> : "Yes — different person, create anyway"}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                  {addError && (
+                    <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{addError}</p>
+                  )}
+
+                  <div className="space-y-1.5">
+                    <Label>Full name *</Label>
+                    <Input
+                      value={addForm.name}
+                      onChange={(e) => setAddForm((p) => ({ ...p, name: e.target.value }))}
+                      placeholder="e.g. James Okafor"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="flex items-center gap-1.5">
+                      <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
+                      Job role
+                    </Label>
+                    <RoleChipPicker
+                      value={addForm.jobRole}
+                      onChange={v => setAddForm(p => ({ ...p, jobRole: v }))}
+                    />
+                    {addForm.jobRole && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Selected: <span className="font-medium text-foreground">{addForm.jobRole}</span>
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>Email</Label>
+                      <Input
+                        type="email"
+                        value={addForm.email}
+                        onChange={(e) => setAddForm((p) => ({ ...p, email: e.target.value }))}
+                        placeholder="email@example.com"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Phone</Label>
+                      <Input
+                        type="tel"
+                        value={addForm.phone}
+                        onChange={(e) => setAddForm((p) => ({ ...p, phone: e.target.value }))}
+                        placeholder="+44 7700 000000"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Nationality</Label>
+                    <Input
+                      value={addForm.nationality}
+                      onChange={(e) => setAddForm((p) => ({ ...p, nationality: e.target.value }))}
+                      placeholder="e.g. British"
+                    />
+                  </div>
+
+                  <p className="rounded-lg bg-muted/50 px-3 py-2.5 text-xs text-muted-foreground">
+                    SIA licence, CSCS, Right to Work, documents and training are added from the staff member's profile page after creation.
+                  </p>
+              </div>
+
+              <div className="mx-auto flex w-full max-w-2xl gap-2 border-t px-6 py-4">
+                <Button variant="outline" className="flex-1" onClick={() => setAddPanel(false)}>
+                  Cancel
+                </Button>
+                <Button className="flex-1" onClick={() => handleAddStaff()} disabled={addSaving}>
+                  {addSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Adding…</> : "Add staff member"}
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       )}
 
       {/* ── Ex-Staff panel ── */}
       {exPanel && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/40" onClick={() => setExPanel(false)} />
-          <div className="flex h-full w-full max-w-lg flex-col bg-background shadow-2xl">
-            <div className="flex items-center justify-between border-b px-6 py-4">
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          <div className="border-b px-6 py-4 space-y-3">
+            <div className="flex items-center justify-between">
               <div>
                 <h2 className="flex items-center gap-2 text-lg font-semibold">
                   <Archive className="h-4 w-4 text-muted-foreground" />Ex-Staff
+                  {!exLoading && exStaff.length > 0 && (
+                    <span className="ml-1 inline-flex items-center justify-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                      {exStaff.length}
+                    </span>
+                  )}
                 </h2>
                 <p className="text-xs text-muted-foreground">Restore a returning employee back to Active Staff</p>
               </div>
@@ -1040,8 +1122,20 @@ export default function StaffPage() {
                 <X className="h-5 w-5" />
               </button>
             </div>
+            {!exLoading && exStaff.length > 0 && (
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={exSearch}
+                  onChange={e => setExSearch(e.target.value)}
+                  placeholder="Search ex-staff by name…"
+                  className="h-9 pl-9 text-sm"
+                />
+              </div>
+            )}
+          </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-6 py-5">
               {exError && (
                 <p className="mb-4 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{exError}</p>
               )}
@@ -1051,6 +1145,7 @@ export default function StaffPage() {
                   <Loader2 className="h-4 w-4 animate-spin" /><span className="text-sm">Loading ex-staff…</span>
                 </div>
               ) : exStaff.length === 0 ? (
+                /* empty state — no ex-staff at all */
                 <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed py-16 text-center">
                   <UserX className="mb-4 h-12 w-12 text-muted-foreground/25" />
                   <h3 className="font-semibold text-muted-foreground">No ex-staff found</h3>
@@ -1132,8 +1227,13 @@ export default function StaffPage() {
                     </div>
                   )}
 
+                  {exSearch.trim() && exStaff.filter(e => e.name.toLowerCase().includes(exSearch.toLowerCase().trim())).length === 0 ? (
+                    <p className="py-8 text-center text-sm text-muted-foreground">
+                      No ex-staff matching "{exSearch.trim()}"
+                    </p>
+                  ) : (
                   <div className="space-y-2">
-                    {exStaff.map((e) => (
+                    {(exSearch.trim() ? exStaff.filter(e => e.name.toLowerCase().includes(exSearch.toLowerCase().trim())) : exStaff).map((e) => (
                       <div key={e.folderId} className={`rounded-lg border bg-card px-4 py-3 space-y-2 transition-colors ${exSelectedIds.has(e.folderId) ? "border-primary/40 bg-primary/5" : ""}`}>
                         <div className="flex items-center gap-3">
                           <input
@@ -1158,7 +1258,7 @@ export default function StaffPage() {
                                 : <RotateCcw className="h-3.5 w-3.5" />}
                               Restore
                             </button>
-                            <button onClick={() => setConfirmDeleteId(e.folderId)}
+                            <button onClick={() => { setConfirmDeleteId(e.folderId); setConfirmDeleteText(""); setExError("") }}
                               className="flex items-center gap-1.5 rounded-md bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20">
                               <Trash2 className="h-3.5 w-3.5" />
                               Delete
@@ -1167,13 +1267,20 @@ export default function StaffPage() {
                         </div>
 
                         {confirmDeleteId === e.folderId && (
-                          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 flex items-center justify-between gap-3">
-                            <p className="text-xs text-destructive font-medium">Permanently delete {e.name.split(" ")[0]}'s record? This cannot be undone.</p>
-                            <div className="flex gap-2 shrink-0">
-                              <button onClick={() => setConfirmDeleteId(null)}
-                                className="rounded px-2.5 py-1 text-xs border hover:bg-muted transition-colors">Cancel</button>
-                              <button onClick={() => permanentDelete(e.folderId)} disabled={permDeleting}
-                                className="rounded px-2.5 py-1 text-xs bg-destructive text-white hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1">
+                          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 space-y-2">
+                            <p className="text-xs text-destructive font-medium">
+                              Permanently delete {e.name}'s record? This cannot be undone, and BS7858/GDPR retention
+                              rules mean it will be blocked unless this record has been archived for 7+ years.
+                            </p>
+                            <p className="text-xs text-muted-foreground">Type <span className="font-semibold text-foreground">{e.name}</span> to confirm:</p>
+                            <div className="flex items-center gap-2">
+                              <Input value={confirmDeleteText} onChange={ev => setConfirmDeleteText(ev.target.value)}
+                                placeholder={e.name} className="h-8 text-xs" autoFocus />
+                              <button onClick={() => { setConfirmDeleteId(null); setConfirmDeleteText("") }}
+                                className="rounded px-2.5 py-1.5 text-xs border hover:bg-muted transition-colors shrink-0">Cancel</button>
+                              <button onClick={() => permanentDelete(e.folderId, confirmDeleteText)}
+                                disabled={permDeleting || confirmDeleteText.trim() !== e.name.trim()}
+                                className="rounded px-2.5 py-1.5 text-xs bg-destructive text-white hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1 shrink-0">
                                 {permDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                                 Yes, Delete
                               </button>
@@ -1183,9 +1290,9 @@ export default function StaffPage() {
                       </div>
                     ))}
                   </div>
+                  )}
                 </>
               )}
-            </div>
           </div>
         </div>
       )}

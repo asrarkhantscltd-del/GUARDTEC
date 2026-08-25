@@ -63,15 +63,17 @@ export default function StaffLayout() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <header className="flex h-16 items-center gap-3 border-b border-sidebar-border bg-sidebar text-sidebar-foreground px-4 md:px-8">
+      <header className="flex h-16 items-center gap-4 border-b border-sidebar-border bg-sidebar text-sidebar-foreground px-4 md:px-8">
         <img
           src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
           alt="GuardTec"
-          className="h-9 w-auto"
+          className="h-10 w-auto"
         />
         <div>
-          <p className="text-sm font-bold leading-tight">GuardTec</p>
-          <p className="text-[10px] leading-tight opacity-40">Staff Portal</p>
+          <p className="font-display text-sm font-bold leading-tight tracking-wider uppercase">
+            Guard<span className="text-primary">Tec</span>
+          </p>
+          <p className="font-display text-[9px] leading-tight tracking-[0.2em] opacity-40 uppercase">Staff Portal</p>
         </div>
 
         <div className="ml-auto flex items-center gap-3">

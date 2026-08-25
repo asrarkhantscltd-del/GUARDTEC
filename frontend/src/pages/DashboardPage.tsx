@@ -161,7 +161,7 @@ export default function DashboardPage() {
                 {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
               </span>
             </div>
-            <h2 className="text-3xl font-black tracking-tight md:text-4xl">
+            <h2 className="font-display text-3xl font-black tracking-tight md:text-4xl">
               {greeting()}, {user?.full_name?.split(" ")[0]}
             </h2>
             <p className={`mt-2 max-w-md text-sm leading-relaxed ${isDark ? "text-white/60" : "text-black/55"}`}>
@@ -268,7 +268,7 @@ export default function DashboardPage() {
       {stats && stats.totalStaff > 0 && (
         <div className="surface p-4">
           <div className="mb-3 flex items-center justify-between">
-            <p className="text-sm font-semibold">Compliance snapshot</p>
+            <p className="font-display text-sm font-semibold tracking-wide">Compliance snapshot</p>
             <button
               onClick={() => navigate("/compliance")}
               className="group flex items-center gap-1 text-xs font-medium text-primary hover:underline"
@@ -303,7 +303,7 @@ export default function DashboardPage() {
       {/* Sites overview */}
       <div>
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-base font-semibold">Active sites — operations</h3>
+          <h3 className="font-display text-sm font-semibold tracking-wide">Active sites — operations</h3>
           <button
             onClick={() => navigate("/sites")}
             className="group flex items-center gap-1 text-xs font-medium text-primary hover:underline"
@@ -433,7 +433,7 @@ function StatCard({ label, value, sub, icon, tint, highlight, clickable, onClick
         <div className={`icon-badge ${t.bg} ${t.text}`}>{icon}</div>
         {clickable && <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground/40" />}
       </div>
-      <p className={`text-3xl font-black tracking-tight tabular-nums ${highlight ? "text-[#ef4444]" : ""}`}>{value}</p>
+      <p className={`font-display text-3xl font-black tracking-tight tabular-nums ${highlight ? "text-[#ef4444]" : ""}`}>{value}</p>
       <p className="mt-0.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className="text-[11px] text-muted-foreground/60">{sub}</p>
     </div>

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react"
-import { Bot, X, Send, Sparkles, RotateCcw } from "lucide-react"
+import { motion, useMotionValue } from "framer-motion"
+import { X, Send, Sparkles, RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
 
@@ -18,6 +19,98 @@ const SUGGESTIONS = [
   "Who is currently onsite?",
 ]
 
+function AiOrb({ open }: { open: boolean }) {
+  return (
+    <div className="relative h-14 w-14 flex items-center justify-center">
+      {/* Outer rotating ring */}
+      <svg className="absolute inset-0 h-full w-full animate-[spin_8s_linear_infinite]" viewBox="0 0 56 56">
+        <defs>
+          <linearGradient id="orb-ring" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#E40613" />
+            <stop offset="50%" stopColor="#00A99D" />
+            <stop offset="100%" stopColor="#E40613" />
+          </linearGradient>
+        </defs>
+        <circle cx="28" cy="28" r="26" fill="none" stroke="url(#orb-ring)" strokeWidth="1.5"
+          strokeDasharray="12 6 4 6" opacity="0.7" />
+      </svg>
+
+      {/* Counter-rotating inner ring */}
+      <svg className="absolute inset-1 h-[calc(100%-8px)] w-[calc(100%-8px)] animate-[spin_5s_linear_infinite_reverse]" viewBox="0 0 48 48">
+        <circle cx="24" cy="24" r="22" fill="none" stroke="#E40613" strokeWidth="1"
+          strokeDasharray="4 8" opacity="0.4" />
+      </svg>
+
+      {/* Core glow */}
+      <div className="absolute inset-2 rounded-full bg-[#E40613]/20 blur-md animate-[pulse_2s_ease-in-out_infinite]" />
+
+      {/* Inner solid circle */}
+      <div className="relative z-10 flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-[#1a1a2e] to-[#0a0a15] border border-white/10 shadow-[0_0_20px_rgba(228,6,19,0.3)]">
+        {open ? (
+          <X className="h-5 w-5 text-white" />
+        ) : (
+          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none">
+            {/* Neural network / brain icon */}
+            <circle cx="12" cy="6" r="1.5" fill="#E40613">
+              <animate attributeName="opacity" values="1;0.4;1" dur="2s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="6" cy="11" r="1.5" fill="#00A99D">
+              <animate attributeName="opacity" values="0.4;1;0.4" dur="2s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="18" cy="11" r="1.5" fill="#E40613">
+              <animate attributeName="opacity" values="0.7;1;0.7" dur="1.5s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="8" cy="18" r="1.5" fill="#00A99D">
+              <animate attributeName="opacity" values="1;0.5;1" dur="1.8s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="16" cy="18" r="1.5" fill="#E40613">
+              <animate attributeName="opacity" values="0.5;1;0.5" dur="2.2s" repeatCount="indefinite" />
+            </circle>
+            {/* Connections */}
+            <line x1="12" y1="6" x2="6" y2="11" stroke="#E40613" strokeWidth="0.7" opacity="0.5">
+              <animate attributeName="opacity" values="0.2;0.7;0.2" dur="1.5s" repeatCount="indefinite" />
+            </line>
+            <line x1="12" y1="6" x2="18" y2="11" stroke="#E40613" strokeWidth="0.7" opacity="0.5">
+              <animate attributeName="opacity" values="0.5;0.2;0.5" dur="1.8s" repeatCount="indefinite" />
+            </line>
+            <line x1="6" y1="11" x2="8" y2="18" stroke="#00A99D" strokeWidth="0.7" opacity="0.5">
+              <animate attributeName="opacity" values="0.3;0.8;0.3" dur="2s" repeatCount="indefinite" />
+            </line>
+            <line x1="18" y1="11" x2="16" y2="18" stroke="#E40613" strokeWidth="0.7" opacity="0.5">
+              <animate attributeName="opacity" values="0.6;0.3;0.6" dur="1.6s" repeatCount="indefinite" />
+            </line>
+            <line x1="6" y1="11" x2="18" y2="11" stroke="white" strokeWidth="0.5" opacity="0.2">
+              <animate attributeName="opacity" values="0.1;0.4;0.1" dur="2.5s" repeatCount="indefinite" />
+            </line>
+            <line x1="8" y1="18" x2="16" y2="18" stroke="white" strokeWidth="0.5" opacity="0.2">
+              <animate attributeName="opacity" values="0.3;0.1;0.3" dur="2s" repeatCount="indefinite" />
+            </line>
+            <line x1="12" y1="6" x2="8" y2="18" stroke="white" strokeWidth="0.3" opacity="0.15">
+              <animate attributeName="opacity" values="0.05;0.25;0.05" dur="3s" repeatCount="indefinite" />
+            </line>
+            <line x1="12" y1="6" x2="16" y2="18" stroke="white" strokeWidth="0.3" opacity="0.15">
+              <animate attributeName="opacity" values="0.15;0.05;0.15" dur="2.8s" repeatCount="indefinite" />
+            </line>
+          </svg>
+        )}
+      </div>
+
+      {/* Orbiting dot 1 */}
+      {!open && (
+        <div className="absolute inset-0 animate-[spin_3s_linear_infinite]">
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 h-1.5 w-1.5 rounded-full bg-[#E40613] shadow-[0_0_6px_#E40613]" />
+        </div>
+      )}
+      {/* Orbiting dot 2 */}
+      {!open && (
+        <div className="absolute inset-0 animate-[spin_4s_linear_infinite_reverse]">
+          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 h-1 w-1 rounded-full bg-[#00A99D] shadow-[0_0_6px_#00A99D]" />
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function AiChat() {
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
@@ -25,6 +118,12 @@ export default function AiChat() {
   const [loading, setLoading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const constraintsRef = useRef<HTMLDivElement>(null)
+
+  const x = useMotionValue(0)
+  const y = useMotionValue(0)
+
+  const [isDragging, setIsDragging] = useState(false)
 
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 150)
@@ -60,31 +159,59 @@ export default function AiChat() {
 
   return (
     <>
-      {/* Floating button */}
-      <button
-        onClick={() => setOpen(prev => !prev)}
+      {/* Full-screen drag boundary */}
+      <div ref={constraintsRef} className="fixed inset-0 pointer-events-none z-40" />
+
+      {/* Draggable floating orb */}
+      <motion.button
+        drag
+        dragConstraints={constraintsRef}
+        dragElastic={0.1}
+        dragMomentum={false}
+        onDragStart={() => {
+          setIsDragging(true)
+        }}
+        onDragEnd={() => {
+          setTimeout(() => setIsDragging(false), 50)
+        }}
+        onClick={() => {
+          if (!isDragging) setOpen(prev => !prev)
+        }}
+        style={{ x, y }}
+        whileHover={{ scale: 1.08 }}
+        whileTap={{ scale: 0.95 }}
         aria-label="AI Compliance Assistant"
-        className={`fixed bottom-6 right-6 z-50 flex h-12 w-12 items-center justify-center rounded-full shadow-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary/50 ${
-          open
-            ? "bg-muted text-foreground hover:bg-muted/80 shadow-md"
-            : "bg-primary text-white hover:scale-105 hover:shadow-xl shadow-primary/30"
-        }`}
+        className="fixed bottom-6 right-6 z-50 cursor-grab active:cursor-grabbing focus:outline-none"
       >
-        {open ? <X className="h-5 w-5" /> : <Bot className="h-5 w-5" />}
-      </button>
+        <AiOrb open={open} />
+
+        {/* Pulse ring when closed */}
+        {!open && (
+          <span className="absolute inset-0 rounded-full border-2 border-[#E40613]/40 animate-ping" />
+        )}
+      </motion.button>
 
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-22 right-6 z-50 flex h-[520px] w-[370px] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
-
+        <motion.div
+          className="fixed bottom-24 right-6 z-50 flex h-[520px] w-[370px] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl"
+          initial={{ opacity: 0, y: 20, scale: 0.95 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 20, scale: 0.95 }}
+          transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+        >
           {/* Header */}
           <div className="flex shrink-0 items-center gap-3 border-b border-border bg-muted/30 px-4 py-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
-              <Sparkles className="h-4 w-4 text-primary" />
+            <div className="relative flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-[#E40613]/20 to-[#00A99D]/10 border border-[#E40613]/20">
+              <Sparkles className="h-4 w-4 text-[#E40613]" />
+              <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+              </span>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold leading-tight">AI Compliance Assistant</p>
-              <p className="text-[10px] text-muted-foreground">Ask about staff, licences, vehicles</p>
+              <p className="text-sm font-semibold font-display tracking-wide leading-tight">AI Assistant</p>
+              <p className="text-[10px] text-muted-foreground">GuardTec Compliance Intelligence</p>
             </div>
             {messages.length > 0 && (
               <button
@@ -99,7 +226,6 @@ export default function AiChat() {
 
           {/* Messages area */}
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
-
             {messages.length === 0 && (
               <div className="space-y-2 pt-1">
                 <p className="text-center text-xs text-muted-foreground pb-1">
@@ -129,7 +255,6 @@ export default function AiChat() {
               </div>
             ))}
 
-            {/* Typing indicator */}
             {loading && (
               <div className="flex justify-start">
                 <div className="flex items-center gap-1 rounded-2xl rounded-bl-sm bg-muted px-3 py-3">
@@ -167,7 +292,7 @@ export default function AiChat() {
               </Button>
             </form>
           </div>
-        </div>
+        </motion.div>
       )}
     </>
   )

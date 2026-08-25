@@ -19,6 +19,7 @@ export type UserRole =
   | "supervisor"
   | "fleet_manager"
   | "staff"
+  | "agency"
 
 export type Permissions = Partial<Record<
   "staff" | "fleet" | "sites" | "compliance" | "pending_review" | "edit_staff" | "delete_staff",
@@ -32,6 +33,7 @@ export interface User {
   role: string
   role_name?: string
   staff_id?: string | null
+  agency_id?: string | null
   permissions?: Permissions
   departments: string[]
 }
