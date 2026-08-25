@@ -7,6 +7,7 @@ const cookieParser = require('cookie-parser');
 const jwt          = require('jsonwebtoken');
 const bcrypt       = require('bcryptjs');
 const crypto       = require('crypto');
+const rateLimit    = require('express-rate-limit');
 const { Pool }     = require('pg');
 
 const app  = express();
@@ -15,6 +16,19 @@ const BASE_URL = process.env.BASE_URL || ('http://localhost:' + PORT); // link b
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const pgPool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// Throttles credential-guessing on the few routes anyone (not just a logged-in
+// user) can hit repeatedly: login, self-registration, and the public
+// acknowledgment-signing link. Keyed by IP by default (express-rate-limit's
+// standard behaviour) — generous enough for a real user who mistypes a
+// password a few times, tight enough that scripting through it is slow.
+var authRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Too many attempts. Please wait 15 minutes and try again.' }
+});
 
 // Self-healing schema — adds columns introduced after the original users table
 // was created, so upgrades never require a manual migration step.
@@ -103,6 +117,11 @@ var DEFAULT_ROLES = [
   { slug: 'media',          name: 'Media',               is_system: true,  permissions: { staff: false, fleet: false, sites: false, compliance: false, pending_review: false } },
   { slug: 'supervisor',     name: 'Supervisor',          is_system: true,  permissions: { staff: true,  fleet: false, sites: true,  compliance: true,  pending_review: false } },
   { slug: 'fleet_manager',  name: 'Fleet Manager',       is_system: true,  permissions: { staff: false, fleet: true,  sites: false, compliance: false, pending_review: false } },
+  // Catch-all for a role that doesn't fit any named slot above — starts with
+  // no permissions (safest default); a Director adjusts it per-person via
+  // Manage Roles rather than it carrying one fixed meaning for everyone
+  // assigned to it.
+  { slug: 'other',          name: 'Other',                is_system: true,  permissions: {} },
   { slug: 'staff',          name: 'Staff (self-service)',is_system: true,  permissions: {} },
 ];
 
@@ -770,6 +789,35 @@ function requirePermission(moduleKey) {
   };
 }
 
+// ── PASSWORD STRENGTH ─────────────────────────────────────────────────────────
+// Shared by every route that lets a human pick their own password
+// (/api/register, /api/users create, /api/users/:id/reset-password) — not
+// applied to generateTempPassword()'s output above, since that's already a
+// random 12-char string nobody typed in.
+function passwordStrengthError(password) {
+  if (!password || password.length < 10) return 'Password must be at least 10 characters.';
+  return null;
+}
+
+// Have I Been Pwned's k-anonymity range API: only the first 5 hex chars of
+// the SHA-1 hash ever leave this server, so the real password (and even its
+// full hash) is never sent anywhere. Fails OPEN on any network problem —
+// staff must still be able to register/reset a password if HIBP is
+// unreachable; this is a defence-in-depth extra, not the only gate.
+async function isPasswordBreached(password) {
+  try {
+    var sha1 = crypto.createHash('sha1').update(password).digest('hex').toUpperCase();
+    var prefix = sha1.slice(0, 5);
+    var suffix = sha1.slice(5);
+    var resp = await fetch('https://api.pwnedpasswords.com/range/' + prefix, { signal: AbortSignal.timeout(3000) });
+    if (!resp.ok) return false;
+    var text = await resp.text();
+    return text.split('\n').some(function(line) { return line.split(':')[0].trim() === suffix; });
+  } catch (e) {
+    return false;
+  }
+}
+
 // ── AUTH HELPERS ──────────────────────────────────────────────────────────────
 function signToken(user) {
   return jwt.sign({ id: user.id, username: user.username, role: user.role || 'supervisor', staff_id: user.staff_id || null, agency_id: user.agency_id || null }, JWT_SECRET, { expiresIn: '7d' });
@@ -923,7 +971,7 @@ async function resolveRoleInfo(role) {
   return { name: (def && def.name) || role, permissions: (def && def.permissions) || {} };
 }
 
-app.post('/api/login', async function(req, res) {
+app.post('/api/login', authRateLimiter, async function(req, res) {
   try {
     var username = String((req.body && req.body.username) || '').trim();
     var password = String((req.body && req.body.password) || '');
@@ -978,7 +1026,7 @@ app.post('/api/logout', function(req, res) {
 // Staff self-registration — proves identity with a one-time code an Ops
 // Manager/Director hands them, then the staff member picks their own
 // username & password. No requireLogin gate — this IS how staff get in.
-app.post('/api/register', async function(req, res) {
+app.post('/api/register', authRateLimiter, async function(req, res) {
   try {
     var code     = String((req.body && req.body.registration_code) || '').trim().toUpperCase();
     var username = String((req.body && req.body.username) || '').trim().toLowerCase();
@@ -986,7 +1034,9 @@ app.post('/api/register', async function(req, res) {
 
     if (!code)      return res.status(400).json({ ok: false, error: 'Registration code is required.' });
     if (!username)  return res.status(400).json({ ok: false, error: 'Username is required.' });
-    if (!password || password.length < 6) return res.status(400).json({ ok: false, error: 'Password must be at least 6 characters.' });
+    var pwError = passwordStrengthError(password);
+    if (pwError) return res.status(400).json({ ok: false, error: pwError });
+    if (await isPasswordBreached(password)) return res.status(400).json({ ok: false, error: 'That password has appeared in a known data breach. Please choose a different one.' });
 
     var all = loadAllStaff();
     var emp = all.find(function(e) { return e.registration_code === code && !e.registration_claimed; });
@@ -3820,7 +3870,9 @@ app.post('/api/users', requireLogin, requireRole('director'), async function(req
 
     if (!username)  return res.status(400).json({ ok: false, error: 'Username is required.' });
     if (!full_name) return res.status(400).json({ ok: false, error: 'Full name is required.' });
-    if (!password || password.length < 6) return res.status(400).json({ ok: false, error: 'Password must be at least 6 characters.' });
+    var pwError = passwordStrengthError(password);
+    if (pwError) return res.status(400).json({ ok: false, error: pwError });
+    if (await isPasswordBreached(password)) return res.status(400).json({ ok: false, error: 'That password has appeared in a known data breach. Please choose a different one.' });
 
     var exists = await pgPool.query('SELECT id FROM users WHERE username = $1', [username]);
     if (exists.rows.length) return res.status(400).json({ ok: false, error: 'Username already exists.' });
@@ -3866,7 +3918,9 @@ app.patch('/api/users/:id', requireLogin, requireRole('director'), async functio
 app.post('/api/users/:id/reset-password', requireLogin, requireRole('director'), async function(req, res) {
   try {
     var password = String(req.body.password || '');
-    if (!password || password.length < 6) return res.status(400).json({ ok: false, error: 'New password must be at least 6 characters.' });
+    var pwError = passwordStrengthError(password);
+    if (pwError) return res.status(400).json({ ok: false, error: pwError });
+    if (await isPasswordBreached(password)) return res.status(400).json({ ok: false, error: 'That password has appeared in a known data breach. Please choose a different one.' });
     var hash = await bcrypt.hash(password, 10);
     var r = await pgPool.query('UPDATE users SET password_hash=$1 WHERE id=$2 RETURNING id', [hash, req.params.id]);
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'User not found.' });
@@ -5722,7 +5776,7 @@ app.post('/api/acknowledge/:token/progress', async function(req, res) {
   }
 });
 
-app.post('/api/acknowledge/:token/sign', async function(req, res) {
+app.post('/api/acknowledge/:token/sign', authRateLimiter, async function(req, res) {
   try {
     var token = String(req.params.token || '');
     var b = req.body || {};
