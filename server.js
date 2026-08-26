@@ -4211,6 +4211,26 @@ app.delete('/api/agencies/:id', requireLogin, requireRole('director'), async fun
     if (!agencyResult.rows.length) return res.status(404).json({ ok: false, error: 'Agency not found.' });
     var agency = agencyResult.rows[0];
 
+    // agency_deployments.agency_id and deployment_attendance.agency_staff_id
+    // both have NO cascade (real booking/attendance history) — check up
+    // front rather than let the DELETE below fail with a raw Postgres
+    // FK-violation message, same reasoning as the site-delete guard.
+    var blockers = await pgPool.query(
+      `SELECT (SELECT COUNT(*)::int FROM agency_deployments WHERE agency_id = $1) AS deployments,
+              (SELECT COUNT(*)::int FROM deployment_attendance da JOIN agency_staff s ON s.id = da.agency_staff_id WHERE s.agency_id = $1) AS attendance`,
+      [agencyId]
+    );
+    var bl = blockers.rows[0];
+    if (bl.deployments > 0 || bl.attendance > 0) {
+      var blParts = [];
+      if (bl.deployments > 0) blParts.push(bl.deployments + ' deployment(s)');
+      if (bl.attendance > 0) blParts.push(bl.attendance + ' attendance record(s)');
+      return res.status(400).json({
+        ok: false,
+        error: 'Cannot delete this agency — ' + blParts.join(' and ') + ' still reference it. Remove those first, or archive the agency instead of deleting.'
+      });
+    }
+
     var staffRows = await pgPool.query('SELECT id FROM agency_staff WHERE agency_id = $1', [agencyId]);
     var customDocs = await pgPool.query(
       `SELECT d.agency_staff_id, d.filename FROM agency_staff_custom_documents d
@@ -4468,6 +4488,18 @@ app.delete('/api/agencies/:agencyId/staff/:id', requireLogin, requireRole('direc
     var r = await pgPool.query('SELECT * FROM agency_staff WHERE id = $1 AND agency_id = $2', [staffId, agencyId]);
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Guard not found.' });
     var guard = r.rows[0];
+
+    // deployment_attendance.agency_staff_id has NO cascade (it's real hours-
+    // worked/no-show history feeding the agency performance stats) — check
+    // for it up front rather than let the DELETE below fail with a raw
+    // Postgres FK-violation message, same reasoning as the site-delete guard.
+    var attendance = await pgPool.query('SELECT COUNT(*)::int AS n FROM deployment_attendance WHERE agency_staff_id = $1', [staffId]);
+    if (attendance.rows[0].n > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Cannot delete ' + guard.name + ' — ' + attendance.rows[0].n + ' deployment attendance record(s) reference them. Remove those attendance entries from the relevant deployment(s) first, or archive this guard instead of deleting.'
+      });
+    }
 
     var customDocs = await pgPool.query(
       'SELECT filename FROM agency_staff_custom_documents WHERE agency_staff_id = $1', [staffId]

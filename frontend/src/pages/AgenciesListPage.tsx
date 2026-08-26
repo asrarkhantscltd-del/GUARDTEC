@@ -111,7 +111,7 @@ export default function AgenciesListPage() {
       setAgencies(prev => prev.filter(a => a.id !== agency.id))
       toast.success(`${agency.name} and all its guards permanently deleted`)
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Network error")
+      toast.error(err instanceof ApiError ? err.message : "Network error", { duration: 8000 })
     } finally {
       setDeleteBusyId(null); setDeleteConfirmId(null)
     }

@@ -112,6 +112,7 @@ export default function AgencyDetailPage() {
   // Permanent agency delete — director only. Separate from archive above.
   const [deleteAgencyConfirm, setDeleteAgencyConfirm] = useState(false)
   const [deleteAgencyBusy, setDeleteAgencyBusy] = useState(false)
+  const [deleteAgencyError, setDeleteAgencyError] = useState("")
 
   // Add/edit guard (AgencyStaffForm handles its own drawer chrome + submit)
   const [staffFormOpen, setStaffFormOpen] = useState(false)
@@ -268,7 +269,11 @@ export default function AgencyDetailPage() {
       setStaff(prev => prev.filter(s => s.id !== guardId))
       toast.success("Guard permanently deleted")
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Network error")
+      // The row cell is too narrow for an inline error block (unlike the
+      // agency-delete dialog above) — a toast with the full specific
+      // message (e.g. "N attendance record(s) reference them") is the fit.
+      // sonner's default duration is short, so this one is held open longer.
+      toast.error(err instanceof ApiError ? err.message : "Failed to delete — network error.", { duration: 8000 })
     } finally {
       setGuardDeleting(false); setGuardDeleteConfirm(null)
     }
@@ -276,13 +281,14 @@ export default function AgencyDetailPage() {
 
   async function deleteAgency() {
     if (!id) return
-    setDeleteAgencyBusy(true)
+    setDeleteAgencyBusy(true); setDeleteAgencyError("")
     try {
       await api.delete(`/api/agencies/${id}`)
       toast.success("Agency and all its guards permanently deleted")
       navigate("/admin/agencies")
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Network error")
+      setDeleteAgencyError(err instanceof ApiError ? err.message : "Failed to delete — network error.")
+    } finally {
       setDeleteAgencyBusy(false)
     }
   }
@@ -343,7 +349,7 @@ export default function AgencyDetailPage() {
             {agency.status === "active" ? "Archive" : "Reactivate"}
           </button>
           {isDirector && (
-            <button onClick={() => setDeleteAgencyConfirm(true)}
+            <button onClick={() => { setDeleteAgencyConfirm(true); setDeleteAgencyError("") }}
               className="flex items-center gap-1.5 rounded-md border border-destructive/30 bg-background px-3 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10">
               <Trash2 className="h-3.5 w-3.5" />Delete
             </button>
@@ -359,8 +365,13 @@ export default function AgencyDetailPage() {
           <p className="text-sm text-destructive font-medium">
             Permanently delete "{agency.name}" and all {staff.length} of its cover guards? This cannot be undone.
           </p>
+          {deleteAgencyError && (
+            <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-sm text-destructive">
+              {deleteAgencyError}
+            </div>
+          )}
           <div className="flex justify-end gap-2">
-            <button onClick={() => setDeleteAgencyConfirm(false)} disabled={deleteAgencyBusy}
+            <button onClick={() => { setDeleteAgencyConfirm(false); setDeleteAgencyError("") }} disabled={deleteAgencyBusy}
               className="rounded px-3 py-1.5 text-xs border hover:bg-muted transition-colors disabled:opacity-50">Cancel</button>
             <button onClick={deleteAgency} disabled={deleteAgencyBusy}
               className="rounded px-3 py-1.5 text-xs bg-destructive text-white hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1">
