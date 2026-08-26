@@ -3,11 +3,12 @@ import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import {
   Building2, Plus, Search, ChevronRight, Users, ShieldCheck,
-  AlertTriangle, Archive, RotateCcw, Loader2, Mail, Phone,
+  AlertTriangle, Archive, RotateCcw, Loader2, Mail, Phone, Trash2,
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { api, ApiError } from "@/lib/api"
+import { useAuth } from "@/contexts/AuthContext"
 import CreateAgencyModal, { type CreatedAgencySummary } from "./CreateAgencyModal"
 
 // Real row shape from GET /api/agencies (server.js:3278) — plain SELECT +
@@ -60,6 +61,10 @@ export default function AgenciesListPage() {
   const [filter, setFilter] = useState<"all" | "active" | "archived">("active")
   const [createOpen, setCreateOpen] = useState(false)
   const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null)
+  const { user: me } = useAuth()
+  const isDirector = me?.role === "director"
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null)
 
   async function load() {
     try {
@@ -96,6 +101,19 @@ export default function AgenciesListPage() {
       toast.error(err instanceof ApiError ? err.message : "Network error")
     } finally {
       setArchiveBusyId(null)
+    }
+  }
+
+  async function deleteAgency(agency: AgencyRow) {
+    setDeleteBusyId(agency.id)
+    try {
+      await api.delete(`/api/agencies/${agency.id}`)
+      setAgencies(prev => prev.filter(a => a.id !== agency.id))
+      toast.success(`${agency.name} and all its guards permanently deleted`)
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Network error")
+    } finally {
+      setDeleteBusyId(null); setDeleteConfirmId(null)
     }
   }
 
@@ -201,16 +219,33 @@ export default function AgenciesListPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                    <div className="flex items-center justify-end gap-1">
-                      <button onClick={() => toggleArchive(a)} disabled={archiveBusyId === a.id}
-                        title={a.status === "active" ? "Archive agency" : "Reactivate agency"}
-                        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50">
-                        {archiveBusyId === a.id
-                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          : a.status === "active" ? <Archive className="h-3.5 w-3.5" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                      </button>
-                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                    </div>
+                    {deleteConfirmId === a.id ? (
+                      <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => deleteAgency(a)} disabled={deleteBusyId === a.id}
+                          className="rounded-md bg-destructive px-2 py-1 text-[10px] font-medium text-white hover:bg-destructive/90 disabled:opacity-50">
+                          {deleteBusyId === a.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Confirm"}
+                        </button>
+                        <button onClick={() => setDeleteConfirmId(null)}
+                          className="rounded-md border px-2 py-1 text-[10px] hover:bg-muted">Cancel</button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => toggleArchive(a)} disabled={archiveBusyId === a.id}
+                          title={a.status === "active" ? "Archive agency" : "Reactivate agency"}
+                          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50">
+                          {archiveBusyId === a.id
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : a.status === "active" ? <Archive className="h-3.5 w-3.5" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                        </button>
+                        {isDirector && (
+                          <button onClick={() => setDeleteConfirmId(a.id)} title="Delete permanently"
+                            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}

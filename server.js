@@ -4177,6 +4177,50 @@ app.post('/api/agencies/:id/reactivate', requireLogin, requirePermission('staff'
   }
 });
 
+// Permanent delete — director-only. Removes the agency, every one of its
+// guards (agency_staff cascades via agency_id ON DELETE CASCADE, which in
+// turn cascades unavailability/documents/custom_documents rows), the
+// agency's own login account, and every file on disk. Intended for purging
+// test/duplicate agencies, not routine offboarding — archive is that, and
+// stays available above.
+app.delete('/api/agencies/:id', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var agencyId = req.params.id;
+    var agencyResult = await pgPool.query('SELECT * FROM agencies WHERE id = $1', [agencyId]);
+    if (!agencyResult.rows.length) return res.status(404).json({ ok: false, error: 'Agency not found.' });
+    var agency = agencyResult.rows[0];
+
+    var staffRows = await pgPool.query('SELECT id FROM agency_staff WHERE agency_id = $1', [agencyId]);
+    var customDocs = await pgPool.query(
+      `SELECT d.agency_staff_id, d.filename FROM agency_staff_custom_documents d
+       JOIN agency_staff s ON s.id = d.agency_staff_id
+       WHERE s.agency_id = $1`, [agencyId]
+    );
+    var customDocsByStaff = {};
+    customDocs.rows.forEach(function(d) {
+      (customDocsByStaff[d.agency_staff_id] = customDocsByStaff[d.agency_staff_id] || []).push(d.filename);
+    });
+
+    await pgPool.query('DELETE FROM agencies WHERE id = $1', [agencyId]); // cascades agency_staff and its children
+    await pgPool.query('DELETE FROM users WHERE agency_id = $1', [agencyId]); // the agency's own login
+
+    staffRows.rows.forEach(function(s) {
+      purgeAgencyStaffFiles(s.id, customDocsByStaff[s.id]);
+    });
+
+    await pgPool.query(
+      `INSERT INTO audit_events (actor_email, action, object_type, object_id, object_name, metadata)
+       VALUES ($1,'AGENCY_DELETED','agency',$2,$3,$4)`,
+      [(req.user && req.user.username) || null, agency.id, agency.name,
+       JSON.stringify({ staff_count: staffRows.rows.length, status: agency.status })]
+    );
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── AGENCY STAFF (COVER GUARDS) ───────────────────────────────────────────────
 // Registration, documents, photo, bulk import and unavailability for guards
 // belonging to an agency. Every route here is gated by
@@ -4386,6 +4430,38 @@ app.post('/api/agencies/:agencyId/staff/:id/archive', requireLogin, requireOwnAg
       [req.params.id, req.params.agencyId]
     );
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Guard not found.' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Permanent delete — director-only. Unlike archive above, this actually
+// removes the row (and, via ON DELETE CASCADE, its unavailability/documents
+// rows) plus every file on disk. Intended for purging test/duplicate agency
+// guard records, not as a routine offboarding action — archive is that.
+app.delete('/api/agencies/:agencyId/staff/:id', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var agencyId = req.params.agencyId;
+    var staffId  = req.params.id;
+    var r = await pgPool.query('SELECT * FROM agency_staff WHERE id = $1 AND agency_id = $2', [staffId, agencyId]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Guard not found.' });
+    var guard = r.rows[0];
+
+    var customDocs = await pgPool.query(
+      'SELECT filename FROM agency_staff_custom_documents WHERE agency_staff_id = $1', [staffId]
+    );
+
+    await pgPool.query('DELETE FROM agency_staff WHERE id = $1', [staffId]); // cascades unavailability/documents/custom_documents rows
+
+    purgeAgencyStaffFiles(staffId, customDocs.rows.map(function(d) { return d.filename; }));
+
+    await pgPool.query(
+      `INSERT INTO audit_events (actor_email, action, object_type, object_id, object_name, metadata)
+       VALUES ($1,'AGENCY_STAFF_DELETED','agency_staff',$2,$3,$4)`,
+      [(req.user && req.user.username) || null, guard.id, guard.name, JSON.stringify({ agency_id: agencyId, status: guard.status })]
+    );
+
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -4691,6 +4767,32 @@ function findAgencyStaffDocFile(staffId, docType) {
     if (fs.existsSync(fp)) return fp;
   }
   return null;
+}
+
+// Deletes every file on disk for one agency_staff record: the per-staff
+// certificate-documents subfolder, the flat confidential-checks files, the
+// profile photo, and any custom-labeled documents (whose filenames the
+// caller must look up from agency_staff_custom_documents BEFORE deleting
+// that row, since they're not derivable from staffId alone). Paths are
+// built directly rather than through AGENCY_STAFF_DOCS_DIR — that name is
+// declared twice in this file for two different directories, and by
+// var-hoisting rules the second declaration wins everywhere, so relying on
+// it here would silently point at the wrong folder for the fixed-doc-type
+// certs.
+function purgeAgencyStaffFiles(staffId, customDocFilenames) {
+  try { fs.rmSync(path.join(BASE, 'agency-staff-documents', staffId), { recursive: true, force: true }); } catch (e) { /* already gone */ }
+  var exts = ['.pdf', '.jpg', '.jpeg', '.png', '.webp'];
+  ['creditCheckReport', 'socialMediaCheckReport'].forEach(function(docType) {
+    exts.forEach(function(ext) {
+      try { fs.unlinkSync(path.join(BASE, 'agency-staff-confidential-docs', staffId + '_' + docType + ext)); } catch (e) { /* already gone */ }
+    });
+  });
+  exts.forEach(function(ext) {
+    try { fs.unlinkSync(path.join(BASE, 'agency-staff-photos', staffId + ext)); } catch (e) { /* already gone */ }
+  });
+  (customDocFilenames || []).forEach(function(fn) {
+    try { fs.unlinkSync(path.join(BASE, 'agency-staff-custom-documents', fn)); } catch (e) { /* already gone */ }
+  });
 }
 
 app.get('/api/agencies/:agencyId/staff/:id/checks', requireLogin, requirePermission('staff'), async function(req, res) {
