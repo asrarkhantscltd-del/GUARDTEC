@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { fmtDate } from "@/lib/utils"
 import { api, ApiError } from "@/lib/api"
+import { useAuth } from "@/contexts/AuthContext"
 // Only the plain string-union types are reused from the shared types file —
 // they're just enum values (draft/published/archived, agency_staff/employee/
 // driver/manager) and match reality regardless of casing. The table-shaped
@@ -139,6 +140,8 @@ function MultiSelectList({
 }
 
 export default function EventInstructionsPanel() {
+  const { user: me } = useAuth()
+  const isDirector = me?.role === "director"
   const [instructions, setInstructions] = useState<EventInstructionRow[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [loading, setLoading] = useState(true)
@@ -521,10 +524,12 @@ export default function EventInstructionsPanel() {
                       {restoringId === instr.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArchiveRestore className="h-3.5 w-3.5" />}
                       Restore
                     </button>
-                    <button onClick={() => setConfirmDeleteId(instr.id)}
-                      className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors">
-                      <Trash2 className="h-3.5 w-3.5" />Delete
-                    </button>
+                    {isDirector && (
+                      <button onClick={() => setConfirmDeleteId(instr.id)}
+                        className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors">
+                        <Trash2 className="h-3.5 w-3.5" />Delete
+                      </button>
+                    )}
                   </>
                 ) : (
                   <button onClick={() => setConfirmArchiveId(instr.id)}

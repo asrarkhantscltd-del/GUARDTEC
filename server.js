@@ -5852,7 +5852,7 @@ app.post('/api/event-instructions/:id/restore', requireLogin, requirePermission(
 // acknowledgment_forms rows exist against it. A signed acknowledgment is
 // compliance/audit proof a guard was briefed — that must survive even if the
 // instruction itself is being cleaned up, so we refuse rather than cascade.
-app.delete('/api/event-instructions/:id', requireLogin, requirePermission('staff'), async function(req, res) {
+app.delete('/api/event-instructions/:id', requireLogin, requireRole('director'), async function(req, res) {
   try {
     var existing = await pgPool.query('SELECT id, status FROM event_instructions WHERE id = $1', [req.params.id]);
     if (!existing.rows.length) return res.status(404).json({ ok: false, error: 'Instruction not found.' });
