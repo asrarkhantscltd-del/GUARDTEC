@@ -837,7 +837,14 @@ export default function EventInstructionsPanel() {
                               <span className="ml-1.5 text-muted-foreground">({respondentTypeLabel(f.respondent_type)})</span>
                             </span>
                             {f.signed_at ? (
-                              <span className="flex items-center gap-1 text-success"><ShieldCheck className="h-3 w-3" />Signed</span>
+                              <>
+                                <span className="flex items-center gap-1 text-success"><ShieldCheck className="h-3 w-3" />Signed</span>
+                                <a href={`/api/event-instructions/${linksInstruction?.id}/acknowledgments/${f.id}/document`}
+                                  target="_blank" rel="noopener noreferrer"
+                                  className="text-primary underline underline-offset-2 hover:no-underline">
+                                  View signed copy
+                                </a>
+                              </>
                             ) : f.form_opened_at ? (
                               <span className="flex items-center gap-1 text-warning"><Eye className="h-3 w-3" />Opened</span>
                             ) : (

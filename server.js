@@ -5574,6 +5574,66 @@ app.get('/api/event-instructions/:id', requireLogin, requirePermission('staff'),
   }
 });
 
+// Renders one signed acknowledgment as a standalone, print-friendly HTML
+// page — the instruction content plus signer name/date/IP and the captured
+// signature image, all in one document. Opening it and using the browser's
+// Print → Save as PDF is the "copy of their signed document" a director can
+// keep/export; no PDF-generation dependency needed for that. 404s (rather
+// than a 200 with an "unsigned" message) if the form hasn't been signed yet,
+// so a stray link never looks like proof of something that didn't happen.
+app.get('/api/event-instructions/:id/acknowledgments/:formId/document', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var instrResult = await pgPool.query('SELECT * FROM event_instructions WHERE id = $1', [req.params.id]);
+    if (!instrResult.rows.length) return res.status(404).send('Instruction not found.');
+    var instruction = instrResult.rows[0];
+
+    var formResult = await pgPool.query(
+      'SELECT * FROM acknowledgment_forms WHERE id = $1 AND instruction_id = $2',
+      [req.params.formId, req.params.id]
+    );
+    if (!formResult.rows.length) return res.status(404).send('Acknowledgment record not found.');
+    var form = formResult.rows[0];
+    if (!form.signed_at) return res.status(404).send('This form has not been signed yet.');
+
+    var site = instruction.site_id ? await getSiteById(instruction.site_id) : null;
+    var signedAtStr = new Date(form.signed_at).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short' });
+    var signatureImg = form.signature_data && form.signature_data.indexOf('data:image') === 0
+      ? '<img src="' + form.signature_data + '" alt="Signature" style="max-width:320px;border:1px solid #ddd;border-radius:4px;padding:8px;background:#fff" />'
+      : '<p style="color:#888;font-style:italic">No signature image captured.</p>';
+
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(
+      '<!doctype html><html><head><meta charset="utf-8"><title>Signed Acknowledgment — ' + esc(instruction.title) + '</title>' +
+      '<style>body{font-family:Arial,Helvetica,sans-serif;max-width:720px;margin:32px auto;padding:0 20px;color:#1a1a1a;line-height:1.5}' +
+      'h1{font-size:20px;border-bottom:2px solid #c00;padding-bottom:10px}h2{font-size:14px;color:#555;margin-top:28px}' +
+      '.meta{background:#f7f7f7;border-radius:6px;padding:14px 18px;margin:16px 0;font-size:14px}' +
+      '.meta div{margin:3px 0}.instructions{border:1px solid #eee;border-radius:6px;padding:16px 18px;margin:10px 0}' +
+      '@media print{body{margin:0}}</style></head><body>' +
+      '<h1>Signed Acknowledgment</h1>' +
+      '<div class="meta">' +
+        '<div><strong>Instruction:</strong> ' + esc(instruction.title) + '</div>' +
+        (site ? '<div><strong>Site:</strong> ' + esc(site.name) + '</div>' : '') +
+        (instruction.event_date ? '<div><strong>Event date:</strong> ' + esc(instruction.event_date) + '</div>' : '') +
+        '<div><strong>Version acknowledged:</strong> ' + esc(form.instruction_version) + '</div>' +
+      '</div>' +
+      '<h2>Instructions as read and signed</h2>' +
+      '<div class="instructions">' + (instruction.instructions_html || '<p><em>No content.</em></p>') + '</div>' +
+      '<h2>Signature</h2>' +
+      '<div class="meta">' +
+        '<div><strong>Signed by:</strong> ' + esc(form.signer_name) + '</div>' +
+        '<div><strong>Signed at:</strong> ' + esc(signedAtStr) + '</div>' +
+        '<div><strong>IP address:</strong> ' + esc(form.ip_address || 'unknown') + '</div>' +
+      '</div>' +
+      signatureImg +
+      '</body></html>'
+    );
+  } catch (e) {
+    res.status(500).send('Error generating document: ' + e.message);
+  }
+});
+
 app.patch('/api/event-instructions/:id', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
     var existing = await pgPool.query('SELECT * FROM event_instructions WHERE id = $1', [req.params.id]);
