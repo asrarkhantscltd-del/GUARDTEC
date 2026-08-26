@@ -17,7 +17,10 @@ import type {
 // Mandatory training certs per the spec — "Manual Handling" and "Additional
 // Role-Specific Training" are explicitly marked conditional, so they're left
 // optional here rather than blocking submission for roles that don't need them.
-const MANDATORY_TRAINING_KEYS = ["siaCertificate", "firstAid", "fireAwareness", "conflictManagement", "bwcTraining", "cscsTest"]
+// bwcTraining (Body Worn Camera) is deliberately excluded — not every role
+// carries a BWC, so it's optional at submission; staff can still upload it
+// later from My Profile if it becomes relevant.
+const MANDATORY_TRAINING_KEYS = ["siaCertificate", "firstAid", "fireAwareness", "conflictManagement", "cscsTest"]
 
 function genId() { return Math.random().toString(36).slice(2, 10) }
 

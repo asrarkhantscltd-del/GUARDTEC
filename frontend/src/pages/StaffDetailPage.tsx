@@ -883,8 +883,12 @@ export default function StaffDetailPage() {
     bs7858:            !!(staff.bs7858?.completed),
     twoRefs:           !!(staff.references?.ref1?.status === "Satisfactory" && staff.references?.ref2?.status === "Satisfactory"),
     contractSigned:    !!(staff.contract && staff.contract.toLowerCase() !== "not signed"),
-    firstAid:          !!(training.firstAid?.completed),
-    conflictMgmt:      !!(training.conflictManagement?.completed),
+    // A staff member uploading their certificate (certUploaded) is real
+    // evidence for audit purposes, same as a manager manually ticking
+    // "completed" — checking `completed` alone meant an uploaded cert never
+    // flipped this checkpoint to pass.
+    firstAid:          !!(training.firstAid?.completed || training.firstAid?.certUploaded),
+    conflictMgmt:      !!(training.conflictManagement?.completed || training.conflictManagement?.certUploaded),
     siaPhysicalCopy:   !!(docs.siaPhysical?.uploaded),
     passportOnFile:    !!(docs.passport?.uploaded),
     addressProof:      !!(docs.proofOfAddress1?.uploaded),
