@@ -1238,7 +1238,7 @@ app.post('/api/staff/:id/photo', requireLogin, requireOwnStaffOrPermission('staf
 // ── STAFF DOCUMENT FILES ──────────────────────────────────────────────────────
 var ALLOWED_DOC_KEYS = [
   'siaPhysical','passport','drivingLicenceDoc','brpCard','proofOfAddress1','proofOfAddress2',
-  'p45','bankLetter','application','assignmentInstructions','cscsCard',
+  'p45','bankLetter','application','assignmentInstructions','cscsCard','dbsCertificate',
   'creditCheckReport','socialMediaCheckReport',
   'driverLicenceCopy','driverCpcCard','driverMedicalCert','driverTachoCard','driverDbsCheck','driverAssessmentReport'
 ];
@@ -1258,7 +1258,7 @@ var DOC_KEY_LABELS = {
   siaPhysical: 'SIA Licence copy', passport: 'Passport / Photo ID', drivingLicenceDoc: 'Driving Licence', brpCard: 'BRP Card',
   proofOfAddress1: 'Proof of Address', proofOfAddress2: 'Proof of Address',
   p45: 'P45/P60', bankLetter: 'Bank Letter', application: 'Application Form',
-  assignmentInstructions: 'Assignment Instructions', cscsCard: 'CSCS Card',
+  assignmentInstructions: 'Assignment Instructions', cscsCard: 'CSCS Card', dbsCertificate: 'DBS Certificate',
   creditCheckReport: 'Credit Check Report', socialMediaCheckReport: 'Social Media Check Report',
   driverLicenceCopy: 'Driving Licence (scan)',
   driverCpcCard: 'Driver CPC Card', driverMedicalCert: 'Driver Medical Certificate',

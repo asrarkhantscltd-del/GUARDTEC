@@ -171,6 +171,7 @@ export interface StaffMember {
   documents?: {
     siaPhysical?:      { uploaded?: boolean; date?: string }
     cscsCard?:         { uploaded?: boolean; date?: string }
+    dbsCertificate?:   { uploaded?: boolean; date?: string }
     passport?:         { uploaded?: boolean; date?: string }
     brpCard?:          { uploaded?: boolean; date?: string }
     drivingLicenceDoc?: { uploaded?: boolean; date?: string }

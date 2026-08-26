@@ -162,6 +162,7 @@ export const DOC_UPLOADS = [
   { key: "proofOfAddress2",   label: "Proof of Address (2)",  hint: "A DIFFERENT document type from Proof of Address (1)" },
   { key: "siaPhysical",       label: "SIA Licence Copy",      hint: "Front of your SIA licence card — PDF, JPG or PNG" },
   { key: "cscsCard",          label: "CSCS Card",             hint: "Front of your CSCS card — PDF, JPG or PNG" },
+  { key: "dbsCertificate",    label: "DBS Certificate",       hint: "Your DBS check certificate — PDF, JPG or PNG (optional)" },
 ]
 
 export function DocUploadRow({ label, hint, staffId, docKey, initialUploaded, onUploaded }: {

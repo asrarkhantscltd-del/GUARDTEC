@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
-import type { StaffMember, DiscRecord, TrainingItem, ExtraTrainingItem, TrainingRecord } from "@/types/staff"
+import type { StaffMember, DiscRecord, TrainingItem, ExtraTrainingItem, TrainingRecord, EmploymentHistoryEntry } from "@/types/staff"
 import { RoleChipPicker, parseRoles } from "@/components/ui/role-picker"
 import { daysUntil, fmtDate, discTypeLabels, discTypeCls } from "@/lib/utils"
 import { api, ApiError } from "@/lib/api"
@@ -1562,6 +1562,16 @@ export default function StaffDetailPage() {
                   </div>
                 </div>
               )}
+              {/* Certificate scan — separate from the text fields above; staff
+                  can self-upload this from My Profile, or a manager can add
+                  it here. Optional, same as the DBS check itself. */}
+              <div className="mt-3 border-t pt-3">
+                <DocRow icon={<Fingerprint className="h-4 w-4" />} label="DBS Certificate (scan)"
+                  status={docStatusOf(docs.dbsCertificate?.uploaded)} uploadedDate={docs.dbsCertificate?.date}
+                  note="Optional — the certificate file itself, separate from the check details above"
+                  viewUrl={docs.dbsCertificate?.uploaded ? `/api/staff/${id}/documents/dbsCertificate` : undefined}
+                  onEdit={canEdit ? () => openDocEdit("dbsCertificate") : undefined} {...docDeleteProps("dbsCertificate")} />
+              </div>
             </CardContent>
           </Card>
 
@@ -1720,6 +1730,48 @@ export default function StaffDetailPage() {
               })}
             </CardContent>
           </Card>
+
+          {/* ── 5-Year Employment History (BS 7858) ──
+              What staff actually fill in on the vetting wizard/My Profile,
+              lands in `employmentHistoryDetail`. This page never rendered it
+              anywhere — PendingReviewPage shows it only while a submission is
+              still pending approval, so once approved it became invisible.
+              Read-only here (it's the staff's own submitted record, same
+              treatment as References above); not to be confused with the
+              separate freeform "Employment History" notes list below. */}
+          {(staff.employmentHistoryDetail ?? []).length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Building2 className="h-4 w-4" />5-Year Employment History
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-4 pb-3 space-y-3">
+                {(staff.employmentHistoryDetail as EmploymentHistoryEntry[]).map(e => (
+                  <div key={e.id} className="rounded-lg border bg-muted/20 p-3 text-sm space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <p className="font-medium">{e.companyName} — {e.jobTitle}</p>
+                      {e.verificationStatus && (
+                        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                          e.verificationStatus === "verified" ? "bg-success/15 text-success"
+                          : e.verificationStatus === "unable-to-verify" ? "bg-destructive/15 text-destructive"
+                          : "bg-muted text-muted-foreground"
+                        }`}>{e.verificationStatus.replace("-", " ")}</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">{e.startDate || "?"} to {e.endDate || "present"}</p>
+                    {e.reasonForLeaving && <p className="text-xs text-muted-foreground">Reason for leaving: {e.reasonForLeaving}</p>}
+                    {(e.managerName || e.managerPhone || e.managerEmail) && (
+                      <p className="text-xs text-muted-foreground">
+                        Referee: {[e.managerName, e.managerJobTitle].filter(Boolean).join(", ")}
+                        {e.managerPhone && ` · ${e.managerPhone}`}{e.managerEmail && ` · ${e.managerEmail}`}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           {/* ── Employment History ── */}
           <Card>
