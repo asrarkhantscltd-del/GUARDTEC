@@ -194,19 +194,22 @@ export function DocUploadRow({ label, hint, staffId, docKey, initialUploaded, on
         <div className="text-sm font-medium">{label}</div>
         <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>
       </div>
-      <div className="shrink-0">
-        {uploaded ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-700 dark:bg-green-950/40 dark:text-green-400">
-            <ShieldCheck className="h-3 w-3" /> Uploaded
-          </span>
-        ) : (
-          <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted ${uploading ? "pointer-events-none opacity-50" : ""}`}>
-            {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-            {uploading ? "Uploading…" : "Upload"}
-            <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
-              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
-          </label>
+      <div className="flex shrink-0 items-center gap-2">
+        {uploaded && (
+          <>
+            <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-700 dark:bg-green-950/40 dark:text-green-400">
+              <ShieldCheck className="h-3 w-3" /> Uploaded
+            </span>
+            <a href={`/api/staff/${staffId}/documents/${docKey}`} target="_blank" rel="noopener noreferrer"
+              className="text-xs text-primary hover:underline">View</a>
+          </>
         )}
+        <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted ${uploading ? "pointer-events-none opacity-50" : ""}`}>
+          {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+          {uploading ? "Uploading…" : uploaded ? "Replace" : "Upload"}
+          <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
+        </label>
       </div>
     </div>
   )
