@@ -36,6 +36,8 @@ interface AgencyDetail {
 
 interface Site { id: string; name: string }
 
+interface AssignedGuard { id: string; name: string; job_role?: string }
+
 interface DeploymentRow {
   id: string
   agency_id: string
@@ -44,6 +46,7 @@ interface DeploymentRow {
   status: "scheduled" | "completed" | "cancelled"
   guard_count?: number | string
   site?: Site | null
+  staff?: AssignedGuard[]
 }
 
 interface PerformanceData {
@@ -515,7 +518,7 @@ export default function AgencyDetailPage() {
                 <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
                   <th className="px-4 py-3">Event date</th>
                   <th className="px-4 py-3">Site</th>
-                  <th className="px-4 py-3">Guards</th>
+                  <th className="px-4 py-3">Guards deployed</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3 w-20"></th>
                 </tr>
@@ -527,7 +530,17 @@ export default function AgencyDetailPage() {
                     <td className="px-4 py-3">
                       <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-muted-foreground" />{d.site?.name ?? d.site_id}</span>
                     </td>
-                    <td className="px-4 py-3">{Number(d.guard_count ?? 0)}</td>
+                    <td className="px-4 py-3">
+                      {(d.staff ?? []).length > 0 ? (
+                        <div className="flex flex-wrap gap-1 max-w-xs">
+                          {(d.staff ?? []).map(s => (
+                            <span key={s.id} className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium">{s.name}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">No guards assigned</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium border capitalize ${DEPLOYMENT_STATUS_STYLE[d.status] ?? "bg-muted text-muted-foreground border-border"}`}>
                         {d.status}

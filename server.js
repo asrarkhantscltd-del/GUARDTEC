@@ -5193,9 +5193,21 @@ app.get('/api/agencies/:agencyId/deployments', requireLogin, requireOwnAgencyOrP
     if (req.query.date_to)   { params.push(req.query.date_to);   conditions.push('d.event_date <= $' + params.length); }
     if (req.query.status)    { params.push(req.query.status);    conditions.push('d.status = $' + params.length); }
 
+    // staff is a json_agg of each assigned guard's name/role/hours, not just
+    // a count — every page listing deployments (this one, the admin
+    // cross-agency list, AgencyDetailPage) used to show only guard_count,
+    // with no way to see WHO was actually assigned short of re-opening the
+    // deployment's edit form. That's the "who's deployed where" confusion
+    // this was built to fix.
     var result = await pgPool.query(
-      'SELECT d.*, COUNT(a.id) AS guard_count FROM agency_deployments d ' +
+      "SELECT d.*, COUNT(a.id) AS guard_count, " +
+      "COALESCE(json_agg(json_build_object(" +
+      "  'id', s.id, 'name', s.name, 'job_role', s.job_role, " +
+      "  'scheduled_hours', a.scheduled_hours, 'start_time', a.start_time, 'end_time', a.end_time, 'attended', a.attended" +
+      ") ORDER BY s.name) FILTER (WHERE a.id IS NOT NULL), '[]') AS staff " +
+      'FROM agency_deployments d ' +
       'LEFT JOIN deployment_attendance a ON a.deployment_id = d.id ' +
+      'LEFT JOIN agency_staff s ON s.id = a.agency_staff_id ' +
       'WHERE ' + conditions.join(' AND ') + ' GROUP BY d.id ORDER BY d.event_date DESC',
       params
     );
@@ -5498,9 +5510,15 @@ app.get('/api/admin/deployments', requireLogin, requirePermission('staff'), asyn
     if (req.query.date_to)   { params.push(req.query.date_to);   conditions.push('d.event_date <= $' + params.length); }
     if (req.query.agency_id) { params.push(req.query.agency_id); conditions.push('d.agency_id = $' + params.length); }
 
-    var sql = 'SELECT d.*, a.name AS agency_name, COUNT(att.id) AS guard_count FROM agency_deployments d ' +
+    var sql = "SELECT d.*, a.name AS agency_name, COUNT(att.id) AS guard_count, " +
+      "COALESCE(json_agg(json_build_object(" +
+      "  'id', s.id, 'name', s.name, 'job_role', s.job_role, " +
+      "  'scheduled_hours', att.scheduled_hours, 'start_time', att.start_time, 'end_time', att.end_time, 'attended', att.attended" +
+      ") ORDER BY s.name) FILTER (WHERE att.id IS NOT NULL), '[]') AS staff " +
+      'FROM agency_deployments d ' +
       'JOIN agencies a ON a.id = d.agency_id ' +
-      'LEFT JOIN deployment_attendance att ON att.deployment_id = d.id' +
+      'LEFT JOIN deployment_attendance att ON att.deployment_id = d.id ' +
+      'LEFT JOIN agency_staff s ON s.id = att.agency_staff_id' +
       (conditions.length ? ' WHERE ' + conditions.join(' AND ') : '') +
       ' GROUP BY d.id, a.name ORDER BY d.event_date DESC';
 
