@@ -11,7 +11,7 @@ const rateLimit    = require('express-rate-limit');
 const { Pool }     = require('pg');
 
 const app  = express();
-app.set('trust proxy', true); // behind Caddy + frontend nginx in production; needed for express-rate-limit to read X-Forwarded-For correctly
+app.set('trust proxy', 2); // behind Caddy + frontend nginx in production (2 hops); needed for express-rate-limit to read X-Forwarded-For correctly
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const BASE_URL = process.env.BASE_URL || ('http://localhost:' + PORT); // link base for acknowledgment-form URLs (Feature 2)
 
