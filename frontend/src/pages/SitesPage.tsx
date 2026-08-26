@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
-import { api } from "@/lib/api"
+import { api, ApiError } from "@/lib/api"
 import { initials, AV_COLORS } from "@/lib/utils"
 import {
   MapPin, Plus, Pencil, Trash2, X, Building2, Car, Layers,
@@ -138,6 +138,8 @@ export default function SitesPage() {
   const [siteSaving, setSiteSaving]   = useState(false)
   const [siteError, setSiteError]     = useState("")
   const [deleteId, setDeleteId]       = useState<string | null>(null)
+  const [deleteSiteError, setDeleteSiteError] = useState("")
+  const [deleteSiteBusy, setDeleteSiteBusy] = useState(false)
 
   // Welfare panel
   const [welfareSite, setWelfareSite]       = useState<Site | null>(null)
@@ -214,14 +216,19 @@ export default function SitesPage() {
 
   async function deleteSite() {
     if (!deleteId) return
+    setDeleteSiteBusy(true); setDeleteSiteError("")
     try {
       await api.delete(`/api/sites/${deleteId}`)
       setDeleteId(null)
       await loadSites()
       toast.success("Site deleted")
-    } catch {
-      toast.error("Failed to delete site")
-      setDeleteId(null)
+    } catch (err) {
+      // Kept open (not toasted-and-closed) so the specific reason — e.g.
+      // "2 deployment(s) and 1 event instruction(s) still reference it" —
+      // stays visible next to the Delete button instead of flashing by.
+      setDeleteSiteError(err instanceof ApiError ? err.message : "Failed to delete site — network error.")
+    } finally {
+      setDeleteSiteBusy(false)
     }
   }
 
@@ -599,7 +606,7 @@ export default function SitesPage() {
                     className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors" title="Edit site">
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
-                  <button onClick={() => setDeleteId(site.id)}
+                  <button onClick={() => { setDeleteId(site.id); setDeleteSiteError("") }}
                     className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors" title="Delete site">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -1199,9 +1206,16 @@ export default function SitesPage() {
                 </p>
               </div>
             </div>
+            {deleteSiteError && (
+              <div className="rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2.5 text-sm text-destructive">
+                {deleteSiteError}
+              </div>
+            )}
             <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setDeleteId(null)}>Cancel</Button>
-              <Button variant="destructive" className="flex-1" onClick={deleteSite}>Delete</Button>
+              <Button variant="outline" className="flex-1" onClick={() => { setDeleteId(null); setDeleteSiteError("") }}>Cancel</Button>
+              <Button variant="destructive" className="flex-1" onClick={deleteSite} disabled={deleteSiteBusy}>
+                {deleteSiteBusy ? "Deleting…" : "Delete"}
+              </Button>
             </div>
           </div>
         </div>
