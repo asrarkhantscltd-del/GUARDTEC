@@ -2669,8 +2669,29 @@ app.patch('/api/sites/:id', requireLogin, requirePermission('sites'), async func
 app.delete('/api/sites/:id', requireLogin, requirePermission('sites'), async function(req, res) {
   try {
     // ON DELETE CASCADE on site_documents/site_welfare_items/site_staff_assignments
-    // handles the DB-side child rows; the physical docs directory is a
-    // filesystem concern the DB knows nothing about, so it's still removed here.
+    // handles those DB-side child rows automatically, but agency_deployments
+    // and event_instructions are deliberately NOT cascaded (see their FK
+    // definitions above) — a deployment is a real booking record and an
+    // instruction can carry signed acknowledgment_forms, which is compliance
+    // proof. Rather than let the DELETE fail with a raw FK-violation error,
+    // check for them up front and explain exactly what's blocking, the same
+    // way the incident-report and event-instruction delete routes do.
+    var blockers = await pgPool.query(
+      `SELECT (SELECT COUNT(*)::int FROM agency_deployments WHERE site_id = $1) AS deployments,
+              (SELECT COUNT(*)::int FROM event_instructions WHERE site_id = $1) AS instructions`,
+      [req.params.id]
+    );
+    var b = blockers.rows[0];
+    if (b.deployments > 0 || b.instructions > 0) {
+      var parts = [];
+      if (b.deployments > 0) parts.push(b.deployments + ' deployment(s)');
+      if (b.instructions > 0) parts.push(b.instructions + ' event instruction(s)');
+      return res.status(400).json({
+        ok: false,
+        error: 'Cannot delete this site — ' + parts.join(' and ') + ' still reference it. Delete or reassign those first (an event instruction with signed acknowledgments must be archived, not deleted, to keep the compliance record).'
+      });
+    }
+
     await pgPool.query('DELETE FROM sites WHERE id = $1', [req.params.id]);
     var docsDir = path.join(SITE_DOCS_DIR, req.params.id);
     if (fs.existsSync(docsDir)) {
@@ -5631,6 +5652,28 @@ app.get('/api/event-instructions/:id/acknowledgments/:formId/document', requireL
     );
   } catch (e) {
     res.status(500).send('Error generating document: ' + e.message);
+  }
+});
+
+// Cancels an un-signed acknowledgment link — e.g. sent to the wrong person,
+// or the guard never opened it and a fresh link is needed. Blocked once
+// signed_at is set: a signed form is compliance proof (same reasoning as
+// the event-instruction permanent-delete guard above), so this route can
+// only ever remove links nobody has actually acknowledged yet.
+app.delete('/api/event-instructions/:id/acknowledgments/:formId', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var formResult = await pgPool.query(
+      'SELECT signed_at FROM acknowledgment_forms WHERE id = $1 AND instruction_id = $2',
+      [req.params.formId, req.params.id]
+    );
+    if (!formResult.rows.length) return res.status(404).json({ ok: false, error: 'Acknowledgment link not found.' });
+    if (formResult.rows[0].signed_at) {
+      return res.status(400).json({ ok: false, error: 'This link has already been signed and is a compliance record — it cannot be deleted.' });
+    }
+    await pgPool.query('DELETE FROM acknowledgment_forms WHERE id = $1', [req.params.formId]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 

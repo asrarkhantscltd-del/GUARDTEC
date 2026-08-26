@@ -174,6 +174,7 @@ export default function EventInstructionsPanel() {
   const [linksInstruction, setLinksInstruction] = useState<EventInstructionRow | null>(null)
   const [existingForms, setExistingForms] = useState<AckFormSummary[]>([])
   const [linksLoading, setLinksLoading] = useState(false)
+  const [deletingLinkId, setDeletingLinkId] = useState<string | null>(null)
   const [audience, setAudience] = useState<Audience>("staff")
 
   const [allStaff, setAllStaff] = useState<StaffOption[]>([])
@@ -389,6 +390,20 @@ export default function EventInstructionsPanel() {
     }
   }
   function closeLinks() { setLinksInstruction(null); setExistingForms([]); setGeneratedLinks([]) }
+
+  async function deleteUnsignedLink(formId: string) {
+    if (!linksInstruction) return
+    setDeletingLinkId(formId)
+    try {
+      await api.delete(`/api/event-instructions/${linksInstruction.id}/acknowledgments/${formId}`)
+      setExistingForms(prev => prev.filter(f => f.id !== formId))
+      toast.success("Link deleted")
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Network error")
+    } finally {
+      setDeletingLinkId(null)
+    }
+  }
 
   useEffect(() => {
     if (!agencyPick) { setAgencyGuards([]); setGuardPicked(new Set()); setDeployments([]); setDeploymentPick(""); return }
@@ -845,10 +860,19 @@ export default function EventInstructionsPanel() {
                                   View signed copy
                                 </a>
                               </>
-                            ) : f.form_opened_at ? (
-                              <span className="flex items-center gap-1 text-warning"><Eye className="h-3 w-3" />Opened</span>
                             ) : (
-                              <span className="flex items-center gap-1 text-muted-foreground"><Clock className="h-3 w-3" />Pending</span>
+                              <>
+                                {f.form_opened_at ? (
+                                  <span className="flex items-center gap-1 text-warning"><Eye className="h-3 w-3" />Opened</span>
+                                ) : (
+                                  <span className="flex items-center gap-1 text-muted-foreground"><Clock className="h-3 w-3" />Pending</span>
+                                )}
+                                <button onClick={() => deleteUnsignedLink(f.id)} disabled={deletingLinkId === f.id}
+                                  title="Delete this link"
+                                  className="rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50">
+                                  {deletingLinkId === f.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                                </button>
+                              </>
                             )}
                           </div>
                         ))}
