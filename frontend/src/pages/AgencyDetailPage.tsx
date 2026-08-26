@@ -123,6 +123,10 @@ export default function AgencyDetailPage() {
   const [guardDeleteConfirm, setGuardDeleteConfirm] = useState<string | null>(null)
   const [guardDeleting, setGuardDeleting] = useState(false)
 
+  // Permanent deployment delete — director only.
+  const [deploymentDeleteConfirm, setDeploymentDeleteConfirm] = useState<string | null>(null)
+  const [deploymentDeleting, setDeploymentDeleting] = useState(false)
+
   // Messages — this is what a click-through from an agency-message
   // notification lands on (see DashboardLayout's goToNotification).
   const [messages, setMessages] = useState<AgencyMessage[]>([])
@@ -276,6 +280,20 @@ export default function AgencyDetailPage() {
       toast.error(err instanceof ApiError ? err.message : "Failed to delete — network error.", { duration: 8000 })
     } finally {
       setGuardDeleting(false); setGuardDeleteConfirm(null)
+    }
+  }
+
+  async function deleteDeployment(depId: string) {
+    if (!id) return
+    setDeploymentDeleting(true)
+    try {
+      await api.delete(`/api/agencies/${id}/deployments/${depId}`)
+      setDeployments(prev => prev.filter(d => d.id !== depId))
+      toast.success("Deployment permanently deleted")
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Failed to delete — network error.", { duration: 8000 })
+    } finally {
+      setDeploymentDeleting(false); setDeploymentDeleteConfirm(null)
     }
   }
 
@@ -481,9 +499,10 @@ export default function AgencyDetailPage() {
         </div>
       )}
 
-      {/* Deployments tab — read-only here; deployments are created from the
-          agency's own login (AgencyPortalDeploymentsPage), matching the
-          plan's Admin vs Agency Admin UI split. */}
+      {/* Deployments tab — created from the agency's own login
+          (AgencyPortalDeploymentsPage), matching the plan's Admin vs Agency
+          Admin UI split. Permanent delete (director only) lives here though,
+          same as agency/guard delete elsewhere on this admin-side page. */}
       {activeTab === "deployments" && (
         deployments.length === 0 ? (
           <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
@@ -498,6 +517,7 @@ export default function AgencyDetailPage() {
                   <th className="px-4 py-3">Site</th>
                   <th className="px-4 py-3">Guards</th>
                   <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3 w-20"></th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -512,6 +532,27 @@ export default function AgencyDetailPage() {
                       <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium border capitalize ${DEPLOYMENT_STATUS_STYLE[d.status] ?? "bg-muted text-muted-foreground border-border"}`}>
                         {d.status}
                       </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {isDirector && (
+                        deploymentDeleteConfirm === d.id ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <button onClick={() => deleteDeployment(d.id)} disabled={deploymentDeleting}
+                              className="rounded-md bg-destructive px-2 py-1 text-[10px] font-medium text-white hover:bg-destructive/90 disabled:opacity-50">
+                              {deploymentDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : "Confirm"}
+                            </button>
+                            <button onClick={() => setDeploymentDeleteConfirm(null)}
+                              className="rounded-md border px-2 py-1 text-[10px] hover:bg-muted">Cancel</button>
+                          </div>
+                        ) : (
+                          <div className="flex justify-end">
+                            <button onClick={() => setDeploymentDeleteConfirm(d.id)} title="Delete permanently"
+                              className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        )
+                      )}
                     </td>
                   </tr>
                 ))}

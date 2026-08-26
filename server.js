@@ -5279,6 +5279,43 @@ app.patch('/api/agencies/:agencyId/deployments/:id', requireLogin, requireOwnAge
   }
 });
 
+// Permanent delete — director only. Cancelling a deployment (PATCH status
+// above) is the routine action; this actually removes the row. Attendance
+// rows cascade automatically (deployment_attendance.deployment_id ON DELETE
+// CASCADE), but acknowledgment_forms.deployment_id does NOT — a signed
+// acknowledgment for this deployment is compliance proof, same reasoning as
+// everywhere else this pattern is used (event-instruction delete, site
+// delete). Checked up front rather than surfacing a raw FK-violation error.
+app.delete('/api/agencies/:agencyId/deployments/:id', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var agencyId = req.params.agencyId;
+    var depId = req.params.id;
+    var depResult = await pgPool.query('SELECT * FROM agency_deployments WHERE id = $1 AND agency_id = $2', [depId, agencyId]);
+    if (!depResult.rows.length) return res.status(404).json({ ok: false, error: 'Deployment not found.' });
+
+    var acks = await pgPool.query('SELECT COUNT(*)::int AS n FROM acknowledgment_forms WHERE deployment_id = $1', [depId]);
+    if (acks.rows[0].n > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Cannot delete this deployment — ' + acks.rows[0].n + ' acknowledgment link(s)/signature(s) reference it. Delete any un-signed links first (a signed one cannot be removed); mark the deployment cancelled instead if it never happened.'
+      });
+    }
+
+    await pgPool.query('DELETE FROM agency_deployments WHERE id = $1', [depId]); // cascades deployment_attendance
+
+    await pgPool.query(
+      `INSERT INTO audit_events (actor_email, action, object_type, object_id, object_name, metadata)
+       VALUES ($1,'DEPLOYMENT_DELETED','agency_deployment',$2,$3,$4)`,
+      [(req.user && req.user.username) || null, depId, depResult.rows[0].event_date,
+       JSON.stringify({ agency_id: agencyId, site_id: depResult.rows[0].site_id, status: depResult.rows[0].status })]
+    );
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // Agency admin's "I understand + I've briefed my staff" confirmation — distinct
 // from an individual guard signing an acknowledgment form (that's a separate
 // polymorphic table for a later stage); this one fact belongs on the
