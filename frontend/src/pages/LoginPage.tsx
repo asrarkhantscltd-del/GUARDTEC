@@ -64,7 +64,7 @@ export default function LoginPage() {
 
   return (
     <div
-      className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-10"
+      className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-3 sm:py-10"
       style={{ background: "linear-gradient(160deg, #0c0e12 0%, #111318 30%, #0a0203 100%)" }}
     >
       {/* ── Animated background effects ─────────────────────────────────── */}
@@ -108,7 +108,7 @@ export default function LoginPage() {
 
       {/* ── Logo — large and centred ────────────────────────────────────── */}
       <motion.div
-        className="relative z-10 mb-8"
+        className="relative z-10 mb-3 sm:mb-8"
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
@@ -117,20 +117,20 @@ export default function LoginPage() {
         <img
           src="/logo-on-dark.svg"
           alt="GuardTec Security & Patrol"
-          className="relative z-10 h-auto w-72 sm:w-80 md:w-96"
+          className="relative z-10 h-auto w-44 sm:w-80 md:w-96"
         />
       </motion.div>
 
       {/* ── Tagline ─────────────────────────────────────────────────────── */}
-      <motion.div className="relative z-10 mb-10 text-center" {...fade(0.2)}>
-        <div className="mb-4 flex items-center justify-center gap-3">
+      <motion.div className="relative z-10 mb-4 sm:mb-10 text-center" {...fade(0.2)}>
+        <div className="mb-1.5 sm:mb-4 flex items-center justify-center gap-3">
           <div className="h-px w-10 bg-[#E40613]" />
           <span className="font-display text-[10px] font-bold uppercase tracking-[0.5em] text-[#E40613]">
             Compliance Portal
           </span>
           <div className="h-px w-10 bg-[#E40613]" />
         </div>
-        <h1 className="font-display text-3xl sm:text-4xl md:text-5xl font-black tracking-wider text-white uppercase leading-tight">
+        <h1 className="font-display text-xl sm:text-4xl md:text-5xl font-black tracking-wider text-white uppercase leading-tight">
           Smart Security.{" "}
           <span className="text-[#E40613]">Real</span> Response.
         </h1>
@@ -138,7 +138,7 @@ export default function LoginPage() {
 
       {/* ── Login card — glass panel ────────────────────────────────────── */}
       <motion.div
-        className="relative z-10 w-full max-w-md rounded-2xl border border-white/[0.08] bg-white/[0.04] p-8 shadow-2xl backdrop-blur-xl"
+        className="relative z-10 w-full max-w-md rounded-2xl border border-white/[0.08] bg-white/[0.04] p-4 sm:p-8 shadow-2xl backdrop-blur-xl"
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.7, delay: 0.35, ease: [0.16, 1, 0.3, 1] }}
@@ -147,7 +147,7 @@ export default function LoginPage() {
         <div className="absolute top-0 left-6 right-6 h-px bg-gradient-to-r from-transparent via-[#E40613]/50 to-transparent" />
 
         {/* Badge */}
-        <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[#E40613]/25 bg-[#E40613]/10 px-3.5 py-1.5">
+        <div className="mb-2.5 sm:mb-5 inline-flex items-center gap-2 rounded-full border border-[#E40613]/25 bg-[#E40613]/10 px-3.5 py-1.5">
           <span className="relative flex h-2 w-2">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#E40613] opacity-75" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-[#E40613]" />
@@ -158,15 +158,15 @@ export default function LoginPage() {
         </div>
 
         {/* Heading */}
-        <h2 className="font-display text-2xl font-bold tracking-wider text-white uppercase mb-1.5">
+        <h2 className="font-display text-lg sm:text-2xl font-bold tracking-wider text-white uppercase mb-1 sm:mb-1.5">
           Welcome Back
         </h2>
-        <p className="mb-6 text-sm text-white/40">
+        <p className="mb-3 sm:mb-6 text-sm text-white/40">
           Sign in to your compliance dashboard
         </p>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-2.5 sm:space-y-4">
           {error && (
             <motion.div
               className="flex items-start gap-2.5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400"
@@ -178,7 +178,7 @@ export default function LoginPage() {
             </motion.div>
           )}
 
-          <div className="space-y-1.5">
+          <div className="space-y-1 sm:space-y-1.5">
             <Label htmlFor="username" className="text-sm font-medium text-white/70">Username</Label>
             <Input
               id="username"
@@ -186,12 +186,12 @@ export default function LoginPage() {
               onChange={e => setUsername(e.target.value)}
               placeholder="Enter your username"
               autoComplete="username"
-              className="h-11 rounded-xl border-white/10 bg-white/[0.06] text-white placeholder:text-white/25 focus:border-[#E40613]/50 focus:ring-[#E40613]/30"
+              className="h-9 sm:h-11 rounded-xl border-white/10 bg-white/[0.06] text-white placeholder:text-white/25 focus:border-[#E40613]/50 focus:ring-[#E40613]/30"
               required
             />
           </div>
 
-          <div className="space-y-1.5">
+          <div className="space-y-1 sm:space-y-1.5">
             <Label htmlFor="password" className="text-sm font-medium text-white/70">Password</Label>
             <div className="relative">
               <Input
@@ -201,7 +201,7 @@ export default function LoginPage() {
                 onChange={e => setPassword(e.target.value)}
                 placeholder="Enter your password"
                 autoComplete="current-password"
-                className="h-11 rounded-xl border-white/10 bg-white/[0.06] text-white placeholder:text-white/25 pr-10 focus:border-[#E40613]/50 focus:ring-[#E40613]/30"
+                className="h-9 sm:h-11 rounded-xl border-white/10 bg-white/[0.06] text-white placeholder:text-white/25 pr-10 focus:border-[#E40613]/50 focus:ring-[#E40613]/30"
                 required
               />
               <button type="button" tabIndex={-1}
@@ -214,7 +214,7 @@ export default function LoginPage() {
 
           <Button
             type="submit"
-            className="mt-2 h-11 w-full rounded-xl bg-[#E40613] font-display text-sm font-semibold uppercase tracking-wider text-white hover:bg-[#c80511] transition-colors"
+            className="mt-1 sm:mt-2 h-9 sm:h-11 w-full rounded-xl bg-[#E40613] font-display text-sm font-semibold uppercase tracking-wider text-white hover:bg-[#c80511] transition-colors"
             disabled={submitting}
           >
             {submitting
@@ -223,14 +223,14 @@ export default function LoginPage() {
           </Button>
         </form>
 
-        <div className="mt-5 rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 py-3">
+        <div className="mt-2.5 sm:mt-5 rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 py-2 sm:py-3">
           <p className="text-xs font-semibold text-white/50">Forgotten your password?</p>
           <p className="mt-0.5 text-[11px] leading-relaxed text-white/25">
             Contact your Director or System Administrator — they can reset it via the Team Access portal.
           </p>
         </div>
 
-        <p className="mt-4 text-center text-[13px] text-white/40">
+        <p className="mt-2.5 sm:mt-4 text-center text-[13px] text-white/40">
           New staff member?{" "}
           <Link to="/register" className="font-semibold text-[#E40613] hover:text-[#ff2438] hover:underline transition-colors">
             Set up your account
@@ -240,29 +240,29 @@ export default function LoginPage() {
 
       {/* ── Certification badges ────────────────────────────────────────── */}
       <motion.div
-        className="relative z-10 mt-10 flex flex-wrap items-center justify-center gap-3"
+        className="relative z-10 mt-4 sm:mt-10 flex flex-wrap items-center justify-center gap-2 sm:gap-3"
         {...fade(0.7)}
       >
         {CERTS.map(({ icon: Icon, label }, i) => (
           <motion.div
             key={label}
-            className="flex items-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.03] px-4 py-2 backdrop-blur-sm"
+            className="flex items-center gap-1.5 sm:gap-2 rounded-full border border-white/[0.06] bg-white/[0.03] px-2.5 sm:px-4 py-1 sm:py-2 backdrop-blur-sm"
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.8 + i * 0.1, ease: [0.16, 1, 0.3, 1] }}
           >
-            <Icon className="h-3.5 w-3.5 text-[#E40613]" />
-            <span className="text-[11px] font-medium text-white/50">{label}</span>
+            <Icon className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-[#E40613]" />
+            <span className="text-[10px] sm:text-[11px] font-medium text-white/50">{label}</span>
           </motion.div>
         ))}
       </motion.div>
 
       {/* ── Services row ────────────────────────────────────────────────── */}
       <motion.div
-        className="relative z-10 mt-10 w-full max-w-3xl"
+        className="relative z-10 mt-4 sm:mt-10 w-full max-w-3xl"
         {...fade(0.95)}
       >
-        <div className="mb-4 flex items-center justify-center gap-3">
+        <div className="mb-2 sm:mb-4 flex items-center justify-center gap-3">
           <div className="h-px flex-1 max-w-20 bg-white/[0.06]" />
           <span className="font-display text-[9px] font-medium uppercase tracking-[0.3em] text-white/20">
             Our Services
@@ -270,34 +270,36 @@ export default function LoginPage() {
           <div className="h-px flex-1 max-w-20 bg-white/[0.06]" />
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
           {SERVICES.map(({ icon: Icon, title, desc }, i) => (
             <motion.div
               key={title}
-              className="flex flex-col items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.03] p-4 text-center backdrop-blur-sm"
+              className="flex flex-col items-center gap-1 sm:gap-2 rounded-xl border border-white/[0.06] bg-white/[0.03] p-2 sm:p-4 text-center backdrop-blur-sm"
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 1.0 + i * 0.08, ease: [0.16, 1, 0.3, 1] }}
             >
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#E40613]/10">
-                <Icon className="h-4 w-4 text-[#E40613]" />
+              <div className="flex h-7 w-7 sm:h-9 sm:w-9 items-center justify-center rounded-lg bg-[#E40613]/10">
+                <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-[#E40613]" />
               </div>
-              <p className="text-xs font-semibold text-white/70">{title}</p>
-              <p className="text-[10px] leading-tight text-white/30">{desc}</p>
+              <p className="text-[11px] sm:text-xs font-semibold text-white/70">{title}</p>
+              <p className="hidden sm:block text-[10px] leading-tight text-white/30">{desc}</p>
             </motion.div>
           ))}
         </div>
       </motion.div>
 
       {/* ── Footer — company info ───────────────────────────────────────── */}
-      <motion.div className="relative z-10 mt-10 text-center space-y-2" {...fade(1.1)}>
+      <motion.div className="relative z-10 mt-4 sm:mt-10 text-center space-y-1 sm:space-y-2" {...fade(1.1)}>
         <div className="flex items-center justify-center gap-2 text-white/20">
           <ShieldCheck className="h-3.5 w-3.5 text-[#E40613]/60" />
           <span className="font-display text-[9px] font-medium tracking-[0.3em] uppercase">
             GuardTec Security & Patrol Ltd
           </span>
         </div>
-        <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1 text-[10px] text-white/20">
+        {/* Full contact row — skipped on mobile, it's the least essential
+            part of this screen and wraps to several lines at narrow widths */}
+        <div className="hidden sm:flex flex-wrap items-center justify-center gap-x-5 gap-y-1 text-[10px] text-white/20">
           <span className="flex items-center gap-1.5">
             <MapPin className="h-3 w-3" /> 268 Bath Road, Slough, SL1 4DE
           </span>
@@ -311,10 +313,10 @@ export default function LoginPage() {
             <Globe className="h-3 w-3" /> guardtec-security.co.uk
           </span>
         </div>
-        <p className="text-xs text-[#E40613] font-display font-semibold tracking-wider">
+        <p className="text-[11px] sm:text-xs text-[#E40613] font-display font-semibold tracking-wider">
           © {new Date().getFullYear()} GuardTec Security Ltd
         </p>
-        <p className="text-[11px] text-[#E40613] font-display font-semibold uppercase tracking-[0.25em]">
+        <p className="hidden sm:block text-[11px] text-[#E40613] font-display font-semibold uppercase tracking-[0.25em]">
           Designed &amp; Built by Asrar Khan
         </p>
       </motion.div>
