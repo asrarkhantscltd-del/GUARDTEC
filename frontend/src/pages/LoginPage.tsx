@@ -64,7 +64,7 @@ export default function LoginPage() {
 
   return (
     <div
-      className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-3 sm:py-10"
+      className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-2 sm:py-10"
       style={{ background: "linear-gradient(160deg, #0c0e12 0%, #111318 30%, #0a0203 100%)" }}
     >
       {/* ── Animated background effects ─────────────────────────────────── */}
@@ -117,12 +117,12 @@ export default function LoginPage() {
         <img
           src="/logo-on-dark.svg"
           alt="GuardTec Security & Patrol"
-          className="relative z-10 h-auto w-44 sm:w-80 md:w-96"
+          className="relative z-10 h-auto w-32 sm:w-80 md:w-96"
         />
       </motion.div>
 
       {/* ── Tagline ─────────────────────────────────────────────────────── */}
-      <motion.div className="relative z-10 mb-4 sm:mb-10 text-center" {...fade(0.2)}>
+      <motion.div className="relative z-10 mb-2 sm:mb-10 text-center" {...fade(0.2)}>
         <div className="mb-1.5 sm:mb-4 flex items-center justify-center gap-3">
           <div className="h-px w-10 bg-[#E40613]" />
           <span className="font-display text-[10px] font-bold uppercase tracking-[0.5em] text-[#E40613]">
@@ -240,7 +240,7 @@ export default function LoginPage() {
 
       {/* ── Certification badges ────────────────────────────────────────── */}
       <motion.div
-        className="relative z-10 mt-4 sm:mt-10 flex flex-wrap items-center justify-center gap-2 sm:gap-3"
+        className="relative z-10 mt-2 sm:mt-10 flex flex-wrap items-center justify-center gap-2 sm:gap-3"
         {...fade(0.7)}
       >
         {CERTS.map(({ icon: Icon, label }, i) => (
@@ -259,7 +259,7 @@ export default function LoginPage() {
 
       {/* ── Services row ────────────────────────────────────────────────── */}
       <motion.div
-        className="relative z-10 mt-4 sm:mt-10 w-full max-w-3xl"
+        className="relative z-10 mt-2 sm:mt-10 w-full max-w-3xl"
         {...fade(0.95)}
       >
         <div className="mb-2 sm:mb-4 flex items-center justify-center gap-3">
@@ -270,27 +270,40 @@ export default function LoginPage() {
           <div className="h-px flex-1 max-w-20 bg-white/[0.06]" />
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+        {/* Mobile: a compact single-row pill strip, same treatment as the
+            cert badges above — the full description cards below are sm+
+            only, there's no room for them without forcing a scroll. */}
+        <div className="flex sm:hidden flex-wrap items-center justify-center gap-2">
+          {SERVICES.map(({ icon: Icon, title }) => (
+            <div key={title}
+              className="flex items-center gap-1.5 rounded-full border border-white/[0.06] bg-white/[0.03] px-2.5 py-1 backdrop-blur-sm">
+              <Icon className="h-3 w-3 text-[#E40613]" />
+              <span className="text-[10px] font-medium text-white/50">{title}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="hidden sm:grid grid-cols-4 gap-3">
           {SERVICES.map(({ icon: Icon, title, desc }, i) => (
             <motion.div
               key={title}
-              className="flex flex-col items-center gap-1 sm:gap-2 rounded-xl border border-white/[0.06] bg-white/[0.03] p-2 sm:p-4 text-center backdrop-blur-sm"
+              className="flex flex-col items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.03] p-4 text-center backdrop-blur-sm"
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 1.0 + i * 0.08, ease: [0.16, 1, 0.3, 1] }}
             >
-              <div className="flex h-7 w-7 sm:h-9 sm:w-9 items-center justify-center rounded-lg bg-[#E40613]/10">
-                <Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-[#E40613]" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#E40613]/10">
+                <Icon className="h-4 w-4 text-[#E40613]" />
               </div>
-              <p className="text-[11px] sm:text-xs font-semibold text-white/70">{title}</p>
-              <p className="hidden sm:block text-[10px] leading-tight text-white/30">{desc}</p>
+              <p className="text-xs font-semibold text-white/70">{title}</p>
+              <p className="text-[10px] leading-tight text-white/30">{desc}</p>
             </motion.div>
           ))}
         </div>
       </motion.div>
 
       {/* ── Footer — company info ───────────────────────────────────────── */}
-      <motion.div className="relative z-10 mt-4 sm:mt-10 text-center space-y-1 sm:space-y-2" {...fade(1.1)}>
+      <motion.div className="relative z-10 mt-2 sm:mt-10 text-center space-y-1 sm:space-y-2" {...fade(1.1)}>
         <div className="flex items-center justify-center gap-2 text-white/20">
           <ShieldCheck className="h-3.5 w-3.5 text-[#E40613]/60" />
           <span className="font-display text-[9px] font-medium tracking-[0.3em] uppercase">
@@ -316,7 +329,7 @@ export default function LoginPage() {
         <p className="text-[11px] sm:text-xs text-[#E40613] font-display font-semibold tracking-wider">
           © {new Date().getFullYear()} GuardTec Security Ltd
         </p>
-        <p className="hidden sm:block text-[11px] text-[#E40613] font-display font-semibold uppercase tracking-[0.25em]">
+        <p className="text-[9px] sm:text-[11px] text-[#E40613] font-display font-semibold uppercase tracking-[0.2em] sm:tracking-[0.25em]">
           Designed &amp; Built by Asrar Khan
         </p>
       </motion.div>
