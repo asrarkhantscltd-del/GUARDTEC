@@ -42,6 +42,19 @@ export interface AgencyDeployment {
   status: "scheduled" | "completed" | "cancelled"
   guard_count?: number
   site?: AgencySite | null
+  // Populated by GET .../deployments (list) directly — who's actually
+  // assigned, not just a count. See DeploymentAssignedGuard for the shape.
+  staff?: DeploymentAssignedGuard[]
+}
+
+export interface DeploymentAssignedGuard {
+  id: string
+  name: string
+  job_role?: string
+  scheduled_hours: number
+  start_time?: string | null
+  end_time?: string | null
+  attended?: boolean | null
 }
 
 export function complianceBadgeStatus(status?: string): "green" | "amber" | "red" | "unknown" {

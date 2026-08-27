@@ -12,7 +12,7 @@ services:
     ports:
       - "3001:3000"
     volumes:
-      - "C:\\Users\\WORKSTATION\\First Call Site Services\\FCSS - Managers\\HR and Legal\\Asrar\\GuardTec Compliance:/data"
+      - "${HOST_DATA_PATH}:/data"
     environment:
       - DATA_PATH=/data
       - N8N_AI_WEBHOOK=http://n8n:5678/webhook/ai-chat
@@ -24,7 +24,7 @@ services:
       # generated link silently pointed at the wrong app entirely. The
       # acknowledgment page itself is a frontend route (/acknowledge/:token),
       # so this must be the frontend's externally-reachable origin.
-      - BASE_URL=http://localhost:5173
+      - BASE_URL=${BASE_URL:-http://localhost:5173}
       - DATABASE_URL=postgresql://guardtec:${POSTGRES_PASSWORD}@db:5432/guardtec
       - JWT_SECRET=${JWT_SECRET}
       - ADMIN_USERNAME=${ADMIN_USERNAME}

@@ -11,6 +11,7 @@ const rateLimit    = require('express-rate-limit');
 const { Pool }     = require('pg');
 
 const app  = express();
+app.set('trust proxy', 2); // behind Caddy + frontend nginx in production (2 hops); needed for express-rate-limit to read X-Forwarded-For correctly
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const BASE_URL = process.env.BASE_URL || ('http://localhost:' + PORT); // link base for acknowledgment-form URLs (Feature 2)
 
@@ -1237,7 +1238,7 @@ app.post('/api/staff/:id/photo', requireLogin, requireOwnStaffOrPermission('staf
 // ── STAFF DOCUMENT FILES ──────────────────────────────────────────────────────
 var ALLOWED_DOC_KEYS = [
   'siaPhysical','passport','drivingLicenceDoc','brpCard','proofOfAddress1','proofOfAddress2',
-  'p45','bankLetter','application','assignmentInstructions','cscsCard',
+  'p45','bankLetter','application','assignmentInstructions','cscsCard','dbsCertificate',
   'creditCheckReport','socialMediaCheckReport',
   'driverLicenceCopy','driverCpcCard','driverMedicalCert','driverTachoCard','driverDbsCheck','driverAssessmentReport'
 ];
@@ -1257,7 +1258,7 @@ var DOC_KEY_LABELS = {
   siaPhysical: 'SIA Licence copy', passport: 'Passport / Photo ID', drivingLicenceDoc: 'Driving Licence', brpCard: 'BRP Card',
   proofOfAddress1: 'Proof of Address', proofOfAddress2: 'Proof of Address',
   p45: 'P45/P60', bankLetter: 'Bank Letter', application: 'Application Form',
-  assignmentInstructions: 'Assignment Instructions', cscsCard: 'CSCS Card',
+  assignmentInstructions: 'Assignment Instructions', cscsCard: 'CSCS Card', dbsCertificate: 'DBS Certificate',
   creditCheckReport: 'Credit Check Report', socialMediaCheckReport: 'Social Media Check Report',
   driverLicenceCopy: 'Driving Licence (scan)',
   driverCpcCard: 'Driver CPC Card', driverMedicalCert: 'Driver Medical Certificate',
@@ -2668,8 +2669,29 @@ app.patch('/api/sites/:id', requireLogin, requirePermission('sites'), async func
 app.delete('/api/sites/:id', requireLogin, requirePermission('sites'), async function(req, res) {
   try {
     // ON DELETE CASCADE on site_documents/site_welfare_items/site_staff_assignments
-    // handles the DB-side child rows; the physical docs directory is a
-    // filesystem concern the DB knows nothing about, so it's still removed here.
+    // handles those DB-side child rows automatically, but agency_deployments
+    // and event_instructions are deliberately NOT cascaded (see their FK
+    // definitions above) — a deployment is a real booking record and an
+    // instruction can carry signed acknowledgment_forms, which is compliance
+    // proof. Rather than let the DELETE fail with a raw FK-violation error,
+    // check for them up front and explain exactly what's blocking, the same
+    // way the incident-report and event-instruction delete routes do.
+    var blockers = await pgPool.query(
+      `SELECT (SELECT COUNT(*)::int FROM agency_deployments WHERE site_id = $1) AS deployments,
+              (SELECT COUNT(*)::int FROM event_instructions WHERE site_id = $1) AS instructions`,
+      [req.params.id]
+    );
+    var b = blockers.rows[0];
+    if (b.deployments > 0 || b.instructions > 0) {
+      var parts = [];
+      if (b.deployments > 0) parts.push(b.deployments + ' deployment(s)');
+      if (b.instructions > 0) parts.push(b.instructions + ' event instruction(s)');
+      return res.status(400).json({
+        ok: false,
+        error: 'Cannot delete this site — ' + parts.join(' and ') + ' still reference it. Delete or reassign those first (an event instruction with signed acknowledgments must be archived, not deleted, to keep the compliance record).'
+      });
+    }
+
     await pgPool.query('DELETE FROM sites WHERE id = $1', [req.params.id]);
     var docsDir = path.join(SITE_DOCS_DIR, req.params.id);
     if (fs.existsSync(docsDir)) {
@@ -4176,6 +4198,70 @@ app.post('/api/agencies/:id/reactivate', requireLogin, requirePermission('staff'
   }
 });
 
+// Permanent delete — director-only. Removes the agency, every one of its
+// guards (agency_staff cascades via agency_id ON DELETE CASCADE, which in
+// turn cascades unavailability/documents/custom_documents rows), the
+// agency's own login account, and every file on disk. Intended for purging
+// test/duplicate agencies, not routine offboarding — archive is that, and
+// stays available above.
+app.delete('/api/agencies/:id', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var agencyId = req.params.id;
+    var agencyResult = await pgPool.query('SELECT * FROM agencies WHERE id = $1', [agencyId]);
+    if (!agencyResult.rows.length) return res.status(404).json({ ok: false, error: 'Agency not found.' });
+    var agency = agencyResult.rows[0];
+
+    // agency_deployments.agency_id and deployment_attendance.agency_staff_id
+    // both have NO cascade (real booking/attendance history) — check up
+    // front rather than let the DELETE below fail with a raw Postgres
+    // FK-violation message, same reasoning as the site-delete guard.
+    var blockers = await pgPool.query(
+      `SELECT (SELECT COUNT(*)::int FROM agency_deployments WHERE agency_id = $1) AS deployments,
+              (SELECT COUNT(*)::int FROM deployment_attendance da JOIN agency_staff s ON s.id = da.agency_staff_id WHERE s.agency_id = $1) AS attendance`,
+      [agencyId]
+    );
+    var bl = blockers.rows[0];
+    if (bl.deployments > 0 || bl.attendance > 0) {
+      var blParts = [];
+      if (bl.deployments > 0) blParts.push(bl.deployments + ' deployment(s)');
+      if (bl.attendance > 0) blParts.push(bl.attendance + ' attendance record(s)');
+      return res.status(400).json({
+        ok: false,
+        error: 'Cannot delete this agency — ' + blParts.join(' and ') + ' still reference it. Remove those first, or archive the agency instead of deleting.'
+      });
+    }
+
+    var staffRows = await pgPool.query('SELECT id FROM agency_staff WHERE agency_id = $1', [agencyId]);
+    var customDocs = await pgPool.query(
+      `SELECT d.agency_staff_id, d.filename FROM agency_staff_custom_documents d
+       JOIN agency_staff s ON s.id = d.agency_staff_id
+       WHERE s.agency_id = $1`, [agencyId]
+    );
+    var customDocsByStaff = {};
+    customDocs.rows.forEach(function(d) {
+      (customDocsByStaff[d.agency_staff_id] = customDocsByStaff[d.agency_staff_id] || []).push(d.filename);
+    });
+
+    await pgPool.query('DELETE FROM agencies WHERE id = $1', [agencyId]); // cascades agency_staff and its children
+    await pgPool.query('DELETE FROM users WHERE agency_id = $1', [agencyId]); // the agency's own login
+
+    staffRows.rows.forEach(function(s) {
+      purgeAgencyStaffFiles(s.id, customDocsByStaff[s.id]);
+    });
+
+    await pgPool.query(
+      `INSERT INTO audit_events (actor_email, action, object_type, object_id, object_name, metadata)
+       VALUES ($1,'AGENCY_DELETED','agency',$2,$3,$4)`,
+      [(req.user && req.user.username) || null, agency.id, agency.name,
+       JSON.stringify({ staff_count: staffRows.rows.length, status: agency.status })]
+    );
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── AGENCY STAFF (COVER GUARDS) ───────────────────────────────────────────────
 // Registration, documents, photo, bulk import and unavailability for guards
 // belonging to an agency. Every route here is gated by
@@ -4385,6 +4471,50 @@ app.post('/api/agencies/:agencyId/staff/:id/archive', requireLogin, requireOwnAg
       [req.params.id, req.params.agencyId]
     );
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Guard not found.' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Permanent delete — director-only. Unlike archive above, this actually
+// removes the row (and, via ON DELETE CASCADE, its unavailability/documents
+// rows) plus every file on disk. Intended for purging test/duplicate agency
+// guard records, not as a routine offboarding action — archive is that.
+app.delete('/api/agencies/:agencyId/staff/:id', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var agencyId = req.params.agencyId;
+    var staffId  = req.params.id;
+    var r = await pgPool.query('SELECT * FROM agency_staff WHERE id = $1 AND agency_id = $2', [staffId, agencyId]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Guard not found.' });
+    var guard = r.rows[0];
+
+    // deployment_attendance.agency_staff_id has NO cascade (it's real hours-
+    // worked/no-show history feeding the agency performance stats) — check
+    // for it up front rather than let the DELETE below fail with a raw
+    // Postgres FK-violation message, same reasoning as the site-delete guard.
+    var attendance = await pgPool.query('SELECT COUNT(*)::int AS n FROM deployment_attendance WHERE agency_staff_id = $1', [staffId]);
+    if (attendance.rows[0].n > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Cannot delete ' + guard.name + ' — ' + attendance.rows[0].n + ' deployment attendance record(s) reference them. Remove those attendance entries from the relevant deployment(s) first, or archive this guard instead of deleting.'
+      });
+    }
+
+    var customDocs = await pgPool.query(
+      'SELECT filename FROM agency_staff_custom_documents WHERE agency_staff_id = $1', [staffId]
+    );
+
+    await pgPool.query('DELETE FROM agency_staff WHERE id = $1', [staffId]); // cascades unavailability/documents/custom_documents rows
+
+    purgeAgencyStaffFiles(staffId, customDocs.rows.map(function(d) { return d.filename; }));
+
+    await pgPool.query(
+      `INSERT INTO audit_events (actor_email, action, object_type, object_id, object_name, metadata)
+       VALUES ($1,'AGENCY_STAFF_DELETED','agency_staff',$2,$3,$4)`,
+      [(req.user && req.user.username) || null, guard.id, guard.name, JSON.stringify({ agency_id: agencyId, status: guard.status })]
+    );
+
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -4690,6 +4820,32 @@ function findAgencyStaffDocFile(staffId, docType) {
     if (fs.existsSync(fp)) return fp;
   }
   return null;
+}
+
+// Deletes every file on disk for one agency_staff record: the per-staff
+// certificate-documents subfolder, the flat confidential-checks files, the
+// profile photo, and any custom-labeled documents (whose filenames the
+// caller must look up from agency_staff_custom_documents BEFORE deleting
+// that row, since they're not derivable from staffId alone). Paths are
+// built directly rather than through AGENCY_STAFF_DOCS_DIR — that name is
+// declared twice in this file for two different directories, and by
+// var-hoisting rules the second declaration wins everywhere, so relying on
+// it here would silently point at the wrong folder for the fixed-doc-type
+// certs.
+function purgeAgencyStaffFiles(staffId, customDocFilenames) {
+  try { fs.rmSync(path.join(BASE, 'agency-staff-documents', staffId), { recursive: true, force: true }); } catch (e) { /* already gone */ }
+  var exts = ['.pdf', '.jpg', '.jpeg', '.png', '.webp'];
+  ['creditCheckReport', 'socialMediaCheckReport'].forEach(function(docType) {
+    exts.forEach(function(ext) {
+      try { fs.unlinkSync(path.join(BASE, 'agency-staff-confidential-docs', staffId + '_' + docType + ext)); } catch (e) { /* already gone */ }
+    });
+  });
+  exts.forEach(function(ext) {
+    try { fs.unlinkSync(path.join(BASE, 'agency-staff-photos', staffId + ext)); } catch (e) { /* already gone */ }
+  });
+  (customDocFilenames || []).forEach(function(fn) {
+    try { fs.unlinkSync(path.join(BASE, 'agency-staff-custom-documents', fn)); } catch (e) { /* already gone */ }
+  });
 }
 
 app.get('/api/agencies/:agencyId/staff/:id/checks', requireLogin, requirePermission('staff'), async function(req, res) {
@@ -5037,9 +5193,21 @@ app.get('/api/agencies/:agencyId/deployments', requireLogin, requireOwnAgencyOrP
     if (req.query.date_to)   { params.push(req.query.date_to);   conditions.push('d.event_date <= $' + params.length); }
     if (req.query.status)    { params.push(req.query.status);    conditions.push('d.status = $' + params.length); }
 
+    // staff is a json_agg of each assigned guard's name/role/hours, not just
+    // a count — every page listing deployments (this one, the admin
+    // cross-agency list, AgencyDetailPage) used to show only guard_count,
+    // with no way to see WHO was actually assigned short of re-opening the
+    // deployment's edit form. That's the "who's deployed where" confusion
+    // this was built to fix.
     var result = await pgPool.query(
-      'SELECT d.*, COUNT(a.id) AS guard_count FROM agency_deployments d ' +
+      "SELECT d.*, COUNT(a.id) AS guard_count, " +
+      "COALESCE(json_agg(json_build_object(" +
+      "  'id', s.id, 'name', s.name, 'job_role', s.job_role, " +
+      "  'scheduled_hours', a.scheduled_hours, 'start_time', a.start_time, 'end_time', a.end_time, 'attended', a.attended" +
+      ") ORDER BY s.name) FILTER (WHERE a.id IS NOT NULL), '[]') AS staff " +
+      'FROM agency_deployments d ' +
       'LEFT JOIN deployment_attendance a ON a.deployment_id = d.id ' +
+      'LEFT JOIN agency_staff s ON s.id = a.agency_staff_id ' +
       'WHERE ' + conditions.join(' AND ') + ' GROUP BY d.id ORDER BY d.event_date DESC',
       params
     );
@@ -5118,6 +5286,43 @@ app.patch('/api/agencies/:agencyId/deployments/:id', requireLogin, requireOwnAge
 
     var updated = await pgPool.query('SELECT * FROM agency_deployments WHERE id = $1', [depId]);
     res.json({ ok: true, deployment: updated.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Permanent delete — director only. Cancelling a deployment (PATCH status
+// above) is the routine action; this actually removes the row. Attendance
+// rows cascade automatically (deployment_attendance.deployment_id ON DELETE
+// CASCADE), but acknowledgment_forms.deployment_id does NOT — a signed
+// acknowledgment for this deployment is compliance proof, same reasoning as
+// everywhere else this pattern is used (event-instruction delete, site
+// delete). Checked up front rather than surfacing a raw FK-violation error.
+app.delete('/api/agencies/:agencyId/deployments/:id', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var agencyId = req.params.agencyId;
+    var depId = req.params.id;
+    var depResult = await pgPool.query('SELECT * FROM agency_deployments WHERE id = $1 AND agency_id = $2', [depId, agencyId]);
+    if (!depResult.rows.length) return res.status(404).json({ ok: false, error: 'Deployment not found.' });
+
+    var acks = await pgPool.query('SELECT COUNT(*)::int AS n FROM acknowledgment_forms WHERE deployment_id = $1', [depId]);
+    if (acks.rows[0].n > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Cannot delete this deployment — ' + acks.rows[0].n + ' acknowledgment link(s)/signature(s) reference it. Delete any un-signed links first (a signed one cannot be removed); mark the deployment cancelled instead if it never happened.'
+      });
+    }
+
+    await pgPool.query('DELETE FROM agency_deployments WHERE id = $1', [depId]); // cascades deployment_attendance
+
+    await pgPool.query(
+      `INSERT INTO audit_events (actor_email, action, object_type, object_id, object_name, metadata)
+       VALUES ($1,'DEPLOYMENT_DELETED','agency_deployment',$2,$3,$4)`,
+      [(req.user && req.user.username) || null, depId, depResult.rows[0].event_date,
+       JSON.stringify({ agency_id: agencyId, site_id: depResult.rows[0].site_id, status: depResult.rows[0].status })]
+    );
+
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -5305,9 +5510,15 @@ app.get('/api/admin/deployments', requireLogin, requirePermission('staff'), asyn
     if (req.query.date_to)   { params.push(req.query.date_to);   conditions.push('d.event_date <= $' + params.length); }
     if (req.query.agency_id) { params.push(req.query.agency_id); conditions.push('d.agency_id = $' + params.length); }
 
-    var sql = 'SELECT d.*, a.name AS agency_name, COUNT(att.id) AS guard_count FROM agency_deployments d ' +
+    var sql = "SELECT d.*, a.name AS agency_name, COUNT(att.id) AS guard_count, " +
+      "COALESCE(json_agg(json_build_object(" +
+      "  'id', s.id, 'name', s.name, 'job_role', s.job_role, " +
+      "  'scheduled_hours', att.scheduled_hours, 'start_time', att.start_time, 'end_time', att.end_time, 'attended', att.attended" +
+      ") ORDER BY s.name) FILTER (WHERE att.id IS NOT NULL), '[]') AS staff " +
+      'FROM agency_deployments d ' +
       'JOIN agencies a ON a.id = d.agency_id ' +
-      'LEFT JOIN deployment_attendance att ON att.deployment_id = d.id' +
+      'LEFT JOIN deployment_attendance att ON att.deployment_id = d.id ' +
+      'LEFT JOIN agency_staff s ON s.id = att.agency_staff_id' +
       (conditions.length ? ' WHERE ' + conditions.join(' AND ') : '') +
       ' GROUP BY d.id, a.name ORDER BY d.event_date DESC';
 
@@ -5471,6 +5682,88 @@ app.get('/api/event-instructions/:id', requireLogin, requirePermission('staff'),
   }
 });
 
+// Renders one signed acknowledgment as a standalone, print-friendly HTML
+// page — the instruction content plus signer name/date/IP and the captured
+// signature image, all in one document. Opening it and using the browser's
+// Print → Save as PDF is the "copy of their signed document" a director can
+// keep/export; no PDF-generation dependency needed for that. 404s (rather
+// than a 200 with an "unsigned" message) if the form hasn't been signed yet,
+// so a stray link never looks like proof of something that didn't happen.
+app.get('/api/event-instructions/:id/acknowledgments/:formId/document', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var instrResult = await pgPool.query('SELECT * FROM event_instructions WHERE id = $1', [req.params.id]);
+    if (!instrResult.rows.length) return res.status(404).send('Instruction not found.');
+    var instruction = instrResult.rows[0];
+
+    var formResult = await pgPool.query(
+      'SELECT * FROM acknowledgment_forms WHERE id = $1 AND instruction_id = $2',
+      [req.params.formId, req.params.id]
+    );
+    if (!formResult.rows.length) return res.status(404).send('Acknowledgment record not found.');
+    var form = formResult.rows[0];
+    if (!form.signed_at) return res.status(404).send('This form has not been signed yet.');
+
+    var site = instruction.site_id ? await getSiteById(instruction.site_id) : null;
+    var signedAtStr = new Date(form.signed_at).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short' });
+    var signatureImg = form.signature_data && form.signature_data.indexOf('data:image') === 0
+      ? '<img src="' + form.signature_data + '" alt="Signature" style="max-width:320px;border:1px solid #ddd;border-radius:4px;padding:8px;background:#fff" />'
+      : '<p style="color:#888;font-style:italic">No signature image captured.</p>';
+
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(
+      '<!doctype html><html><head><meta charset="utf-8"><title>Signed Acknowledgment — ' + esc(instruction.title) + '</title>' +
+      '<style>body{font-family:Arial,Helvetica,sans-serif;max-width:720px;margin:32px auto;padding:0 20px;color:#1a1a1a;line-height:1.5}' +
+      'h1{font-size:20px;border-bottom:2px solid #c00;padding-bottom:10px}h2{font-size:14px;color:#555;margin-top:28px}' +
+      '.meta{background:#f7f7f7;border-radius:6px;padding:14px 18px;margin:16px 0;font-size:14px}' +
+      '.meta div{margin:3px 0}.instructions{border:1px solid #eee;border-radius:6px;padding:16px 18px;margin:10px 0}' +
+      '@media print{body{margin:0}}</style></head><body>' +
+      '<h1>Signed Acknowledgment</h1>' +
+      '<div class="meta">' +
+        '<div><strong>Instruction:</strong> ' + esc(instruction.title) + '</div>' +
+        (site ? '<div><strong>Site:</strong> ' + esc(site.name) + '</div>' : '') +
+        (instruction.event_date ? '<div><strong>Event date:</strong> ' + esc(instruction.event_date) + '</div>' : '') +
+        '<div><strong>Version acknowledged:</strong> ' + esc(form.instruction_version) + '</div>' +
+      '</div>' +
+      '<h2>Instructions as read and signed</h2>' +
+      '<div class="instructions">' + (instruction.instructions_html || '<p><em>No content.</em></p>') + '</div>' +
+      '<h2>Signature</h2>' +
+      '<div class="meta">' +
+        '<div><strong>Signed by:</strong> ' + esc(form.signer_name) + '</div>' +
+        '<div><strong>Signed at:</strong> ' + esc(signedAtStr) + '</div>' +
+        '<div><strong>IP address:</strong> ' + esc(form.ip_address || 'unknown') + '</div>' +
+      '</div>' +
+      signatureImg +
+      '</body></html>'
+    );
+  } catch (e) {
+    res.status(500).send('Error generating document: ' + e.message);
+  }
+});
+
+// Cancels an un-signed acknowledgment link — e.g. sent to the wrong person,
+// or the guard never opened it and a fresh link is needed. Blocked once
+// signed_at is set: a signed form is compliance proof (same reasoning as
+// the event-instruction permanent-delete guard above), so this route can
+// only ever remove links nobody has actually acknowledged yet.
+app.delete('/api/event-instructions/:id/acknowledgments/:formId', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var formResult = await pgPool.query(
+      'SELECT signed_at FROM acknowledgment_forms WHERE id = $1 AND instruction_id = $2',
+      [req.params.formId, req.params.id]
+    );
+    if (!formResult.rows.length) return res.status(404).json({ ok: false, error: 'Acknowledgment link not found.' });
+    if (formResult.rows[0].signed_at) {
+      return res.status(400).json({ ok: false, error: 'This link has already been signed and is a compliance record — it cannot be deleted.' });
+    }
+    await pgPool.query('DELETE FROM acknowledgment_forms WHERE id = $1', [req.params.formId]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.patch('/api/event-instructions/:id', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
     var existing = await pgPool.query('SELECT * FROM event_instructions WHERE id = $1', [req.params.id]);
@@ -5559,7 +5852,7 @@ app.post('/api/event-instructions/:id/restore', requireLogin, requirePermission(
 // acknowledgment_forms rows exist against it. A signed acknowledgment is
 // compliance/audit proof a guard was briefed — that must survive even if the
 // instruction itself is being cleaned up, so we refuse rather than cascade.
-app.delete('/api/event-instructions/:id', requireLogin, requirePermission('staff'), async function(req, res) {
+app.delete('/api/event-instructions/:id', requireLogin, requireRole('director'), async function(req, res) {
   try {
     var existing = await pgPool.query('SELECT id, status FROM event_instructions WHERE id = $1', [req.params.id]);
     if (!existing.rows.length) return res.status(404).json({ ok: false, error: 'Instruction not found.' });

@@ -13,6 +13,7 @@ export default defineConfig({
       devOptions: { enabled: true },
       includeAssets: ['icon.svg', 'favicon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png'],
       manifest: {
+        id: '/',
         name: 'GuardTec Compliance',
         short_name: 'GuardTec',
         description: 'GuardTec Security — Staff Compliance Management',

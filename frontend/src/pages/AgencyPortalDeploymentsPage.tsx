@@ -9,7 +9,7 @@ import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import {
   DeploymentForm,
-  type AgencySite, type AgencyStaffRow, type AgencyDeployment, type DeploymentAssignment,
+  type AgencySite, type AgencyStaffRow, type AgencyDeployment,
 } from "@/components/agency/DeploymentForm"
 import { DeploymentAcknowledgment } from "@/components/agency/DeploymentAcknowledgment"
 import { AttendanceConfirmation, type AttendanceRow } from "@/components/agency/AttendanceConfirmation"
@@ -80,7 +80,6 @@ export default function AgencyPortalDeploymentsPage({ agencyId: agencyIdProp }: 
   const [loading, setLoading] = useState(true)
   const [sites, setSites] = useState<AgencySite[]>([])
   const [roster, setRoster] = useState<AgencyStaffRow[]>([])
-  const [assignmentsCache, setAssignmentsCache] = useState<Record<string, DeploymentAssignment[]>>({})
 
   const [formOpen, setFormOpen] = useState(false)
   const [formDeployment, setFormDeployment] = useState<AgencyDeployment | null>(null)
@@ -139,8 +138,7 @@ export default function AgencyPortalDeploymentsPage({ agencyId: agencyIdProp }: 
     setFormOpen(true)
   }
 
-  function handleFormSaved(deploymentId: string, assignments: DeploymentAssignment[]) {
-    setAssignmentsCache(prev => ({ ...prev, [deploymentId]: assignments }))
+  function handleFormSaved() {
     setFormOpen(false)
     setFormDeployment(null)
     reloadDeployments()
@@ -151,16 +149,14 @@ export default function AgencyPortalDeploymentsPage({ agencyId: agencyIdProp }: 
     setDetailTab("ack")
   }
 
-  const detailAssignments = detail ? (assignmentsCache[detail.id] ?? []) : []
-  const attendanceRows: AttendanceRow[] = detailAssignments.map(a => ({
-    agency_staff_id: a.agency_staff_id,
-    name: roster.find(r => r.id === a.agency_staff_id)?.name ?? "Unknown guard",
-    scheduled_hours: a.scheduled_hours,
+  // Guard assignments now come straight from GET .../deployments (the
+  // `staff` field), refreshed every reloadDeployments() call — no more
+  // client-only cache that went stale/empty after a page reload.
+  const attendanceRows: AttendanceRow[] = (detail?.staff ?? []).map(s => ({
+    agency_staff_id: s.id,
+    name: s.name,
+    scheduled_hours: s.scheduled_hours,
   }))
-  // deployment_attendance has no GET-by-deployment endpoint yet — see report.
-  // Assignments only exist client-side from this session's create/edit call,
-  // so a page reload loses them until that endpoint exists.
-  const assignmentsUnavailable = !!detail && detail.guard_count! > 0 && detailAssignments.length === 0
 
   if (!agencyId) {
     return (
@@ -224,6 +220,7 @@ export default function AgencyPortalDeploymentsPage({ agencyId: agencyIdProp }: 
                       <div className="mt-1 space-y-1">
                         {dayDeployments.map(dep => (
                           <button key={dep.id} onClick={() => openDetail(dep)}
+                            title={(dep.staff ?? []).map(s => s.name).join(", ") || undefined}
                             className="flex w-full items-center gap-1 truncate rounded bg-primary/10 px-1.5 py-0.5 text-left text-[10px] font-medium text-primary hover:bg-primary/20 transition-colors">
                             <MapPin className="h-2.5 w-2.5 shrink-0" />
                             <span className="truncate">{siteName(dep)}</span>
@@ -254,7 +251,10 @@ export default function AgencyPortalDeploymentsPage({ agencyId: agencyIdProp }: 
             sites={sites}
             roster={roster}
             deployment={formDeployment}
-            initialAssignments={formDeployment ? assignmentsCache[formDeployment.id] ?? [] : []}
+            initialAssignments={(formDeployment?.staff ?? []).map(s => ({
+              agency_staff_id: s.id, scheduled_hours: s.scheduled_hours,
+              start_time: s.start_time ?? undefined, end_time: s.end_time ?? undefined,
+            }))}
             initialDate={formInitialDate}
             onSaved={handleFormSaved}
             onCancel={() => setFormOpen(false)}
@@ -274,6 +274,13 @@ export default function AgencyPortalDeploymentsPage({ agencyId: agencyIdProp }: 
                 <p className="text-xs text-muted-foreground">
                   {detail.event_date.slice(0, 10)} · {detail.guard_count ?? 0} guard{detail.guard_count === 1 ? "" : "s"} · {detail.status}
                 </p>
+                {(detail.staff ?? []).length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {(detail.staff ?? []).map(s => (
+                      <span key={s.id} className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium">{s.name}</span>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-1">
                 <button onClick={() => openEdit(detail)} title="Edit assignment"
@@ -307,20 +314,8 @@ export default function AgencyPortalDeploymentsPage({ agencyId: agencyIdProp }: 
                 onAcknowledged={d => { setDetail(d); reloadDeployments() }} />
             )}
             {detailTab === "attendance" && (
-              <>
-                {assignmentsUnavailable && (
-                  <p className="mb-3 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning">
-                    Guard list unavailable after a page reload — reopen this from an Edit right after creating,
-                    or add a GET assignments endpoint server-side (see notes to Asrar).
-                  </p>
-                )}
-                {/* AttendanceConfirmation persists each row itself (POST .../attendance) —
-                    it already owns its own display state, so the parent has nothing to
-                    merge back into assignmentsCache (which only ever tracks
-                    agency_staff_id + scheduled_hours, not attendance results). */}
-                <AttendanceConfirmation agencyId={agencyId} deploymentId={detail.id}
-                  assignments={attendanceRows} onUpdated={() => {}} />
-              </>
+              <AttendanceConfirmation agencyId={agencyId} deploymentId={detail.id}
+                assignments={attendanceRows} onUpdated={() => {}} />
             )}
             {detailTab === "notes" && (
               <DeploymentNotes agencyId={agencyId} deploymentId={detail.id} currentUserId={user?.id} />

@@ -4,13 +4,14 @@ import { toast } from "sonner"
 import {
   ChevronLeft, Building2, Mail, Phone, Pencil, Archive, RotateCcw, Plus, X,
   Loader2, Users, CalendarDays, MapPin, ShieldCheck, AlertTriangle, UserX,
-  BarChart3, MessageSquare, Paperclip, ArrowUpRight,
+  BarChart3, MessageSquare, Paperclip, ArrowUpRight, Trash2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { fmtDate } from "@/lib/utils"
 import { api, ApiError } from "@/lib/api"
+import { useAuth } from "@/contexts/AuthContext"
 // Reuse the sibling agency-portal stage's components rather than re-building
 // the guard form / compliance pill a second time — same entity, same rules
 // (calculateComplianceStatus, job_role/badge_type conditional certs).
@@ -35,6 +36,8 @@ interface AgencyDetail {
 
 interface Site { id: string; name: string }
 
+interface AssignedGuard { id: string; name: string; job_role?: string }
+
 interface DeploymentRow {
   id: string
   agency_id: string
@@ -43,6 +46,7 @@ interface DeploymentRow {
   status: "scheduled" | "completed" | "cancelled"
   guard_count?: number | string
   site?: Site | null
+  staff?: AssignedGuard[]
 }
 
 interface PerformanceData {
@@ -92,6 +96,8 @@ export default function AgencyDetailPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const activeTab = (searchParams.get("tab") as TabId | null) ?? "staff"
+  const { user: me } = useAuth()
+  const isDirector = me?.role === "director"
 
   const [agency, setAgency] = useState<AgencyDetail | null>(null)
   const [staff, setStaff] = useState<AgencyStaffRecord[]>([])
@@ -106,11 +112,23 @@ export default function AgencyDetailPage() {
   const [editError, setEditError] = useState("")
   const [archiveBusy, setArchiveBusy] = useState(false)
 
+  // Permanent agency delete — director only. Separate from archive above.
+  const [deleteAgencyConfirm, setDeleteAgencyConfirm] = useState(false)
+  const [deleteAgencyBusy, setDeleteAgencyBusy] = useState(false)
+  const [deleteAgencyError, setDeleteAgencyError] = useState("")
+
   // Add/edit guard (AgencyStaffForm handles its own drawer chrome + submit)
   const [staffFormOpen, setStaffFormOpen] = useState(false)
   const [editingStaff, setEditingStaff] = useState<AgencyStaffRecord | undefined>(undefined)
   const [guardArchiveConfirm, setGuardArchiveConfirm] = useState<string | null>(null)
   const [guardArchiving, setGuardArchiving] = useState(false)
+  // Permanent guard delete — director only. Separate from archive above.
+  const [guardDeleteConfirm, setGuardDeleteConfirm] = useState<string | null>(null)
+  const [guardDeleting, setGuardDeleting] = useState(false)
+
+  // Permanent deployment delete — director only.
+  const [deploymentDeleteConfirm, setDeploymentDeleteConfirm] = useState<string | null>(null)
+  const [deploymentDeleting, setDeploymentDeleting] = useState(false)
 
   // Messages — this is what a click-through from an agency-message
   // notification lands on (see DashboardLayout's goToNotification).
@@ -250,6 +268,52 @@ export default function AgencyDetailPage() {
     }
   }
 
+  async function deleteGuard(guardId: string) {
+    if (!id) return
+    setGuardDeleting(true)
+    try {
+      await api.delete(`/api/agencies/${id}/staff/${guardId}`)
+      setStaff(prev => prev.filter(s => s.id !== guardId))
+      toast.success("Guard permanently deleted")
+    } catch (err) {
+      // The row cell is too narrow for an inline error block (unlike the
+      // agency-delete dialog above) — a toast with the full specific
+      // message (e.g. "N attendance record(s) reference them") is the fit.
+      // sonner's default duration is short, so this one is held open longer.
+      toast.error(err instanceof ApiError ? err.message : "Failed to delete — network error.", { duration: 8000 })
+    } finally {
+      setGuardDeleting(false); setGuardDeleteConfirm(null)
+    }
+  }
+
+  async function deleteDeployment(depId: string) {
+    if (!id) return
+    setDeploymentDeleting(true)
+    try {
+      await api.delete(`/api/agencies/${id}/deployments/${depId}`)
+      setDeployments(prev => prev.filter(d => d.id !== depId))
+      toast.success("Deployment permanently deleted")
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Failed to delete — network error.", { duration: 8000 })
+    } finally {
+      setDeploymentDeleting(false); setDeploymentDeleteConfirm(null)
+    }
+  }
+
+  async function deleteAgency() {
+    if (!id) return
+    setDeleteAgencyBusy(true); setDeleteAgencyError("")
+    try {
+      await api.delete(`/api/agencies/${id}`)
+      toast.success("Agency and all its guards permanently deleted")
+      navigate("/admin/agencies")
+    } catch (err) {
+      setDeleteAgencyError(err instanceof ApiError ? err.message : "Failed to delete — network error.")
+    } finally {
+      setDeleteAgencyBusy(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center text-muted-foreground">
@@ -305,8 +369,39 @@ export default function AgencyDetailPage() {
               : agency.status === "active" ? <Archive className="h-3.5 w-3.5" /> : <RotateCcw className="h-3.5 w-3.5" />}
             {agency.status === "active" ? "Archive" : "Reactivate"}
           </button>
+          {isDirector && (
+            <button onClick={() => { setDeleteAgencyConfirm(true); setDeleteAgencyError("") }}
+              className="flex items-center gap-1.5 rounded-md border border-destructive/30 bg-background px-3 py-2 text-sm font-medium text-destructive transition-colors hover:bg-destructive/10">
+              <Trash2 className="h-3.5 w-3.5" />Delete
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Permanent agency delete — director only. Deletes the agency, every
+          one of its guards, their documents, and its own login account.
+          Logged to audit_events on the backend. */}
+      {deleteAgencyConfirm && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 flex flex-col gap-2">
+          <p className="text-sm text-destructive font-medium">
+            Permanently delete "{agency.name}" and all {staff.length} of its cover guards? This cannot be undone.
+          </p>
+          {deleteAgencyError && (
+            <div className="rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-sm text-destructive">
+              {deleteAgencyError}
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <button onClick={() => { setDeleteAgencyConfirm(false); setDeleteAgencyError("") }} disabled={deleteAgencyBusy}
+              className="rounded px-3 py-1.5 text-xs border hover:bg-muted transition-colors disabled:opacity-50">Cancel</button>
+            <button onClick={deleteAgency} disabled={deleteAgencyBusy}
+              className="rounded px-3 py-1.5 text-xs bg-destructive text-white hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1">
+              {deleteAgencyBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              Yes, delete permanently
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex w-fit gap-0 rounded-lg border bg-muted/40 p-1">
@@ -370,6 +465,15 @@ export default function AgencyDetailPage() {
                             <button onClick={() => setGuardArchiveConfirm(null)}
                               className="rounded-md border px-2 py-1 text-[10px] hover:bg-muted">Cancel</button>
                           </div>
+                        ) : guardDeleteConfirm === g.id ? (
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => deleteGuard(g.id)} disabled={guardDeleting}
+                              className="rounded-md bg-destructive px-2 py-1 text-[10px] font-medium text-white hover:bg-destructive/90 disabled:opacity-50">
+                              {guardDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : "Confirm"}
+                            </button>
+                            <button onClick={() => setGuardDeleteConfirm(null)}
+                              className="rounded-md border px-2 py-1 text-[10px] hover:bg-muted">Cancel</button>
+                          </div>
                         ) : (
                           <div className="flex items-center gap-0.5">
                             <button onClick={() => openEditGuard(g)} title="Edit"
@@ -380,6 +484,12 @@ export default function AgencyDetailPage() {
                               className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
                               <UserX className="h-3.5 w-3.5" />
                             </button>
+                            {isDirector && (
+                              <button onClick={() => setGuardDeleteConfirm(g.id)} title="Delete permanently"
+                                className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                           </div>
                         )}
                       </td>
@@ -392,9 +502,10 @@ export default function AgencyDetailPage() {
         </div>
       )}
 
-      {/* Deployments tab — read-only here; deployments are created from the
-          agency's own login (AgencyPortalDeploymentsPage), matching the
-          plan's Admin vs Agency Admin UI split. */}
+      {/* Deployments tab — created from the agency's own login
+          (AgencyPortalDeploymentsPage), matching the plan's Admin vs Agency
+          Admin UI split. Permanent delete (director only) lives here though,
+          same as agency/guard delete elsewhere on this admin-side page. */}
       {activeTab === "deployments" && (
         deployments.length === 0 ? (
           <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
@@ -407,8 +518,9 @@ export default function AgencyDetailPage() {
                 <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
                   <th className="px-4 py-3">Event date</th>
                   <th className="px-4 py-3">Site</th>
-                  <th className="px-4 py-3">Guards</th>
+                  <th className="px-4 py-3">Guards deployed</th>
                   <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3 w-20"></th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -418,11 +530,42 @@ export default function AgencyDetailPage() {
                     <td className="px-4 py-3">
                       <span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5 text-muted-foreground" />{d.site?.name ?? d.site_id}</span>
                     </td>
-                    <td className="px-4 py-3">{Number(d.guard_count ?? 0)}</td>
+                    <td className="px-4 py-3">
+                      {(d.staff ?? []).length > 0 ? (
+                        <div className="flex flex-wrap gap-1 max-w-xs">
+                          {(d.staff ?? []).map(s => (
+                            <span key={s.id} className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium">{s.name}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">No guards assigned</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium border capitalize ${DEPLOYMENT_STATUS_STYLE[d.status] ?? "bg-muted text-muted-foreground border-border"}`}>
                         {d.status}
                       </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {isDirector && (
+                        deploymentDeleteConfirm === d.id ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <button onClick={() => deleteDeployment(d.id)} disabled={deploymentDeleting}
+                              className="rounded-md bg-destructive px-2 py-1 text-[10px] font-medium text-white hover:bg-destructive/90 disabled:opacity-50">
+                              {deploymentDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : "Confirm"}
+                            </button>
+                            <button onClick={() => setDeploymentDeleteConfirm(null)}
+                              className="rounded-md border px-2 py-1 text-[10px] hover:bg-muted">Cancel</button>
+                          </div>
+                        ) : (
+                          <div className="flex justify-end">
+                            <button onClick={() => setDeploymentDeleteConfirm(d.id)} title="Delete permanently"
+                              className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        )
+                      )}
                     </td>
                   </tr>
                 ))}

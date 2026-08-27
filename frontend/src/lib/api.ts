@@ -36,6 +36,13 @@ async function handleResponse<T>(res: Response): Promise<T> {
     throw new ApiError(401, "Your session has expired. Please sign in again.")
   }
   if (!res.ok) {
+    // 413 comes straight from nginx as a bare HTML page (not JSON) when a
+    // file exceeds its client_max_body_size — res.json() below fails and
+    // the fallback message was a cryptic "Request failed (413)". This was
+    // the actual cause behind "staff can't upload anything" reports.
+    if (res.status === 413) {
+      throw new ApiError(413, "That file is too large to upload. Please reduce its size (e.g. a lower-resolution photo) and try again.")
+    }
     const data = await res.json().catch(() => ({}) as { error?: string })
     throw new ApiError(res.status, data.error || `Request failed (${res.status})`, data)
   }
