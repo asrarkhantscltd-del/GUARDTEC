@@ -25,6 +25,19 @@ if ("serviceWorker" in navigator) {
     reloaded = true
     window.location.reload()
   })
+
+  // The browser only re-checks sw.js for changes on a real navigation —
+  // a PWA left open (or resumed from the phone's app switcher instead of
+  // relaunched) can sit on a stale bundle indefinitely otherwise, which is
+  // exactly what made new pages 404/fail until a manual logout+login forced
+  // a navigation. Polling registration.update() re-triggers that check on
+  // a timer instead of waiting for one.
+  navigator.serviceWorker.ready.then((reg) => {
+    setInterval(() => reg.update(), 60_000)
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") reg.update()
+    })
+  })
 }
 
 createRoot(document.getElementById("root")!).render(

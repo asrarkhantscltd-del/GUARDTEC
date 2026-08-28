@@ -86,7 +86,7 @@ export default function AuditTrailPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="font-display text-xl font-bold tracking-tight flex items-center gap-2">
             <History className="h-5 w-5 text-muted-foreground" /> Audit Trail
@@ -102,8 +102,8 @@ export default function AuditTrailPage() {
 
       {error && <p className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>}
 
-      <div className="surface overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="surface overflow-x-auto">
+        <table className="w-full min-w-[720px] text-sm">
           <thead className="border-b bg-muted/30">
             <tr>
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">When</th>
