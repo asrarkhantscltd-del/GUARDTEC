@@ -139,6 +139,9 @@ export interface StaffMember {
   name: string
   overall: string
   jobRole?: string
+  // Login role of the linked user account (director/ops_manager/etc), if any
+  // — office-based roles are exempt from SIA/CSCS/training compliance checks.
+  linkedRole?: string | null
   email?: string
   phone?: string
   nationality?: string

@@ -880,10 +880,15 @@ export default function StaffDetailPage() {
   const training = trainingData
   const dob = staff.dob || staff.dateOfBirth
 
+  // Office-based login roles (Director/Ops Manager/HR Manager/Office Manager/
+  // Accounts) are never deployed as a guard, so SIA/CSCS/training checkpoints
+  // don't apply to them — auto-pass rather than flag as missing.
+  const isOfficeExempt = ["director", "ops_manager", "hr_manager", "office_manager", "accounts", "media", "fleet_manager"].includes(staff.linkedRole ?? "")
+
   // ACS audit — computed pass/fail for each point
   const acs = {
-    siaValid:          !!(staff.sia?.number && (daysUntil(staff.sia.expiry) ?? 1) >= 0),
-    siaType:           !!(staff.sia?.type),
+    siaValid:          isOfficeExempt || !!(staff.sia?.number && (daysUntil(staff.sia.expiry) ?? 1) >= 0),
+    siaType:           isOfficeExempt || !!(staff.sia?.type),
     rtwVerified:       !!(staff.visa?.type || staff.nationality?.toLowerCase().includes("british")),
     dbsChecked:        !!(staff.dbs?.checkDate),
     bs7858:            !!(staff.bs7858?.completed),
@@ -893,9 +898,9 @@ export default function StaffDetailPage() {
     // evidence for audit purposes, same as a manager manually ticking
     // "completed" — checking `completed` alone meant an uploaded cert never
     // flipped this checkpoint to pass.
-    firstAid:          !!(training.firstAid?.completed || training.firstAid?.certUploaded),
-    conflictMgmt:      !!(training.conflictManagement?.completed || training.conflictManagement?.certUploaded),
-    siaPhysicalCopy:   !!(docs.siaPhysical?.uploaded),
+    firstAid:          isOfficeExempt || !!(training.firstAid?.completed || training.firstAid?.certUploaded),
+    conflictMgmt:      isOfficeExempt || !!(training.conflictManagement?.completed || training.conflictManagement?.certUploaded),
+    siaPhysicalCopy:   isOfficeExempt || !!(docs.siaPhysical?.uploaded),
     passportOnFile:    !!(docs.passport?.uploaded),
     addressProof:      !!(docs.proofOfAddress1?.uploaded),
     assignmentInstr:   !!(docs.assignmentInstructions?.uploaded),

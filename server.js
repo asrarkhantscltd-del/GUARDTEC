@@ -1666,16 +1666,27 @@ function worstStatus(arr) {
   if (arr.includes('green')) return 'green';
   return 'unknown';
 }
+// Office-based login roles never deployed as a guard — SIA/CSCS/training
+// aren't relevant to their job, so they're exempt from those compliance
+// checks (Asrar's explicit decision, 2026-08-28). Supervisor is deliberately
+// NOT in this list — not confirmed exempt, may still do guard-facing work.
+var OFFICE_ROLES_EXEMPT_FROM_SIA_CSCS = ['director', 'ops_manager', 'hr_manager', 'office_manager', 'accounts', 'media', 'fleet_manager'];
+
 function calcOverall(emp) {
+  var exempt = OFFICE_ROLES_EXEMPT_FROM_SIA_CSCS.indexOf(emp.linkedRole) !== -1;
   var s = [];
-  // SIA Licence — required, missing = action required
-  if (!emp.sia || !emp.sia.number) {
+  // SIA Licence — required, missing = action required (unless office-exempt)
+  if (exempt) {
+    s.push('green');
+  } else if (!emp.sia || !emp.sia.number) {
     s.push('amber');
   } else {
     s.push(statusOf(daysFrom(emp.sia.expiry)));
   }
-  // CSCS Card — required, missing or pending = action required
-  if (!emp.cscs || !emp.cscs.number) {
+  // CSCS Card — required, missing or pending = action required (unless office-exempt)
+  if (exempt) {
+    s.push('green');
+  } else if (!emp.cscs || !emp.cscs.number) {
     s.push('amber');
   } else if (String(emp.cscs.number).toUpperCase().startsWith('PENDING')) {
     s.push('amber');
@@ -1902,7 +1913,7 @@ var STAFF_CACHE = [];
 // and the migration script apply the exact same rule.
 var STAFF_STRIP_FIELDS = ['id','name','email','phone','phoneLandline','dateOfBirth','dob','placeOfBirth',
   'nationality','gender','drivingLicence','deployStatus','currentSite','contract','induction','addedDate',
-  'status','jobRole','wizard_draft','pending_submission','rejection_reason','overall','_folderPath',
+  'status','jobRole','wizard_draft','pending_submission','rejection_reason','overall','linkedRole','_folderPath',
   '_nameSuffix','_pgId','documents','archived_at','archive_reason'];
 
 // Rebuilds the flat `emp` object shape every existing call site already
@@ -1923,7 +1934,7 @@ function pgDateToStr(v) {
   return String(v).slice(0, 10);
 }
 
-function reconstructEmp(row, docRows) {
+function reconstructEmp(row, docRows, linkedRole) {
   var flat = Object.assign({}, row.profile_data || {});
   var core = {
     id: row.legacy_id, name: row.name, email: row.email, phone: row.phone,
@@ -1944,6 +1955,7 @@ function reconstructEmp(row, docRows) {
   flat._pgId = row.id;
   flat.archived_at = row.archived_at;
   flat.archive_reason = row.archive_reason;
+  flat.linkedRole = linkedRole || null;
   applyStaffDocuments(flat, docRows);
   flat.overall = calcOverall(flat);
   return flat;
@@ -1984,7 +1996,8 @@ async function refreshStaffCacheEntry(employeeId) {
     return;
   }
   var docRows = (await pgPool.query('SELECT * FROM staff_documents WHERE employee_id = $1', [employeeId])).rows;
-  var reconstructed = reconstructEmp(r.rows[0], docRows);
+  var roleRow = await pgPool.query('SELECT role FROM users WHERE staff_id = $1', [r.rows[0].legacy_id]);
+  var reconstructed = reconstructEmp(r.rows[0], docRows, roleRow.rows[0] && roleRow.rows[0].role);
   var idx = STAFF_CACHE.findIndex(function(e) { return e._pgId === employeeId; });
   if (idx === -1) STAFF_CACHE.push(reconstructed);
   else STAFF_CACHE[idx] = reconstructed;
@@ -1996,7 +2009,11 @@ async function refreshStaffCacheFull() {
   (await pgPool.query('SELECT * FROM staff_documents')).rows.forEach(function(d) {
     (docsByEmployee[d.employee_id] = docsByEmployee[d.employee_id] || []).push(d);
   });
-  STAFF_CACHE = rows.map(function(row) { return reconstructEmp(row, docsByEmployee[row.id] || []); });
+  var roleByStaffId = {};
+  (await pgPool.query("SELECT staff_id, role FROM users WHERE staff_id IS NOT NULL")).rows.forEach(function(u) {
+    roleByStaffId[u.staff_id] = u.role;
+  });
+  STAFF_CACHE = rows.map(function(row) { return reconstructEmp(row, docsByEmployee[row.id] || [], roleByStaffId[row.legacy_id]); });
 }
 
 // ── LOAD STAFF ────────────────────────────────────────────────────────────────
