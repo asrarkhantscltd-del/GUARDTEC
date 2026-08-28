@@ -171,35 +171,13 @@ async function pushToManagers(body) {
   }
 }
 
-app.get('/api/push/vapid-public-key', requireLogin, requirePermission('staff'), function(req, res) {
-  res.json({ ok: true, key: process.env.VAPID_PUBLIC_KEY || null });
-});
-
-app.post('/api/push/subscribe', requireLogin, requirePermission('staff'), async function(req, res) {
-  try {
-    var sub = req.body && req.body.subscription;
-    if (!sub || !sub.endpoint || !sub.keys) return res.status(400).json({ ok: false, error: 'Invalid subscription.' });
-    await pgPool.query(
-      `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1,$2,$3,$4)
-       ON CONFLICT (endpoint) DO UPDATE SET user_id = $1, p256dh = $3, auth = $4`,
-      [req.user.id, sub.endpoint, sub.keys.p256dh, sub.keys.auth]
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-app.post('/api/push/unsubscribe', requireLogin, async function(req, res) {
-  try {
-    var endpoint = req.body && req.body.endpoint;
-    if (!endpoint) return res.status(400).json({ ok: false, error: 'endpoint is required.' });
-    await pgPool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [endpoint]);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
+// Route handlers for these three live further down (after app.use(cookieParser())
+// / app.use(express.json()) are registered) — see the "WEB PUSH — routes"
+// section below. Express runs middleware/routes in registration order, so
+// defining them up here (before the cookie/body parsers exist) meant
+// req.cookies and req.body were both undefined for every request to them;
+// found via testing (`/api/push/vapid-public-key` returned "Not logged in"
+// even for an authenticated browser session).
 
 // ── ROLES (configurable, module-level permissions) ────────────────────────────
 // Modules a role can be granted: staff, fleet, sites, compliance, pending_review.
@@ -7445,6 +7423,42 @@ app.post('/api/notifications/:id/seen', requireLogin, requirePermission('staff')
 app.post('/api/notifications/seen-all', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
     await pgPool.query('UPDATE notifications SET seen_at = NOW() WHERE seen_at IS NULL');
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── WEB PUSH — routes ──────────────────────────────────────────────────────
+// pushToManagers() and the push_subscriptions schema are defined up near
+// createNotification() (they're plain functions, order doesn't matter for
+// those); these three routes have to live down here specifically, after
+// app.use(cookieParser())/app.use(express.json()) above, or req.cookies and
+// req.body are both undefined when they run.
+app.get('/api/push/vapid-public-key', requireLogin, requirePermission('staff'), function(req, res) {
+  res.json({ ok: true, key: process.env.VAPID_PUBLIC_KEY || null });
+});
+
+app.post('/api/push/subscribe', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var sub = req.body && req.body.subscription;
+    if (!sub || !sub.endpoint || !sub.keys) return res.status(400).json({ ok: false, error: 'Invalid subscription.' });
+    await pgPool.query(
+      `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (endpoint) DO UPDATE SET user_id = $1, p256dh = $3, auth = $4`,
+      [req.user.id, sub.endpoint, sub.keys.p256dh, sub.keys.auth]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/push/unsubscribe', requireLogin, async function(req, res) {
+  try {
+    var endpoint = req.body && req.body.endpoint;
+    if (!endpoint) return res.status(400).json({ ok: false, error: 'endpoint is required.' });
+    await pgPool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [endpoint]);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
