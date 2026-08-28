@@ -125,7 +125,7 @@ export default function AgencyStaffForm({ agencyId, initialStaff, onSaved, onCan
     if (!jobRole) { setError("Job role is required."); return }
     if (jobRole === "Other" && !customRole.trim()) { setError("Please describe the role."); return }
     if (!siaExpiry)  { setError("SIA expiry is required."); return }
-    if (!cscsExpiry) { setError("CSCS expiry is required."); return }
+    if (!cscsExpiry && jobRole !== "Dog Handler") { setError("CSCS expiry is required."); return }
     if (!editing && !consentCredit)  { setError("You must confirm the guard has consented to a credit check."); return }
     if (!editing && !consentSocial)  { setError("You must confirm the guard has consented to a social media check."); return }
 
@@ -227,7 +227,7 @@ export default function AgencyStaffForm({ agencyId, initialStaff, onSaved, onCan
                 <Field label="SIA expiry *">
                   <Input type="date" value={siaExpiry} onChange={e => setSiaExpiry(e.target.value)} />
                 </Field>
-                <Field label="CSCS expiry *">
+                <Field label={jobRole === "Dog Handler" ? "CSCS expiry" : "CSCS expiry *"}>
                   <Input type="date" value={cscsExpiry} onChange={e => setCscsExpiry(e.target.value)} />
                 </Field>
               </div>
@@ -293,8 +293,9 @@ export default function AgencyStaffForm({ agencyId, initialStaff, onSaved, onCan
                   <DocumentUploadRow label="Right to Work" hint="Passport, visa or share code confirmation"
                     agencyId={agencyId} staffId={initialStaff!.id} docType="rtw_cert"
                     initialUploaded={initialStaff!.rtw_cert_uploaded} initialDate={initialStaff!.rtw_cert_upload_date} />
-                  {/* SIA and CSCS are mandatory for every guard now, not
-                      gated on badge_type — so both rows always show. */}
+                  {/* SIA is mandatory for every guard, not gated on badge_type,
+                      so it always shows. CSCS also always shows — it's just
+                      optional (not counted against compliance) for Dog Handlers. */}
                   <DocumentUploadRow label="SIA Licence" hint="Front of the SIA licence card"
                     agencyId={agencyId} staffId={initialStaff!.id} docType="sia_cert"
                     initialUploaded={initialStaff!.sia_cert_uploaded} initialDate={initialStaff!.sia_cert_upload_date} />

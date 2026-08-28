@@ -4457,13 +4457,15 @@ function normalizeCsvRow(row) {
 // Role-conditional BS7858 compliance (debug note #6) — a cert only counts
 // against a guard if their job_role actually requires it, so e.g. a Door
 // Supervisor is never flagged "incomplete" for a missing Dog Handler cert.
-// SIA and CSCS expiry are unconditionally required for every guard as of
-// 2026-08-20 (user's explicit decision — badge_type no longer gates this,
-// it's kept purely as informational metadata since a guard can hold other
-// badges like CCTV/Close Protection too). dbs_expiry became optional in the
-// same change — a blank one is no longer counted as a problem, but a
-// present-and-expired one still is, same as before. Priority worst-first:
-// EXPIRED beats INCOMPLETE beats ACTION_NEEDED beats COMPLIANT.
+// SIA expiry is unconditionally required for every guard as of 2026-08-20
+// (user's explicit decision — badge_type no longer gates this, it's kept
+// purely as informational metadata since a guard can hold other badges like
+// CCTV/Close Protection too). dbs_expiry became optional in the same change
+// — a blank one is no longer counted as a problem, but a present-and-expired
+// one still is, same as before. CSCS expiry became optional specifically for
+// Dog Handlers on 2026-08-28 (user's explicit decision) — still mandatory for
+// every other job role. Priority worst-first: EXPIRED beats INCOMPLETE beats
+// ACTION_NEEDED beats COMPLIANT.
 function expiryCheck(dateVal, requiredFlag) {
   if (!dateVal) return requiredFlag ? 'missing' : 'n/a';
   // daysFrom() takes anything `new Date()` accepts, which covers both a
@@ -4479,7 +4481,7 @@ function calculateComplianceStatus(staff) {
   var required = {
     dbs: false,
     sia: true,
-    cscs: true,
+    cscs: staff.job_role !== 'Dog Handler',
     rtw: true,
     dog_handler: staff.job_role === 'Dog Handler',
     training: true,
@@ -4531,8 +4533,9 @@ app.post('/api/agencies/:agencyId/staff', requireLogin, requireOwnAgencyOrPermis
     var cscsExpiry  = b.cscs_expiry ? String(b.cscs_expiry).trim() : null;
     // Mandatory for every guard regardless of badge_type — see the note on
     // calculateComplianceStatus. dbs_expiry deliberately has no such check.
+    // cscs_expiry is the one exception: optional for Dog Handlers.
     if (!siaExpiry)  return res.status(400).json({ ok: false, error: 'SIA expiry is required.' });
-    if (!cscsExpiry) return res.status(400).json({ ok: false, error: 'CSCS expiry is required.' });
+    if (!cscsExpiry && jobRole !== 'Dog Handler') return res.status(400).json({ ok: false, error: 'CSCS expiry is required.' });
 
     var r = await pgPool.query(
       `INSERT INTO agency_staff (agency_id, name, email, phone, nationality, job_role, custom_role, badge_type, dbs_expiry, sia_expiry, cscs_expiry, consent_credit_check, consent_social_media_check)
@@ -4600,7 +4603,7 @@ app.patch('/api/agencies/:agencyId/staff/:id', requireLogin, requireOwnAgencyOrP
     if (!name)       return res.status(400).json({ ok: false, error: 'Guard name is required.' });
     if (!jobRole)    return res.status(400).json({ ok: false, error: 'Job role is required.' });
     if (!siaExpiry)  return res.status(400).json({ ok: false, error: 'SIA expiry is required.' });
-    if (!cscsExpiry) return res.status(400).json({ ok: false, error: 'CSCS expiry is required.' });
+    if (!cscsExpiry && jobRole !== 'Dog Handler') return res.status(400).json({ ok: false, error: 'CSCS expiry is required.' });
 
     var r = await pgPool.query(
       `UPDATE agency_staff SET name=$1, email=$2, phone=$3, nationality=$4, job_role=$5, custom_role=$6, badge_type=$7, dbs_expiry=$8, sia_expiry=$9, cscs_expiry=$10, updated_at=NOW()
