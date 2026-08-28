@@ -27,5 +27,10 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  // sw.ts needs the "webworker" lib (ServiceWorkerGlobalScope, etc.), which
+  // conflicts with this config's "DOM" lib if type-checked together — it
+  // gets its own tsconfig.sw.json instead (see that file + vite.config.ts's
+  // injectManifest strategy, which is what actually builds it).
+  "exclude": ["src/sw.ts"]
 }

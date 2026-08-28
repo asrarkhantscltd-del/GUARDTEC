@@ -13,8 +13,10 @@ import {
   Camera, Loader2, Sun, Moon, AlertTriangle, XCircle,
   ChevronDown, UserCog, Eye, EyeOff, FileSpreadsheet,
   Building2, CalendarDays, FileText, ListChecks,
+  BellRing, BellOff,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
+import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
 // import AiChat from "@/components/AiChat" — see the note by its (commented-out) render call below
 
 interface NavItem {
@@ -65,6 +67,36 @@ export default function DashboardLayout() {
     link_staff_id?: string; link_tab?: string; link_incident_id?: string; link_agency_id?: string; created_at: string
   }[]>([])
   const [showAlerts, setShowAlerts] = useState(false)
+  // Push notifications — managers/directors only for now. `null` while the
+  // existing-subscription check is still in flight, so the toggle doesn't
+  // flash the wrong state on first render.
+  const [pushOn, setPushOn] = useState<boolean | null>(null)
+  const [pushBusy, setPushBusy] = useState(false)
+  const canUsePush = pushSupported() && !!user?.permissions?.staff
+
+  useEffect(() => {
+    if (!canUsePush) return
+    getExistingSubscription().then(sub => setPushOn(!!sub)).catch(() => setPushOn(false))
+  }, [canUsePush])
+
+  async function togglePush() {
+    setPushBusy(true)
+    try {
+      if (pushOn) {
+        await disablePush()
+        setPushOn(false)
+        toast.success("Push notifications turned off")
+      } else {
+        await enablePush()
+        setPushOn(true)
+        toast.success("Push notifications enabled — you'll get alerts even when this tab is closed")
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't update push notifications")
+    } finally {
+      setPushBusy(false)
+    }
+  }
   const alertsRef = useRef<HTMLDivElement>(null)
   const [showProfile, setShowProfile] = useState(false)
   const profileRef = useRef<HTMLDivElement>(null)
@@ -569,6 +601,15 @@ export default function DashboardLayout() {
                   <div className="flex items-center justify-between border-b border-border px-4 py-3">
                     <p className="text-sm font-semibold">Notifications</p>
                     <div className="flex items-center gap-1">
+                      {canUsePush && pushOn !== null && (
+                        <button onClick={togglePush} disabled={pushBusy}
+                          title={pushOn ? "Turn off push notifications on this device" : "Get push notifications on this device, even when this tab is closed"}
+                          className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-50">
+                          {pushBusy
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : pushOn ? <BellRing className="h-3.5 w-3.5 text-primary" /> : <BellOff className="h-3.5 w-3.5" />}
+                        </button>
+                      )}
                       {notifications.length > 0 && (
                         <button onClick={clearAllNotifications}
                           className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">

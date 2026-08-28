@@ -8,6 +8,7 @@ const jwt          = require('jsonwebtoken');
 const bcrypt       = require('bcryptjs');
 const crypto       = require('crypto');
 const rateLimit    = require('express-rate-limit');
+const webpush      = require('web-push');
 const { Pool }     = require('pg');
 
 const app  = express();
@@ -17,6 +18,20 @@ const BASE_URL = process.env.BASE_URL || ('http://localhost:' + PORT); // link b
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const pgPool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// Web Push (real browser/phone push notifications, works even with the PWA
+// closed) — managers/directors only for now, hooked into createNotification()
+// below rather than each of its call sites, so every existing broadcast
+// event (staff upload, message, incident report, etc.) gets push for free.
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT || 'mailto:admin@example.com',
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+} else {
+  console.warn('[PUSH] VAPID keys not set — push notifications disabled.');
+}
 
 // Throttles credential-guessing on the few routes anyone (not just a logged-in
 // user) can hit repeatedly: login, self-registration, and the public
@@ -102,7 +117,89 @@ async function createNotification(opts) {
   } catch (e) {
     console.error('[NOTIFY] failed to create notification:', e.message);
   }
+  // Same broadcast audience as the bell feed above (every manager/director),
+  // fired from this single choke point so none of createNotification()'s
+  // six call sites need editing individually. Never let a push failure
+  // affect the caller — the in-app notification above already succeeded.
+  pushToManagers(opts.summary).catch(function(e) { console.error('[PUSH] broadcast failed:', e.message); });
 }
+
+// ── WEB PUSH (browser/phone notifications) ─────────────────────────────────
+(async function ensurePushSubscriptionsSchema() {
+  try {
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        endpoint   TEXT NOT NULL UNIQUE,
+        p256dh     TEXT NOT NULL,
+        auth       TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pgPool.query("CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id)");
+  } catch (e) {
+    console.error('[DB] push_subscriptions schema migration failed:', e.message);
+  }
+})();
+
+// Sends one push message to every subscribed manager/director device. Scope
+// is deliberately broadcast-to-all-managers, matching the bell feed's
+// existing audience (see notifications table above) — not per-staff
+// targeting, which the current schema has no data model for yet.
+async function pushToManagers(body) {
+  if (!process.env.VAPID_PUBLIC_KEY) return; // not configured — no-op, not an error
+  var subs = (await pgPool.query('SELECT id, endpoint, p256dh, auth FROM push_subscriptions')).rows;
+  var payload = JSON.stringify({ title: 'GuardTec Compliance', body: body, url: '/' });
+  for (var i = 0; i < subs.length; i++) {
+    var sub = subs[i];
+    try {
+      await webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+        payload
+      );
+    } catch (e) {
+      // 404/410 = the browser/OS revoked this subscription (uninstalled,
+      // permission withdrawn, etc.) — clean it up rather than retrying it
+      // forever on every future notification.
+      if (e.statusCode === 404 || e.statusCode === 410) {
+        await pgPool.query('DELETE FROM push_subscriptions WHERE id = $1', [sub.id]);
+      } else {
+        console.error('[PUSH] send failed for subscription', sub.id, ':', e.message);
+      }
+    }
+  }
+}
+
+app.get('/api/push/vapid-public-key', requireLogin, requirePermission('staff'), function(req, res) {
+  res.json({ ok: true, key: process.env.VAPID_PUBLIC_KEY || null });
+});
+
+app.post('/api/push/subscribe', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var sub = req.body && req.body.subscription;
+    if (!sub || !sub.endpoint || !sub.keys) return res.status(400).json({ ok: false, error: 'Invalid subscription.' });
+    await pgPool.query(
+      `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (endpoint) DO UPDATE SET user_id = $1, p256dh = $3, auth = $4`,
+      [req.user.id, sub.endpoint, sub.keys.p256dh, sub.keys.auth]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/push/unsubscribe', requireLogin, async function(req, res) {
+  try {
+    var endpoint = req.body && req.body.endpoint;
+    if (!endpoint) return res.status(400).json({ ok: false, error: 'endpoint is required.' });
+    await pgPool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [endpoint]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 // ── ROLES (configurable, module-level permissions) ────────────────────────────
 // Modules a role can be granted: staff, fleet, sites, compliance, pending_review.

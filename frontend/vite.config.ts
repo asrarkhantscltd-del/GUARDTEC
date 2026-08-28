@@ -9,8 +9,15 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
+      // injectManifest (not generateSW) because push notifications need a
+      // hand-written `push` event listener in the service worker itself —
+      // see src/sw.ts, which also now owns the runtime-caching rules that
+      // used to live in the `workbox: {...}` block below.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       registerType: 'autoUpdate',
-      devOptions: { enabled: true },
+      devOptions: { enabled: true, type: 'module' },
       includeAssets: ['icon.svg', 'favicon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png'],
       manifest: {
         id: '/',
@@ -33,40 +40,12 @@ export default defineConfig({
           { src: 'screenshots/login-mobile.jpeg', sizes: '1072x2048', type: 'image/jpeg', form_factor: 'narrow', label: 'Sign in to the GuardTec compliance portal' },
         ],
       },
-      workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
-        // Default precache limit is 2 MiB — today's session pushed the main
-        // bundle to ~2.2 MB (agency/acknowledgment/custom-forms pages all
-        // land in one chunk, no route-level code-splitting yet), which made
-        // the Docker build fail outright rather than just warn. Raised with
-        // headroom rather than set to the current size, so the next feature
-        // added doesn't hit this same wall immediately again. Proper fix
-        // later is route-based code-splitting (dynamic import()) to keep
-        // individual chunks small — this is the stopgap.
+      // Same 2MiB-default problem as before (see the old comment this
+      // replaced): the main bundle is ~2.2MB, so the precache list built
+      // into sw.ts needs the same raised ceiling generateSW used to apply
+      // automatically via `workbox.maximumFileSizeToCacheInBytes`.
+      injectManifest: {
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-        // Without this, the SPA navigation fallback intercepts top-level
-        // navigations to /api/* (e.g. window.open, <a href="/api/...">
-        // target="_blank") and serves the cached index.html instead of
-        // the real response — breaking file downloads and document viewing.
-        navigateFallbackDenylist: [/^\/api\//],
-        // A new service worker otherwise sits "waiting" until every open
-        // tab closes before it takes over, so a rebuild silently keeps
-        // serving the old JS bundle. These make the new version activate
-        // and take control of open tabs immediately after install.
-        skipWaiting: true,
-        clientsClaim: true,
-        cleanupOutdatedCaches: true,
-        runtimeCaching: [
-          {
-            urlPattern: /^\/api\//,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-cache',
-              networkTimeoutSeconds: 10,
-              expiration: { maxEntries: 100, maxAgeSeconds: 300 },
-            },
-          },
-        ],
       },
     }),
   ],
