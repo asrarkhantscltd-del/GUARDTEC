@@ -143,14 +143,11 @@ async function createNotification(opts) {
   }
 })();
 
-// Sends one push message to every subscribed manager/director device. Scope
-// is deliberately broadcast-to-all-managers, matching the bell feed's
-// existing audience (see notifications table above) — not per-staff
-// targeting, which the current schema has no data model for yet.
-async function pushToManagers(body) {
-  if (!process.env.VAPID_PUBLIC_KEY) return; // not configured — no-op, not an error
-  var subs = (await pgPool.query('SELECT id, endpoint, p256dh, auth FROM push_subscriptions')).rows;
-  var payload = JSON.stringify({ title: 'GuardTec Compliance', body: body, url: '/' });
+// Shared delivery loop for both pushToManagers and pushToUser below — sends
+// one payload to every given subscription row, cleaning up any the
+// browser/OS has revoked (uninstalled, permission withdrawn, etc.) rather
+// than retrying them forever on every future notification.
+async function deliverPush(subs, payload) {
   for (var i = 0; i < subs.length; i++) {
     var sub = subs[i];
     try {
@@ -159,9 +156,6 @@ async function pushToManagers(body) {
         payload
       );
     } catch (e) {
-      // 404/410 = the browser/OS revoked this subscription (uninstalled,
-      // permission withdrawn, etc.) — clean it up rather than retrying it
-      // forever on every future notification.
       if (e.statusCode === 404 || e.statusCode === 410) {
         await pgPool.query('DELETE FROM push_subscriptions WHERE id = $1', [sub.id]);
       } else {
@@ -169,6 +163,25 @@ async function pushToManagers(body) {
       }
     }
   }
+}
+
+// Broadcasts to every subscribed manager/director device — the bell feed's
+// existing audience (see notifications table above). Used for the six
+// existing createNotification() events, none of which have a specific
+// target person to narrow to.
+async function pushToManagers(body) {
+  if (!process.env.VAPID_PUBLIC_KEY) return; // not configured — no-op, not an error
+  var subs = (await pgPool.query('SELECT id, endpoint, p256dh, auth FROM push_subscriptions')).rows;
+  await deliverPush(subs, JSON.stringify({ title: 'GuardTec Compliance', body: body, url: '/' }));
+}
+
+// Targeted push to one specific person — e.g. the staff member a manager
+// just messaged. userId is a users.id, not an employees.id/legacy_id;
+// callers resolve that first (see the /api/staff/:id/messages hook below).
+async function pushToUser(userId, body, url) {
+  if (!process.env.VAPID_PUBLIC_KEY || !userId) return;
+  var subs = (await pgPool.query('SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1', [userId])).rows;
+  await deliverPush(subs, JSON.stringify({ title: 'GuardTec Compliance', body: body, url: url || '/' }));
 }
 
 // Route handlers for these three live further down (after app.use(cookieParser())
@@ -7007,6 +7020,17 @@ app.post('/api/staff/:id/messages', requireLogin, requirePermission('staff'), as
       [empId, req.user.id, msg]
     );
     res.json({ ok: true, message: r.rows[0] });
+
+    // Targeted push to this specific staff member — req.params.id is the
+    // legacy_id, which is exactly what users.staff_id stores (confirmed
+    // against the /api/my-messages reply handler below, which resolves the
+    // same way). Not every staff member has registered a login yet, so a
+    // no-match here is normal, not an error.
+    pgPool.query("SELECT id FROM users WHERE staff_id = $1 AND role = 'staff'", [req.params.id])
+      .then(function(ur) {
+        if (ur.rows.length) pushToUser(ur.rows[0].id, (req.user.full_name || req.user.username) + ' sent you a message', '/');
+      })
+      .catch(function(e) { console.error('[PUSH] staff-message lookup failed:', e.message); });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -7435,11 +7459,15 @@ app.post('/api/notifications/seen-all', requireLogin, requirePermission('staff')
 // those); these three routes have to live down here specifically, after
 // app.use(cookieParser())/app.use(express.json()) above, or req.cookies and
 // req.body are both undefined when they run.
-app.get('/api/push/vapid-public-key', requireLogin, requirePermission('staff'), function(req, res) {
+// Just requireLogin (not requirePermission('staff'), which is the "manage
+// staff records" module permission, not the role) — staff members now get
+// targeted push too (see the /api/staff/:id/messages hook), so anyone
+// logged in, manager or staff, needs to be able to subscribe.
+app.get('/api/push/vapid-public-key', requireLogin, function(req, res) {
   res.json({ ok: true, key: process.env.VAPID_PUBLIC_KEY || null });
 });
 
-app.post('/api/push/subscribe', requireLogin, requirePermission('staff'), async function(req, res) {
+app.post('/api/push/subscribe', requireLogin, async function(req, res) {
   try {
     var sub = req.body && req.body.subscription;
     if (!sub || !sub.endpoint || !sub.keys) return res.status(400).json({ ok: false, error: 'Invalid subscription.' });

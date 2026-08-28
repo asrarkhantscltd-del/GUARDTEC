@@ -2,9 +2,11 @@ import { Outlet, useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 import { Button } from "@/components/ui/button"
-import { LogOut, Camera, Loader2, Sun, Moon, Bell, MessageSquare } from "lucide-react"
+import { LogOut, Camera, Loader2, Sun, Moon, Bell, MessageSquare, BellRing, BellOff } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import { api } from "@/lib/api"
+import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
+import { toast } from "sonner"
 
 export default function StaffLayout() {
   const { user, logout } = useAuth()
@@ -15,6 +17,36 @@ export default function StaffLayout() {
   const [unreadMsgs, setUnreadMsgs] = useState(0)
   const [showMsgBell, setShowMsgBell] = useState(false)
   const bellRef = useRef<HTMLDivElement>(null)
+  // Push notifications — so a message from a manager still reaches this
+  // staff member even with the app fully closed. `null` while the
+  // existing-subscription check is in flight.
+  const [pushOn, setPushOn] = useState<boolean | null>(null)
+  const [pushBusy, setPushBusy] = useState(false)
+  const canUsePush = pushSupported()
+
+  useEffect(() => {
+    if (!canUsePush) return
+    getExistingSubscription().then(sub => setPushOn(!!sub)).catch(() => setPushOn(false))
+  }, [canUsePush])
+
+  async function togglePush() {
+    setPushBusy(true)
+    try {
+      if (pushOn) {
+        await disablePush()
+        setPushOn(false)
+        toast.success("Push notifications turned off")
+      } else {
+        await enablePush()
+        setPushOn(true)
+        toast.success("Push notifications enabled — you'll get alerts even when this tab is closed")
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't update push notifications")
+    } finally {
+      setPushBusy(false)
+    }
+  }
 
   useEffect(() => {
     api.getBlob("/api/me/photo")
@@ -133,6 +165,15 @@ export default function StaffLayout() {
               disabled={uploadingPhoto}
               onChange={e => handleMyPhotoUpload(e.target.files?.[0] ?? null)} />
           </label>
+          {canUsePush && pushOn !== null && (
+            <Button variant="ghost" size="icon-sm" onClick={togglePush} disabled={pushBusy}
+              title={pushOn ? "Turn off push notifications on this device" : "Get notified even when this tab is closed"}
+              className="text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground">
+              {pushBusy
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : pushOn ? <BellRing className="h-4 w-4 text-primary" /> : <BellOff className="h-4 w-4" />}
+            </Button>
+          )}
           <Button variant="ghost" size="icon-sm" onClick={toggleTheme} title={isDark ? "Light mode" : "Dark mode"}
             className="text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground">
             {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
