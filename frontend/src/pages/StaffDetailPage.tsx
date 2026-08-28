@@ -119,16 +119,22 @@ function DocRow({
 }
 
 
-function AcsCheckRow({ label, done, note }: { label: string; done?: boolean; note?: string }) {
+function AcsCheckRow({ label, done, note, viewUrl }: { label: string; done?: boolean; note?: string; viewUrl?: string }) {
   return (
     <div className={`flex items-start gap-3 rounded-md px-3 py-2.5 ${done ? "bg-success/5" : "bg-destructive/5"}`}>
       {done
         ? <CheckCircle2 className="h-4 w-4 text-success mt-0.5 shrink-0" />
         : <AlertCircle  className="h-4 w-4 text-destructive mt-0.5 shrink-0" />}
-      <div>
+      <div className="flex-1 min-w-0">
         <p className="text-sm font-medium">{label}</p>
         {note && <p className="text-xs text-muted-foreground">{note}</p>}
       </div>
+      {viewUrl && (
+        <a href={viewUrl} target="_blank" rel="noopener noreferrer"
+          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0" title="View document">
+          <Eye className="h-3.5 w-3.5" />
+        </a>
+      )}
     </div>
   )
 }
@@ -2073,7 +2079,8 @@ export default function StaffDetailPage() {
             <CardContent className="space-y-1.5 px-3 pb-3">
               <AcsCheckRow label="Valid SIA licence held"           done={acs.siaValid}       note="Must be in-date and active" />
               <AcsCheckRow label="SIA licence type recorded"        done={acs.siaType}        note="Door Supervisor / Security Guard / CCTV / Close Protection" />
-              <AcsCheckRow label="Physical SIA copy on file"        done={acs.siaPhysicalCopy} note="Scanned front and back of badge" />
+              <AcsCheckRow label="Physical SIA copy on file"        done={acs.siaPhysicalCopy} note="Scanned front and back of badge"
+                viewUrl={docs.siaPhysical?.uploaded ? `/api/staff/${id}/documents/siaPhysical` : undefined} />
             </CardContent>
           </Card>
 
@@ -2081,15 +2088,18 @@ export default function StaffDetailPage() {
             <CardHeader className="pb-2"><CardTitle className="text-base">Identity &amp; Right to Work</CardTitle></CardHeader>
             <CardContent className="space-y-1.5 px-3 pb-3">
               <AcsCheckRow label="Right to Work verified"           done={acs.rtwVerified}    note="Passport, BRP, or share code confirmed" />
-              <AcsCheckRow label="Passport copy on file"           done={acs.passportOnFile}  note="Required for BS 7858 identity check" />
-              <AcsCheckRow label="Proof of address on file"        done={acs.addressProof}    note="Two documents within last 3 months" />
+              <AcsCheckRow label="Passport copy on file"           done={acs.passportOnFile}  note="Required for BS 7858 identity check"
+                viewUrl={docs.passport?.uploaded ? `/api/staff/${id}/documents/passport` : undefined} />
+              <AcsCheckRow label="Proof of address on file"        done={acs.addressProof}    note="Two documents within last 3 months"
+                viewUrl={docs.proofOfAddress1?.uploaded ? `/api/staff/${id}/documents/proofOfAddress1` : undefined} />
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base">Vetting (BS 7858)</CardTitle></CardHeader>
             <CardContent className="space-y-1.5 px-3 pb-3">
-              <AcsCheckRow label="DBS check obtained"              done={acs.dbsChecked}      note="Enhanced DBS recommended for security roles" />
+              <AcsCheckRow label="DBS check obtained"              done={acs.dbsChecked}      note="Enhanced DBS recommended for security roles"
+                viewUrl={docs.dbsCertificate?.uploaded ? `/api/staff/${id}/documents/dbsCertificate` : undefined} />
               <AcsCheckRow label="BS 7858 screening complete"      done={acs.bs7858}          note="Full 5-year employment history + references verified" />
               <AcsCheckRow label="Two satisfactory references"     done={acs.twoRefs}         note="Both references marked Satisfactory" />
             </CardContent>
@@ -2098,16 +2108,20 @@ export default function StaffDetailPage() {
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base">Training &amp; Competency</CardTitle></CardHeader>
             <CardContent className="space-y-1.5 px-3 pb-3">
-              <AcsCheckRow label="First Aid certificate held"       done={acs.firstAid}       note="Emergency First Aid at Work — valid 3 years" />
-              <AcsCheckRow label="Conflict management trained"      done={acs.conflictMgmt}   note="Mandatory for Door Supervisors under SIA guidance" />
+              <AcsCheckRow label="First Aid certificate held"       done={acs.firstAid}       note="Emergency First Aid at Work — valid 3 years"
+                viewUrl={training.firstAid?.certUploaded ? `/api/staff/${id}/training/firstAid/certificate` : undefined} />
+              <AcsCheckRow label="Conflict management trained"      done={acs.conflictMgmt}   note="Mandatory for Door Supervisors under SIA guidance"
+                viewUrl={training.conflictManagement?.certUploaded ? `/api/staff/${id}/training/conflictManagement/certificate` : undefined} />
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base">Employment &amp; Operations</CardTitle></CardHeader>
             <CardContent className="space-y-1.5 px-3 pb-3">
-              <AcsCheckRow label="Employment contract signed"       done={acs.contractSigned}   note="Signed copy on file" />
-              <AcsCheckRow label="Assignment instructions signed"   done={acs.assignmentInstr}  note="Site-specific — legally required by SIA" />
+              <AcsCheckRow label="Employment contract signed"       done={acs.contractSigned}   note="Signed copy on file"
+                viewUrl={contractExists ? `/api/staff/${id}/contract` : undefined} />
+              <AcsCheckRow label="Assignment instructions signed"   done={acs.assignmentInstr}  note="Site-specific — legally required by SIA"
+                viewUrl={docs.assignmentInstructions?.uploaded ? `/api/staff/${id}/documents/assignmentInstructions` : undefined} />
               <AcsCheckRow label="Emergency contact recorded"       done={acs.emergencyContact} note="Name, phone, and relationship" />
             </CardContent>
           </Card>
