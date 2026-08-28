@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
+import { useAuth } from "@/contexts/AuthContext"
 import { api, ApiError } from "@/lib/api"
 import { initials, AV_COLORS } from "@/lib/utils"
 import {
@@ -127,6 +128,8 @@ function typeInfo(type: string) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function SitesPage() {
+  const { user: me } = useAuth()
+  const canDelete = me?.role === "director" || !!me?.permissions?.delete_sites
   const [sites, setSites]         = useState<Site[]>([])
   const [loading, setLoading]     = useState(true)
   const [filter, setFilter]       = useState<"all" | "active" | "inactive">("all")
@@ -606,10 +609,12 @@ export default function SitesPage() {
                     className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors" title="Edit site">
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
-                  <button onClick={() => { setDeleteId(site.id); setDeleteSiteError("") }}
-                    className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors" title="Delete site">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  {canDelete && (
+                    <button onClick={() => { setDeleteId(site.id); setDeleteSiteError("") }}
+                      className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors" title="Delete site">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
             )
@@ -792,10 +797,12 @@ export default function SitesPage() {
                           <div key={s.id} className="flex items-center gap-3 rounded-lg border bg-card px-4 py-2.5">
                             <div className={`h-2 w-2 rounded-full shrink-0 ${OVERALL_DOT[s.overall] ?? OVERALL_DOT.grey}`} />
                             <p className="flex-1 text-sm font-medium">{s.name}</p>
-                            <button onClick={() => setDeleteStaffId(s.id)}
-                              className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
+                            {canDelete && (
+                              <button onClick={() => setDeleteStaffId(s.id)}
+                                className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -929,10 +936,12 @@ export default function SitesPage() {
                             className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
-                          <button onClick={() => setDeleteItemId(item.id)}
-                            className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          {canDelete && (
+                            <button onClick={() => setDeleteItemId(item.id)}
+                              className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -1047,11 +1056,13 @@ export default function SitesPage() {
                           title="View">
                           <Eye className="h-3.5 w-3.5" />
                         </a>
-                        <button onClick={() => handleDeleteDoc(doc.filename)}
-                          className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                          title="Delete">
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        {canDelete && (
+                          <button onClick={() => handleDeleteDoc(doc.filename)}
+                            className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                            title="Delete">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>

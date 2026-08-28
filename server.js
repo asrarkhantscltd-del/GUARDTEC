@@ -233,6 +233,32 @@ var DEFAULT_ROLES = [
   }
 })();
 
+// audit_events.object_id was originally UUID, but sites use TEXT ids (legacy
+// Date.now() strings preserved from the JSON->Postgres migration) — widen it
+// so the audit trail can log site events too, without losing any data.
+(async function ensureAuditEventsSchema() {
+  try {
+    await pgPool.query("ALTER TABLE audit_events ALTER COLUMN object_id TYPE TEXT");
+  } catch (e) {
+    console.error('[DB] audit_events schema migration failed:', e.message);
+  }
+})();
+
+// Shared audit-trail logger — reused by every create/edit/delete route that
+// should show up in the Director-only Audit Trail page. Never throws: a
+// logging failure must not break the actual action it's recording.
+async function logAuditEvent(req, action, objectType, objectId, objectName, metadata) {
+  try {
+    await pgPool.query(
+      `INSERT INTO audit_events (actor_id, actor_email, action, object_type, object_id, object_name, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [(req.user && req.user.id) || null, (req.user && req.user.username) || null, action, objectType, objectId, objectName, JSON.stringify(metadata || {})]
+    );
+  } catch (e) {
+    console.error('[AUDIT] log failed:', e.message);
+  }
+}
+
 // Agency cover-guard management (external staffing agencies) — agencies log
 // in through the SAME users/JWT system as everyone else (role='agency',
 // agency_id TEXT mirrors the existing users.staff_id TEXT column exactly).
@@ -1434,7 +1460,7 @@ app.post('/api/staff/:id/documents/:docKey', requireLogin, requireOwnStaffOrPerm
 
 // Management-only — deliberately requirePermission, not requireOwnStaffOrPermission,
 // so a staff member can never remove a document their manager has already reviewed.
-app.delete('/api/staff/:id/documents/:docKey', requireLogin, requirePermission('staff'), async function(req, res) {
+app.delete('/api/staff/:id/documents/:docKey', requireLogin, requirePermission('delete_staff'), async function(req, res) {
   var docKey = req.params.docKey;
   if (!ALLOWED_DOC_KEYS.includes(docKey)) return res.status(400).json({ ok:false, error:'Invalid document key' });
   try {
@@ -1530,7 +1556,7 @@ app.post('/api/staff/:id/training/:key/certificate', requireLogin, requireOwnSta
 });
 
 // Management-only, same reasoning as the documents delete route above.
-app.delete('/api/staff/:id/training/:key/certificate', requireLogin, requirePermission('staff'), async function(req, res) {
+app.delete('/api/staff/:id/training/:key/certificate', requireLogin, requirePermission('delete_staff'), async function(req, res) {
   var key = req.params.key;
   if (!ALLOWED_TRAINING_KEYS.includes(key)) return res.status(400).json({ ok:false, error:'Invalid training key' });
   try {
@@ -2717,6 +2743,7 @@ app.post('/api/sites', requireLogin, requirePermission('sites'), async function(
     );
     site.welfare_items = [];
     site.assigned_staff = [];
+    logAuditEvent(req, 'SITE_CREATED', 'site', site.id, site.name, {});
     res.json({ ok: true, site: site });
   } catch(e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -2748,13 +2775,14 @@ app.patch('/api/sites/:id', requireLogin, requirePermission('sites'), async func
       [updated.name, updated.type, updated.client_name, updated.client_phone, updated.client_email, updated.address,
        updated.supervisor_name, updated.supervisor_phone, updated.supervisor_email, updated.status, updated.notes, req.params.id]
     );
+    logAuditEvent(req, 'SITE_UPDATED', 'site', req.params.id, updated.name, {});
     res.json({ ok: true, site: await getSiteById(req.params.id) });
   } catch(e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-app.delete('/api/sites/:id', requireLogin, requirePermission('sites'), async function(req, res) {
+app.delete('/api/sites/:id', requireLogin, requirePermission('delete_sites'), async function(req, res) {
   try {
     // ON DELETE CASCADE on site_documents/site_welfare_items/site_staff_assignments
     // handles those DB-side child rows automatically, but agency_deployments
@@ -2785,6 +2813,7 @@ app.delete('/api/sites/:id', requireLogin, requirePermission('sites'), async fun
     if (fs.existsSync(docsDir)) {
       try { fs.rmSync(docsDir, { recursive: true, force: true }); } catch (e) {}
     }
+    logAuditEvent(req, 'SITE_DELETED', 'site', req.params.id, null, {});
     res.json({ ok: true });
   } catch(e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -2872,7 +2901,7 @@ app.get('/api/sites/:id/documents/:filename', requireLogin, requirePermission('s
   }
 });
 
-app.delete('/api/sites/:id/documents/:filename', requireLogin, requirePermission('sites'), async function(req, res) {
+app.delete('/api/sites/:id/documents/:filename', requireLogin, requirePermission('delete_sites'), async function(req, res) {
   try {
     var siteId = path.basename(req.params.id);
     var filename = path.basename(req.params.filename);
@@ -2917,7 +2946,7 @@ app.post('/api/sites/:id/staff', requireLogin, requirePermission('sites'), async
   } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-app.delete('/api/sites/:id/staff/:staffId', requireLogin, requirePermission('sites'), async function(req, res) {
+app.delete('/api/sites/:id/staff/:staffId', requireLogin, requirePermission('delete_sites'), async function(req, res) {
   try {
     var siteCheck = await pgPool.query('SELECT 1 FROM sites WHERE id = $1', [req.params.id]);
     if (!siteCheck.rows.length) return res.status(404).json({ ok: false, error: 'Site not found' });
@@ -2989,7 +3018,7 @@ app.patch('/api/sites/:id/welfare/:itemId', requireLogin, requirePermission('sit
   }
 });
 
-app.delete('/api/sites/:id/welfare/:itemId', requireLogin, requirePermission('sites'), async function(req, res) {
+app.delete('/api/sites/:id/welfare/:itemId', requireLogin, requirePermission('delete_sites'), async function(req, res) {
   try {
     var r = await pgPool.query('SELECT image_ext FROM site_welfare_items WHERE site_id = $1 AND id = $2', [req.params.id, req.params.itemId]);
     if (r.rows.length && r.rows[0].image_ext) {
@@ -3035,7 +3064,7 @@ app.post('/api/sites/:id/welfare/:itemId/image', requireLogin, requirePermission
 });
 
 // Welfare item image delete
-app.delete('/api/sites/:id/welfare/:itemId/image', requireLogin, requirePermission('sites'), async function(req, res) {
+app.delete('/api/sites/:id/welfare/:itemId/image', requireLogin, requirePermission('delete_sites'), async function(req, res) {
   try {
     var r = await pgPool.query('SELECT image_ext FROM site_welfare_items WHERE site_id = $1 AND id = $2', [req.params.id, req.params.itemId]);
     var ext = r.rows.length ? r.rows[0].image_ext : null;
@@ -3073,6 +3102,7 @@ app.put('/api/staff/:id', requireLogin, requirePermission('staff'), async functi
     updateComplianceTracker(emp);
     updateReferenceTracker(emp);
     refreshOverview();
+    logAuditEvent(req, 'STAFF_UPDATED', 'employee', emp.id, emp.name, {});
     res.json({ ok: true });
   } catch(e) {
     console.error(e);
@@ -3130,6 +3160,7 @@ app.post('/api/staff', requireLogin, requirePermission('staff'), async function(
     updateComplianceTracker(emp);
     updateReferenceTracker(emp);
     refreshOverview();
+    logAuditEvent(req, 'STAFF_CREATED', 'employee', emp.id, emp.name, {});
 
     res.json({ ok: true });
   } catch(e) {
@@ -3138,7 +3169,7 @@ app.post('/api/staff', requireLogin, requirePermission('staff'), async function(
   }
 });
 
-app.delete('/api/staff/:id', requireLogin, requirePermission('staff'), async function(req, res) {
+app.delete('/api/staff/:id', requireLogin, requirePermission('delete_staff'), async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.params.id; });
@@ -3150,6 +3181,7 @@ app.delete('/api/staff/:id', requireLogin, requirePermission('staff'), async fun
     await pgPool.query("UPDATE employees SET status='archived', archived_at=NOW(), archive_reason='left_employment' WHERE id=$1", [emp._pgId]);
     await refreshStaffCacheEntry(emp._pgId);
     refreshOverview();
+    logAuditEvent(req, 'STAFF_ARCHIVED', 'employee', emp._pgId, emp.name, {});
 
     console.log('[DELETE] Archived (moved to Ex-Staff):', emp.name);
     res.json({ ok: true });
@@ -3205,11 +3237,7 @@ app.delete('/api/exstaff/permanent', requireLogin, requireRole('director'), asyn
     }
 
     await pgPool.query('DELETE FROM employees WHERE id = $1', [row.id]);
-    await pgPool.query(
-      `INSERT INTO audit_events (actor_email, action, object_type, object_id, object_name, metadata)
-       VALUES ($1,'STAFF_PERMANENTLY_DELETED','employee',$2,$3,$4)`,
-      [(req.user && req.user.username) || null, row.id, row.name, JSON.stringify({ legacy_id: legacyId, archived_at: row.archived_at })]
-    );
+    logAuditEvent(req, 'STAFF_PERMANENTLY_DELETED', 'employee', row.id, row.name, { legacy_id: legacyId, archived_at: row.archived_at });
     STAFF_CACHE = STAFF_CACHE.filter(function(e) { return e._pgId !== row.id; });
 
     console.log('[DELETE] Permanently deleted ex-staff:', row.name);
@@ -3758,6 +3786,7 @@ app.post('/api/vehicles', requireLogin, requirePermission('fleet'), async functi
     var vehicleId = r.rows[0].id;
     await applyVehicleComplianceFields(vehicleId, b, true);
     if (b.assignedDriverId) await setVehicleDriver(vehicleId, b.assignedDriverId);
+    logAuditEvent(req, 'VEHICLE_CREATED', 'vehicle', vehicleId, registration, {});
     res.json({ ok: true, vehicle: await getVehicleById(vehicleId) });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -3781,13 +3810,14 @@ app.patch('/api/vehicles/:id', requireLogin, requirePermission('fleet'), async f
     }
     await applyVehicleComplianceFields(req.params.id, b, false);
     if (b.assignedDriverId !== undefined) await setVehicleDriver(req.params.id, b.assignedDriverId || null);
+    logAuditEvent(req, 'VEHICLE_UPDATED', 'vehicle', req.params.id, b.registration || null, {});
     res.json({ ok: true, vehicle: await getVehicleById(req.params.id) });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-app.delete('/api/vehicles/:id', requireLogin, requirePermission('fleet'), async function(req, res) {
+app.delete('/api/vehicles/:id', requireLogin, requirePermission('delete_fleet'), async function(req, res) {
   try {
     // ON DELETE CASCADE on vehicle_compliance/vehicle_assignments/vehicle_documents
     // handles the DB-side child rows; photo + docs dir are filesystem concerns.
@@ -3798,6 +3828,7 @@ app.delete('/api/vehicles/:id', requireLogin, requirePermission('fleet'), async 
     if (fs.existsSync(docsDir)) {
       try { fs.rmSync(docsDir, { recursive: true, force: true }); } catch (e) {}
     }
+    logAuditEvent(req, 'VEHICLE_DELETED', 'vehicle', req.params.id, null, {});
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -3910,7 +3941,7 @@ app.get('/api/vehicles/:id/docs/:filename', requireLogin, async function(req, re
   }
 });
 
-app.delete('/api/vehicles/:id/docs/:filename', requireLogin, requirePermission('fleet'), async function(req, res) {
+app.delete('/api/vehicles/:id/docs/:filename', requireLogin, requirePermission('delete_fleet'), async function(req, res) {
   try {
     var filename = path.basename(req.params.filename);
     var filePath = path.join(VEHICLE_DOCS_DIR, req.params.id, filename);
@@ -3992,6 +4023,7 @@ app.post('/api/users', requireLogin, requireRole('director'), async function(req
       'INSERT INTO users (username, password_hash, full_name, role, email, is_active) VALUES ($1,$2,$3,$4,$5,TRUE) RETURNING id, username, full_name, role, email, is_active, created_at',
       [username, hash, full_name, role, email]
     );
+    logAuditEvent(req, 'USER_CREATED', 'user', r.rows[0].id, full_name, { role: role });
     res.json({ ok: true, user: r.rows[0] });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -4019,6 +4051,7 @@ app.patch('/api/users/:id', requireLogin, requireRole('director'), async functio
       [full_name, role, email, is_active, id]
     );
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'User not found.' });
+    logAuditEvent(req, 'USER_UPDATED', 'user', id, r.rows[0].full_name, { role: r.rows[0].role, is_active: r.rows[0].is_active });
     res.json({ ok: true, user: r.rows[0] });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -4032,8 +4065,9 @@ app.post('/api/users/:id/reset-password', requireLogin, requireRole('director'),
     if (pwError) return res.status(400).json({ ok: false, error: pwError });
     if (await isPasswordBreached(password)) return res.status(400).json({ ok: false, error: 'That password has appeared in a known data breach. Please choose a different one.' });
     var hash = await bcrypt.hash(password, 10);
-    var r = await pgPool.query('UPDATE users SET password_hash=$1 WHERE id=$2 RETURNING id', [hash, req.params.id]);
+    var r = await pgPool.query('UPDATE users SET password_hash=$1 WHERE id=$2 RETURNING id, full_name', [hash, req.params.id]);
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'User not found.' });
+    logAuditEvent(req, 'USER_PASSWORD_RESET', 'user', req.params.id, r.rows[0].full_name, {});
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -4045,8 +4079,9 @@ app.delete('/api/users/:id', requireLogin, requireRole('director'), async functi
     if (String(req.user.id) === String(req.params.id)) {
       return res.status(400).json({ ok: false, error: 'You cannot delete your own account.' });
     }
-    var r = await pgPool.query('DELETE FROM users WHERE id=$1 RETURNING id', [req.params.id]);
+    var r = await pgPool.query('DELETE FROM users WHERE id=$1 RETURNING id, full_name', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'User not found.' });
+    logAuditEvent(req, 'USER_DELETED', 'user', req.params.id, r.rows[0].full_name, {});
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -4086,6 +4121,7 @@ app.post('/api/roles', requireLogin, requireRole('director'), async function(req
       [slug, name, JSON.stringify(permissions)]
     );
     invalidateRolesCache();
+    logAuditEvent(req, 'ROLE_CREATED', 'role', slug, name, {});
     res.json({ ok: true, role: r.rows[0] });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -4112,6 +4148,7 @@ app.patch('/api/roles/:slug', requireLogin, requireRole('director'), async funct
       [name, JSON.stringify(permissions), slug]
     );
     invalidateRolesCache();
+    logAuditEvent(req, 'ROLE_UPDATED', 'role', slug, name, {});
     res.json({ ok: true, role: r.rows[0] });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -4121,7 +4158,7 @@ app.patch('/api/roles/:slug', requireLogin, requireRole('director'), async funct
 app.delete('/api/roles/:slug', requireLogin, requireRole('director'), async function(req, res) {
   try {
     var slug = req.params.slug;
-    var existing = await pgPool.query('SELECT is_system FROM roles WHERE slug = $1', [slug]);
+    var existing = await pgPool.query('SELECT is_system, name FROM roles WHERE slug = $1', [slug]);
     if (!existing.rows.length) return res.status(404).json({ ok: false, error: 'Role not found.' });
     if (existing.rows[0].is_system) {
       return res.status(400).json({ ok: false, error: 'Built-in roles cannot be deleted.' });
@@ -4135,7 +4172,38 @@ app.delete('/api/roles/:slug', requireLogin, requireRole('director'), async func
 
     await pgPool.query('DELETE FROM roles WHERE slug = $1', [slug]);
     invalidateRolesCache();
+    logAuditEvent(req, 'ROLE_DELETED', 'role', slug, existing.rows[0].name, {});
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── AUDIT TRAIL ───────────────────────────────────────────────────────────────
+// Director-only — shows who created/edited/deleted the significant records
+// (Staff, Sites, Vehicles, Agencies, Users, Roles). Populated by logAuditEvent()
+// above, called from each of those routes.
+app.get('/api/audit-events', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var limit = Math.min(parseInt(req.query.limit) || 100, 500);
+    var offset = parseInt(req.query.offset) || 0;
+    var where = []; var params = []; var i = 1;
+    if (req.query.object_type) { where.push('ae.object_type = $' + i); params.push(req.query.object_type); i++; }
+    if (req.query.from) { where.push('ae.created_at >= $' + i); params.push(req.query.from); i++; }
+    if (req.query.to) { where.push('ae.created_at <= $' + i); params.push(req.query.to); i++; }
+    var whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    params.push(limit); params.push(offset);
+    var r = await pgPool.query(
+      `SELECT ae.id, ae.action, ae.object_type, ae.object_id, ae.object_name, ae.metadata, ae.created_at,
+              ae.actor_email, u.full_name AS actor_name, u.role AS actor_role
+       FROM audit_events ae
+       LEFT JOIN users u ON u.id = ae.actor_id
+       ${whereSql}
+       ORDER BY ae.created_at DESC
+       LIMIT $${i} OFFSET $${i + 1}`,
+      params
+    );
+    res.json({ ok: true, events: r.rows });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -4191,6 +4259,7 @@ app.post('/api/agencies', requireLogin, requirePermission('staff'), async functi
       throw userErr;
     }
 
+    logAuditEvent(req, 'AGENCY_CREATED', 'agency', agency.id, agency.name, {});
     res.json({ ok: true, id: agency.id, login_username: username, temp_password: tempPassword });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -4251,6 +4320,7 @@ app.patch('/api/agencies/:id', requireLogin, requirePermission('staff'), async f
       [name, email, phone, req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Agency not found.' });
+    logAuditEvent(req, 'AGENCY_UPDATED', 'agency', req.params.id, r.rows[0].name, {});
     res.json({ ok: true, agency: r.rows[0] });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -4337,12 +4407,7 @@ app.delete('/api/agencies/:id', requireLogin, requireRole('director'), async fun
       purgeAgencyStaffFiles(s.id, customDocsByStaff[s.id]);
     });
 
-    await pgPool.query(
-      `INSERT INTO audit_events (actor_email, action, object_type, object_id, object_name, metadata)
-       VALUES ($1,'AGENCY_DELETED','agency',$2,$3,$4)`,
-      [(req.user && req.user.username) || null, agency.id, agency.name,
-       JSON.stringify({ staff_count: staffRows.rows.length, status: agency.status })]
-    );
+    logAuditEvent(req, 'AGENCY_DELETED', 'agency', agency.id, agency.name, { staff_count: staffRows.rows.length, status: agency.status });
 
     res.json({ ok: true });
   } catch (e) {
@@ -4597,11 +4662,7 @@ app.delete('/api/agencies/:agencyId/staff/:id', requireLogin, requireRole('direc
 
     purgeAgencyStaffFiles(staffId, customDocs.rows.map(function(d) { return d.filename; }));
 
-    await pgPool.query(
-      `INSERT INTO audit_events (actor_email, action, object_type, object_id, object_name, metadata)
-       VALUES ($1,'AGENCY_STAFF_DELETED','agency_staff',$2,$3,$4)`,
-      [(req.user && req.user.username) || null, guard.id, guard.name, JSON.stringify({ agency_id: agencyId, status: guard.status })]
-    );
+    logAuditEvent(req, 'AGENCY_STAFF_DELETED', 'agency_staff', guard.id, guard.name, { agency_id: agencyId, status: guard.status });
 
     res.json({ ok: true });
   } catch (e) {
@@ -4866,7 +4927,7 @@ app.get('/api/agencies/:agencyId/staff/:id/custom-documents/:docId', requireLogi
   }
 });
 
-app.delete('/api/agencies/:agencyId/staff/:id/custom-documents/:docId', requireLogin, requireOwnAgencyOrPermission('staff'), async function(req, res) {
+app.delete('/api/agencies/:agencyId/staff/:id/custom-documents/:docId', requireLogin, requireOwnAgencyOrPermission('delete_staff'), async function(req, res) {
   var agencyId = path.basename(req.params.agencyId);
   var staffId  = path.basename(req.params.id);
   var docId    = path.basename(req.params.docId);
@@ -5105,7 +5166,7 @@ app.get('/api/agencies/:agencyId/staff/:id/unavailability', requireLogin, requir
   }
 });
 
-app.delete('/api/agencies/:agencyId/staff/:id/unavailability/:unavailabilityId', requireLogin, requireOwnAgencyOrPermission('staff'), async function(req, res) {
+app.delete('/api/agencies/:agencyId/staff/:id/unavailability/:unavailabilityId', requireLogin, requireOwnAgencyOrPermission('delete_staff'), async function(req, res) {
   try {
     var staffCheck = await pgPool.query('SELECT id FROM agency_staff WHERE id = $1 AND agency_id = $2', [req.params.id, req.params.agencyId]);
     if (!staffCheck.rows.length) return res.status(404).json({ ok: false, error: 'Guard not found.' });
@@ -5403,12 +5464,7 @@ app.delete('/api/agencies/:agencyId/deployments/:id', requireLogin, requireRole(
 
     await pgPool.query('DELETE FROM agency_deployments WHERE id = $1', [depId]); // cascades deployment_attendance
 
-    await pgPool.query(
-      `INSERT INTO audit_events (actor_email, action, object_type, object_id, object_name, metadata)
-       VALUES ($1,'DEPLOYMENT_DELETED','agency_deployment',$2,$3,$4)`,
-      [(req.user && req.user.username) || null, depId, depResult.rows[0].event_date,
-       JSON.stringify({ agency_id: agencyId, site_id: depResult.rows[0].site_id, status: depResult.rows[0].status })]
-    );
+    logAuditEvent(req, 'DEPLOYMENT_DELETED', 'agency_deployment', depId, depResult.rows[0].event_date, { agency_id: agencyId, site_id: depResult.rows[0].site_id, status: depResult.rows[0].status });
 
     res.json({ ok: true });
   } catch (e) {
@@ -5835,7 +5891,7 @@ app.get('/api/event-instructions/:id/acknowledgments/:formId/document', requireL
 // signed_at is set: a signed form is compliance proof (same reasoning as
 // the event-instruction permanent-delete guard above), so this route can
 // only ever remove links nobody has actually acknowledged yet.
-app.delete('/api/event-instructions/:id/acknowledgments/:formId', requireLogin, requirePermission('staff'), async function(req, res) {
+app.delete('/api/event-instructions/:id/acknowledgments/:formId', requireLogin, requirePermission('delete_staff'), async function(req, res) {
   try {
     var formResult = await pgPool.query(
       'SELECT signed_at FROM acknowledgment_forms WHERE id = $1 AND instruction_id = $2',
@@ -6403,7 +6459,7 @@ app.patch('/api/custom-forms/:id', requireLogin, requirePermission('staff'), asy
 // recorded responses, so the response count is returned for the frontend
 // to warn on before the confirm click, same info-then-confirm shape as any
 // other irreversible delete in this app.
-app.delete('/api/custom-forms/:id', requireLogin, requirePermission('staff'), async function(req, res) {
+app.delete('/api/custom-forms/:id', requireLogin, requirePermission('delete_staff'), async function(req, res) {
   try {
     var existing = await pgPool.query('SELECT id FROM custom_forms WHERE id = $1', [req.params.id]);
     if (!existing.rows.length) return res.status(404).json({ ok: false, error: 'Form not found.' });
@@ -6845,12 +6901,7 @@ app.delete('/api/incident-reports/:reportId', requireLogin, requireRole('directo
       try { fs.unlinkSync(path.join(INCIDENT_ATTACH_DIR, a.filename)); } catch (e) { /* file already gone — fine */ }
     });
 
-    await pgPool.query(
-      `INSERT INTO audit_events (actor_email, action, object_type, object_id, object_name, metadata)
-       VALUES ($1,'INCIDENT_REPORT_DELETED','incident_report',$2,$3,$4)`,
-      [(req.user && req.user.username) || null, report.id, report.incident_type,
-       JSON.stringify({ status: report.status, is_anonymous: report.is_anonymous, report_date: report.report_date })]
-    );
+    logAuditEvent(req, 'INCIDENT_REPORT_DELETED', 'incident_report', report.id, report.incident_type, { status: report.status, is_anonymous: report.is_anonymous, report_date: report.report_date });
 
     res.json({ ok: true });
   } catch (e) {
@@ -7199,7 +7250,7 @@ app.get('/api/message-attachments/:filename', requireLogin, async function(req, 
 // Delete a message (and its attachment, if any). Management-only — deliberately
 // not exposed to staff, so a message can't be used to hide something and then
 // erased before a manager has a chance to review it.
-app.delete('/api/messages/:messageId', requireLogin, requirePermission('staff'), async function(req, res) {
+app.delete('/api/messages/:messageId', requireLogin, requirePermission('delete_staff'), async function(req, res) {
   try {
     var attRes = await pgPool.query('SELECT filename FROM message_attachments WHERE message_id = $1', [req.params.messageId]);
     attRes.rows.forEach(function(row) {
@@ -7253,7 +7304,7 @@ app.post('/api/staff/:id/provisions', requireLogin, requirePermission('staff'), 
 });
 
 // Management: delete a provision record
-app.delete('/api/provisions/:id', requireLogin, requirePermission('staff'), async function(req, res) {
+app.delete('/api/provisions/:id', requireLogin, requirePermission('delete_staff'), async function(req, res) {
   try {
     await pgPool.query('DELETE FROM staff_provisions WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
@@ -7346,7 +7397,7 @@ app.get('/api/staff/:id/contract', requireLogin, requirePermission('staff'), fun
 });
 
 // Delete contract (management)
-app.delete('/api/staff/:id/contract', requireLogin, requirePermission('staff'), function(req, res) {
+app.delete('/api/staff/:id/contract', requireLogin, requirePermission('delete_staff'), function(req, res) {
   var found = findContractFile(req.params.id);
   if (found) fs.unlinkSync(found.filePath);
   res.json({ ok: true });

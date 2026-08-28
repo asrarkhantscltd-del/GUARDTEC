@@ -13,7 +13,7 @@ import {
   Camera, Loader2, Sun, Moon, AlertTriangle, XCircle,
   ChevronDown, UserCog, Eye, EyeOff, FileSpreadsheet,
   Building2, CalendarDays, FileText, ListChecks,
-  BellRing, BellOff,
+  BellRing, BellOff, History,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
@@ -50,6 +50,7 @@ const navItems: NavItem[] = [
   { label: "Custom Forms",     to: "/custom-forms",              icon: <FileText className="h-4 w-4" />,     permission: "staff",  group: "admin" },
   { label: "Team Access",      to: "/users",           icon: <KeyRound className="h-4 w-4" />,         directorOnly: true,           group: "admin" },
   { label: "Manage Roles",     to: "/roles",           icon: <Shield className="h-4 w-4" />,           directorOnly: true,           group: "admin" },
+  { label: "Audit Trail",      to: "/audit-trail",     icon: <History className="h-4 w-4" />,          directorOnly: true,           group: "admin" },
 ]
 
 export default function DashboardLayout() {

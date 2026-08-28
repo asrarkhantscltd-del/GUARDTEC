@@ -17,16 +17,18 @@ interface Role {
 }
 
 const MODULES = [
-  { key: "staff",          label: "Staff",          icon: Users },
-  { key: "fleet",          label: "Fleet",          icon: Truck },
-  { key: "sites",          label: "Sites",          icon: MapPin },
-  { key: "compliance",     label: "Compliance",     icon: ShieldCheck },
-  { key: "pending_review", label: "Pending Review", icon: ClipboardCheck },
-  { key: "edit_staff",     label: "Edit Staff",     icon: UserCog },
-  { key: "delete_staff",   label: "Ex-Staff",       icon: UserX },
+  { key: "staff",          label: "Staff",                icon: Users },
+  { key: "fleet",          label: "Fleet",                icon: Truck },
+  { key: "sites",          label: "Sites",                icon: MapPin },
+  { key: "compliance",     label: "Compliance",           icon: ShieldCheck },
+  { key: "pending_review", label: "Pending Review",       icon: ClipboardCheck },
+  { key: "edit_staff",     label: "Edit Staff",           icon: UserCog },
+  { key: "delete_staff",   label: "Delete Staff Records", icon: UserX },
+  { key: "delete_sites",   label: "Delete Sites",         icon: Trash2 },
+  { key: "delete_fleet",   label: "Delete Fleet",         icon: Trash2 },
 ] as const
 
-const BLANK_PERMISSIONS = { staff: false, fleet: false, sites: false, compliance: false, pending_review: false, edit_staff: false, delete_staff: false }
+const BLANK_PERMISSIONS = { staff: false, fleet: false, sites: false, compliance: false, pending_review: false, edit_staff: false, delete_staff: false, delete_sites: false, delete_fleet: false }
 
 export default function ManageRolesPage() {
   const [roles, setRoles]     = useState<Role[]>([])

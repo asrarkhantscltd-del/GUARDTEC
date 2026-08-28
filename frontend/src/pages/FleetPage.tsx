@@ -3,6 +3,7 @@ import { motion } from "framer-motion"
 import { makeStagger } from "@/lib/motion"
 import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
+import { useAuth } from "@/contexts/AuthContext"
 import {
   Truck, AlertTriangle, CheckCircle2, Search, Plus, ArrowUpRight,
   Car, Trash2, X, Save, Loader2, Camera, ImageOff,
@@ -117,6 +118,8 @@ const VEHICLE_STATUS_STYLE: Record<string, string> = {
 const fleetStagger = makeStagger(0.07, 0.4)
 
 export default function FleetPage() {
+  const { user: me } = useAuth()
+  const canDelete = me?.role === "director" || !!me?.permissions?.delete_fleet
   const [searchParams, setSearchParams] = useSearchParams()
   const tabParam = searchParams.get("tab") as "vehicles" | "operations" | null
   const activeTab: "vehicles" | "operations" = tabParam ?? "vehicles"
@@ -581,7 +584,7 @@ export default function FleetPage() {
                       selected={selectedVehicleIds.has(v.id)}
                       onToggleSelect={() => toggleSelected(v.id, setSelectedVehicleIds)}
                       onEdit={() => openEditVehicle(v)}
-                      onDelete={() => setDeleteVehicleId(v.id)}
+                      onDelete={canDelete ? () => setDeleteVehicleId(v.id) : undefined}
                       onDocs={() => openDocsPanel(v.id)} />
                   </motion.div>
                 ))}
@@ -944,11 +947,13 @@ export default function FleetPage() {
                           title="Download">
                           <Download className="h-3.5 w-3.5" />
                         </a>
-                        <button onClick={() => handleDeleteDoc(doc.filename)}
-                          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
-                          title="Delete document">
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        {canDelete && (
+                          <button onClick={() => handleDeleteDoc(doc.filename)}
+                            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30"
+                            title="Delete document">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -984,7 +989,7 @@ export default function FleetPage() {
 
 function VehicleCard({ v, staff, selected, onToggleSelect, onEdit, onDelete, onDocs }: {
   v: Vehicle; staff: StaffOption[]; selected: boolean; onToggleSelect: () => void
-  onEdit: () => void; onDelete: () => void; onDocs: () => void
+  onEdit: () => void; onDelete?: () => void; onDocs: () => void
 }) {
   const driver = v.assignedDriverId ? staff.find(s => s.id === v.assignedDriverId) : null
   const worst = worstDays([v.mot_expiry, v.insurance_expiry, v.road_tax_expiry])
@@ -1022,10 +1027,12 @@ function VehicleCard({ v, staff, selected, onToggleSelect, onEdit, onDelete, onD
             className="rounded-md bg-black/40 p-1.5 text-white/80 backdrop-blur-sm transition-colors hover:bg-blue-600 hover:text-white">
             <FileText className="h-3.5 w-3.5" />
           </button>
-          <button onClick={onDelete} title="Delete vehicle"
-            className="rounded-md bg-black/40 p-1.5 text-white/80 backdrop-blur-sm transition-colors hover:bg-destructive hover:text-white">
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          {onDelete && (
+            <button onClick={onDelete} title="Delete vehicle"
+              className="rounded-md bg-black/40 p-1.5 text-white/80 backdrop-blur-sm transition-colors hover:bg-destructive hover:text-white">
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
 

@@ -573,7 +573,7 @@ export default function StaffDetailPage() {
 
   function docDeleteProps(docKey: string) {
     return {
-      onDelete: canEdit ? () => setConfirmDeleteDocKey(docKey) : undefined,
+      onDelete: canDelete ? () => setConfirmDeleteDocKey(docKey) : undefined,
       confirmingDelete: confirmDeleteDocKey === docKey,
       onConfirmDelete: () => deleteDocFile(docKey),
       onCancelDelete: () => setConfirmDeleteDocKey(null),
@@ -2262,16 +2262,16 @@ export default function StaffDetailPage() {
                       </Button>
                     </a>
                     {canEdit && (
-                      <>
-                        <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-medium hover:bg-muted transition-colors h-7">
-                          <Upload className="h-3 w-3" /> Replace
-                          <input type="file" className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                            onChange={e => { const f = e.target.files?.[0]; if (f) uploadContract(f) }} />
-                        </label>
-                        <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive hover:text-destructive" onClick={deleteContract}>
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </>
+                      <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-medium hover:bg-muted transition-colors h-7">
+                        <Upload className="h-3 w-3" /> Replace
+                        <input type="file" className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                          onChange={e => { const f = e.target.files?.[0]; if (f) uploadContract(f) }} />
+                      </label>
+                    )}
+                    {canDelete && (
+                      <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive hover:text-destructive" onClick={deleteContract}>
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -2388,10 +2388,12 @@ export default function StaffDetailPage() {
                     {p.date_returned && <p className="text-xs text-muted-foreground">Returned: {fmtDate(p.date_returned)}</p>}
                     {p.notes && <p className="text-xs text-muted-foreground">{p.notes}</p>}
                   </div>
-                  <button onClick={() => deleteProvision(p.id)}
-                    className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  {canDelete && (
+                    <button onClick={() => deleteProvision(p.id)}
+                      className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </div>
               ))}
             </CardContent>
@@ -2421,7 +2423,7 @@ export default function StaffDetailPage() {
                   const isImage = m.attachment_mime_type?.startsWith("image/")
                   return (
                     <div key={m.id} className={`group flex items-end gap-1.5 ${isStaff ? "justify-start" : "justify-end"}`}>
-                      {!isStaff && (
+                      {!isStaff && canDelete && (
                         <button onClick={() => setConfirmDeleteMsgId(m.id)}
                           className="mb-1 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive hover:bg-destructive/10 group-hover:opacity-100">
                           <Trash2 className="h-3 w-3" />
@@ -2449,7 +2451,7 @@ export default function StaffDetailPage() {
                           {new Date(m.created_at).toLocaleDateString("en-GB", { day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit" })}
                         </p>
                       </div>
-                      {isStaff && (
+                      {isStaff && canDelete && (
                         <button onClick={() => setConfirmDeleteMsgId(m.id)}
                           className="mb-1 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive hover:bg-destructive/10 group-hover:opacity-100">
                           <Trash2 className="h-3 w-3" />
