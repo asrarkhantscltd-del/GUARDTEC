@@ -53,7 +53,14 @@ services:
     restart: unless-stopped
 
   n8n:
-    image: n8nio/n8n
+    # Pinned, not :latest — an unpinned tag can silently jump versions on a
+    # rebuild and run a new DB migration; if that gets interrupted mid-way
+    # (VPS reboot, resource limit) n8n crash-loops forever retrying the same
+    # failed migration (this happened 2026-08-28, ran ~11,550 restarts
+    # unnoticed and starved the shared Postgres connection pool). Upgrade by
+    # bumping this tag deliberately, one version at a time, watching the
+    # migration log succeed before moving on.
+    image: n8nio/n8n:2.36.7
     ports:
       - "127.0.0.1:5678:5678" # was 0.0.0.0 — same reasoning as db above; guardtec-app still reaches n8n internally via http://n8n:5678
     volumes:
@@ -75,7 +82,10 @@ services:
       - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
     depends_on:
       - db
-    restart: unless-stopped
+    # on-failure:5, not unless-stopped — caps retries so a broken container
+    # shows up as "Exited" in `docker ps` instead of crash-looping forever,
+    # silently, in the background (see the image-pin note above).
+    restart: on-failure:5
 
 volumes:
   guardtec-db-data:
