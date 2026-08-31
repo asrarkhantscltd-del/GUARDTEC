@@ -1088,7 +1088,7 @@ async function resolveRoleInfo(role) {
 
 app.post('/api/login', authRateLimiter, async function(req, res) {
   try {
-    var username = String((req.body && req.body.username) || '').trim();
+    var username = String((req.body && req.body.username) || '').trim().toLowerCase();
     var password = String((req.body && req.body.password) || '');
     var result = await pgPool.query('SELECT id, username, password_hash, role, full_name, staff_id, agency_id, is_active FROM users WHERE username = $1', [username]);
     if (!result.rows.length) return res.status(401).json({ error: 'Invalid username or password' });
