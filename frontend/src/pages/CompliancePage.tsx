@@ -31,6 +31,15 @@ function statusOf(days: number | null): ComplianceStatus {
   return "good"
 }
 
+// British/Irish nationals and anyone with Indefinite Leave to Remain (or an
+// EU Settlement Scheme settled/pre-settled grant, which is also indefinite)
+// have no RTW expiry to track — a blank expiry there is a valid state, not
+// a missing document.
+function isRtwExempt(s: { nationality?: string; visa?: { type?: string } }): boolean {
+  if ((s.nationality ?? "").toLowerCase().includes("british")) return true
+  return /ilr|indefinite leave|settled status|euss/i.test(s.visa?.type ?? "")
+}
+
 function worstStatus(...statuses: ComplianceStatus[]): ComplianceStatus {
   if (statuses.includes("expired")) return "expired"
   if (statuses.includes("expiring")) return "expiring"
@@ -113,8 +122,7 @@ export default function CompliancePage() {
   const stats = useMemo(() => {
     let expired = 0, expiring = 0, good = 0, incomplete = 0
     staff.forEach(s => {
-      const isBritish = (s.nationality ?? "").toLowerCase().includes("british")
-      const rtwStatus: ComplianceStatus = isBritish ? "good" : statusOf(daysUntil(s.visa?.expiry))
+      const rtwStatus: ComplianceStatus = isRtwExempt(s) ? "good" : statusOf(daysUntil(s.visa?.expiry))
       const worst = worstStatus(statusOf(daysUntil(s.sia?.expiry)), statusOf(daysUntil(s.cscs?.expiry)), rtwStatus)
       if (worst === "expired") expired++
       else if (worst === "expiring") expiring++
@@ -127,8 +135,7 @@ export default function CompliancePage() {
   const rows = useMemo(() => {
     const filtered = staff.filter(s => {
       if (search && !s.name.toLowerCase().includes(search.toLowerCase())) return false
-      const isBritish = (s.nationality ?? "").toLowerCase().includes("british")
-      const rtwStatus: ComplianceStatus = isBritish ? "good" : statusOf(daysUntil(s.visa?.expiry))
+      const rtwStatus: ComplianceStatus = isRtwExempt(s) ? "good" : statusOf(daysUntil(s.visa?.expiry))
       const worst = worstStatus(statusOf(daysUntil(s.sia?.expiry)), statusOf(daysUntil(s.cscs?.expiry)), rtwStatus)
       if (filter === "expired"  && worst !== "expired")  return false
       if (filter === "expiring" && worst !== "expiring") return false
@@ -243,8 +250,8 @@ export default function CompliancePage() {
             </thead>
             <tbody className="divide-y divide-border">
               {rows.map((s, i) => {
-                const isBritish = (s.nationality ?? "").toLowerCase().includes("british")
-                const rtwStatus: ComplianceStatus = isBritish ? "good" : statusOf(daysUntil(s.visa?.expiry))
+                const rtwExempt = isRtwExempt(s)
+                const rtwStatus: ComplianceStatus = rtwExempt ? "good" : statusOf(daysUntil(s.visa?.expiry))
                 const worst = worstStatus(statusOf(daysUntil(s.sia?.expiry)), statusOf(daysUntil(s.cscs?.expiry)), rtwStatus)
                 const rowBg =
                   worst === "expired"  ? "bg-red-50/50 dark:bg-red-950/10" :
@@ -269,9 +276,9 @@ export default function CompliancePage() {
                       <ExpiryCell number={s.cscs?.number} expiry={s.cscs?.expiry} />
                     </td>
                     <td className="px-4 py-3">
-                      {isBritish ? (
+                      {rtwExempt ? (
                         <span className="text-xs font-medium text-green-700 dark:text-green-400">
-                          {s.nationality} — No expiry
+                          {s.visa?.type || s.nationality} — No expiry
                         </span>
                       ) : (
                         <ExpiryCell number={s.visa?.type} expiry={s.visa?.expiry} />

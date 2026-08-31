@@ -156,7 +156,7 @@ export default function MyProfilePage() {
     if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current)
     draftSaveTimer.current = setTimeout(() => {
       api.put("/api/my-profile/draft", {
-        phone: current.phone, address: current.address,
+        email: current.email, phone: current.phone, address: current.address,
         emergencyContact: current.emergencyContact,
         bankDetails: current.bankDetails,
         sia: current.sia, cscs: current.cscs, visa: current.visa,
@@ -317,7 +317,7 @@ export default function MyProfilePage() {
     setSuccess(false)
     try {
       await api.post("/api/my-profile", {
-        phone: profile.phone, address: profile.address,
+        email: profile.email, phone: profile.phone, address: profile.address,
         emergencyContact: profile.emergencyContact,
         bankDetails: profile.bankDetails,
         sia: profile.sia, cscs: profile.cscs, visa: profile.visa,
@@ -373,7 +373,8 @@ export default function MyProfilePage() {
   }
   const siaStatus  = profile.sia?.number  ? compStatus(profile.sia?.expiry)  : "missing"
   const cscsStatus = profile.cscs?.number ? compStatus(profile.cscs?.expiry) : "missing"
-  const visaStatus = profile.visa?.type?.toLowerCase().includes("british") ? "valid" : compStatus(profile.visa?.expiry)
+  const visaStatus = /british|irish|uk citizen|ilr|indefinite leave|settled status|euss/i.test(profile.visa?.type ?? "")
+    ? "valid" : compStatus(profile.visa?.expiry)
 
   const statusCfg = {
     valid:    { label: "Valid",         cls: "bg-success/15 text-success border-success/30" },

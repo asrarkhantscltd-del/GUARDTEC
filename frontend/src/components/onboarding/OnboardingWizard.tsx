@@ -189,8 +189,8 @@ export default function OnboardingWizard({ profile: p, set, photo, photoPreview,
     }
     if (i === 4) {
       req(!!p.visa?.type?.trim(), "Right to work / immigration status is required.")
-      const isBritish = /british|irish|uk citizen/i.test(p.visa?.type ?? "")
-      if (!isBritish) req(!!p.visa?.expiry, "An expiry date is required for non-British/Irish right to work documents.")
+      const rtwExempt = /british|irish|uk citizen|ilr|indefinite leave|settled status|euss/i.test(p.visa?.type ?? "")
+      if (!rtwExempt) req(!!p.visa?.expiry, "An expiry date is required unless you have British/Irish citizenship, Indefinite Leave to Remain, or EU Settled Status.")
     }
     if (i === 5) {
       req(!!p.sia?.number?.trim(), "SIA licence number is required.")
@@ -567,7 +567,7 @@ function RightToWorkPhase({ p, set }: { p: WizardProfile; set: WizardProps["set"
         </Field>
       </div>
       <p className="mt-2 text-xs text-muted-foreground">
-        British/Irish citizens do not need an expiry date. All other statuses must include one.
+        British/Irish citizens and anyone with Indefinite Leave to Remain or EU Settled Status do not need an expiry date. All other statuses must include one.
       </p>
     </Section>
   )
