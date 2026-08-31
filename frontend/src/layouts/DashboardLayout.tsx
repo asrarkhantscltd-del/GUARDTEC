@@ -726,10 +726,10 @@ export default function DashboardLayout() {
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: -8, scale: 0.97 }}
                     transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
-                    className="absolute right-0 top-12 z-50 w-72 rounded-2xl border border-border bg-card shadow-2xl overflow-hidden"
+                    className="absolute right-0 top-12 z-50 flex max-h-[calc(100vh-6rem)] w-72 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl"
                   >
                     {/* Header — user info */}
-                    <div className="flex items-center gap-3 border-b border-border bg-muted/40 px-4 py-4">
+                    <div className="flex shrink-0 items-center gap-3 border-b border-border bg-muted/40 px-4 py-4">
                       <button
                         className="relative h-12 w-12 shrink-0 cursor-pointer group rounded-full overflow-hidden"
                         title="Change photo"
@@ -755,7 +755,7 @@ export default function DashboardLayout() {
                     </div>
 
                     {/* Account management section */}
-                    <div className="p-2 space-y-0.5">
+                    <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
                       {/* Director-only: Team Access + Manage Roles */}
                       {user?.role === "director" && (
                         <>
@@ -841,8 +841,8 @@ export default function DashboardLayout() {
                       </button>
                     </div>
 
-                    {/* Sign out */}
-                    <div className="border-t border-border p-2">
+                    {/* Sign out — pinned to the bottom of the panel, never pushed off-screen */}
+                    <div className="shrink-0 border-t border-border p-2">
                       <button
                         onClick={() => { setShowProfile(false); handleLogout() }}
                         className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-destructive transition-colors hover:bg-destructive/10"
