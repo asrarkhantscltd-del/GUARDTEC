@@ -149,6 +149,7 @@ export default function OnboardingWizard({ profile: p, set, photo, photoPreview,
     const req = (cond: boolean, msg: string) => { if (!cond) errs.push(msg) }
 
     if (i === 0) {
+      req(!!p.email?.trim() && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.email.trim()), "A valid email address is required.")
       req(!!p.phone?.trim(), "Personal mobile phone is required.")
       req(!!p.dateOfBirth, "Date of birth is required.")
       req(!!p.nationality?.trim(), "Nationality is required.")
@@ -371,7 +372,9 @@ function PersonalPhase({ p, set }: { p: WizardProfile; set: WizardProps["set"] }
     <Section title="Personal & Tax Details">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="Full name"><Input value={p.name} disabled className="opacity-60" /></Field>
-        <Field label="Email"><Input value={p.email ?? ""} disabled className="opacity-60" /></Field>
+        <Field label="Email *">
+          <Input type="email" value={p.email ?? ""} onChange={e => set("email", e.target.value)} />
+        </Field>
         <Field label="Personal mobile phone *">
           <Input type="tel" value={p.phone ?? ""} onChange={e => set("phone", e.target.value)} />
         </Field>
@@ -401,7 +404,7 @@ function PersonalPhase({ p, set }: { p: WizardProfile; set: WizardProps["set"] }
           </label>
         </Field>
       </div>
-      <p className="mt-2 text-xs text-muted-foreground">Name and email are managed by your office — contact them to change these.</p>
+      <p className="mt-2 text-xs text-muted-foreground">Name is managed by your office — contact them to change it. Email changes are reviewed by your office before they take effect.</p>
     </Section>
   )
 }
@@ -919,6 +922,7 @@ function ReviewPhase({ p, goToPhase }: { p: WizardProfile; goToPhase: (i: number
 
       <ReviewSection title="Personal & Tax Details" phaseIndex={0} goToPhase={goToPhase}>
         <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
+          <ReviewRow label="Email" value={p.email} />
           <ReviewRow label="Phone" value={p.phone} />
           <ReviewRow label="Date of birth" value={p.dateOfBirth} />
           <ReviewRow label="Nationality" value={p.nationality} />

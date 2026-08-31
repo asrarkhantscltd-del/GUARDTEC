@@ -2518,7 +2518,7 @@ app.get('/api/my-profile', requireLogin, requireRole('staff'), function(req, res
 // allowlist, so a field can never be accepted into pending_submission but
 // silently dropped on approval (or vice versa).
 var MY_PROFILE_FIELDS = [
-  'phone', 'address', 'emergencyContact', 'sia', 'cscs', 'visa', 'references',
+  'email', 'phone', 'address', 'emergencyContact', 'sia', 'cscs', 'visa', 'references',
   'bankDetails', 'notes', 'driverLicence',
   'dateOfBirth', 'nationality', 'ni', 'uniqueTaxpayerReference', 'utrNotApplicable', 'previousNames',
   'yearsAtCurrentAddress', 'addressHistory', 'employmentHistoryDetail',

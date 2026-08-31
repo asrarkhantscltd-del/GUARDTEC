@@ -21,6 +21,7 @@ interface EmergencyContact { name?: string; phone?: string; relationship?: strin
 // everything the wizard collects, not just the handful of fields this page
 // originally shipped with.
 interface ProfileSnapshot {
+  email?: string
   phone?: string
   address?: string
   emergencyContact?: EmergencyContact
@@ -153,7 +154,7 @@ export default function PendingReviewPage() {
           {list.map((s) => {
             const p = s.pending_submission ?? {}
             const nothingToShow =
-              !p.phone && !p.address && !p.bankDetails && !p.sia && !p.cscs && !p.visa &&
+              !p.email && !p.phone && !p.address && !p.bankDetails && !p.sia && !p.cscs && !p.visa &&
               !p.references && !p.driverLicence && !p.notes && !p.dateOfBirth && !p.nationality &&
               !p.ni && !p.uniqueTaxpayerReference && p.utrNotApplicable === undefined && !p.previousNames &&
               p.yearsAtCurrentAddress === undefined && !p.emergencyContact &&
@@ -191,6 +192,7 @@ export default function PendingReviewPage() {
                 )}
 
                 <div className="grid gap-3 sm:grid-cols-2">
+                  <CompareField label="Email" current={s.email} proposed={p.email} />
                   <CompareField label="Phone" current={s.phone} proposed={p.phone} />
                   <CompareField label="Address" current={s.address} proposed={p.address} />
                   <CompareField label="Date of birth" current={s.dateOfBirth} proposed={p.dateOfBirth} />
