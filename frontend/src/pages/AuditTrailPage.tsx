@@ -102,8 +102,9 @@ export default function AuditTrailPage() {
 
       {error && <p className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>}
 
-      <div className="surface overflow-x-auto">
-        <table className="w-full min-w-[720px] text-sm">
+      {/* Desktop/tablet — table. Hidden below sm so nothing here ever needs a side-scroll on a phone. */}
+      <div className="surface hidden sm:block">
+        <table className="w-full text-sm">
           <thead className="border-b bg-muted/30">
             <tr>
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">When</th>
@@ -135,7 +136,7 @@ export default function AuditTrailPage() {
                 {expandedId === ev.id && Object.keys(ev.metadata || {}).length > 0 && (
                   <tr>
                     <td colSpan={5} className="bg-muted/10 px-5 py-3">
-                      <pre className="text-xs text-muted-foreground overflow-x-auto">{JSON.stringify(ev.metadata, null, 2)}</pre>
+                      <pre className="whitespace-pre-wrap break-words text-xs text-muted-foreground">{JSON.stringify(ev.metadata, null, 2)}</pre>
                     </td>
                   </tr>
                 )}
@@ -143,6 +144,43 @@ export default function AuditTrailPage() {
             ))}
           </tbody>
         </table>
+        {!loading && events.length === 0 && (
+          <p className="py-10 text-center text-sm text-muted-foreground">No audit events recorded yet.</p>
+        )}
+      </div>
+
+      {/* Mobile — stacked cards, nothing ever wider than the screen. */}
+      <div className="space-y-2.5 sm:hidden">
+        {events.map(ev => (
+          <div key={ev.id} className="surface cursor-pointer p-3.5"
+            onClick={() => setExpandedId(id => id === ev.id ? null : ev.id)}>
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="font-medium truncate">{ev.actor_name || ev.actor_email || "Unknown"}</p>
+                {ev.actor_role && <p className="text-xs text-muted-foreground">{ev.actor_role}</p>}
+              </div>
+              <span className="shrink-0 text-xs text-muted-foreground">{fmtWhen(ev.created_at)}</span>
+            </div>
+            <p className="mt-2 text-sm">{actionLabel(ev.action)}</p>
+            <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{ev.object_type}</span>
+              <span className="text-sm break-words">{ev.object_name || ev.object_id}</span>
+            </div>
+            {Object.keys(ev.metadata || {}).length > 0 && (
+              <>
+                <button className="mt-2 flex items-center gap-1 text-xs text-muted-foreground"
+                  onClick={e => { e.stopPropagation(); setExpandedId(id => id === ev.id ? null : ev.id) }}>
+                  {expandedId === ev.id ? <><ChevronUp className="h-3.5 w-3.5" />Hide details</> : <><ChevronDown className="h-3.5 w-3.5" />Show details</>}
+                </button>
+                {expandedId === ev.id && (
+                  <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-muted/10 p-2.5 text-xs text-muted-foreground">
+                    {JSON.stringify(ev.metadata, null, 2)}
+                  </pre>
+                )}
+              </>
+            )}
+          </div>
+        ))}
         {!loading && events.length === 0 && (
           <p className="py-10 text-center text-sm text-muted-foreground">No audit events recorded yet.</p>
         )}

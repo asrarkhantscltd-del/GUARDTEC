@@ -860,7 +860,7 @@ export default function DashboardLayout() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto bg-background p-4 md:p-6">
+        <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-background p-4 md:p-6">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={location.pathname}
