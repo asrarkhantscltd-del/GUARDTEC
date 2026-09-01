@@ -323,17 +323,21 @@ export default function DashboardLayout() {
                           <NavLink to={item.to} end={item.to === "/"}
                             onClick={() => setSidebarOpen(false)}
                             className={({ isActive }) =>
-                              `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ${
-                                isActive
-                                  ? "bg-gradient-to-r from-primary to-primary/80 text-white shadow-[0_4px_14px_-2px_rgba(228,6,19,0.4)]"
-                                  : "hover:translate-x-0.5 hover:bg-sidebar-accent"
+                              `group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors duration-200 ${
+                                isActive ? "text-white" : "hover:translate-x-0.5 hover:bg-sidebar-accent"
                               }`
                             }>
                             {({ isActive }) => (
                               <>
-                                {isActive && <span className="absolute -left-3 h-5 w-1 rounded-r-full bg-primary" />}
-                                <span className={`transition-transform duration-200 ${!isActive ? "group-hover:scale-110" : ""}`}>{item.icon}</span>
-                                {item.label}
+                                {isActive && (
+                                  <motion.span
+                                    layoutId="sidebar-active-bg"
+                                    className="absolute inset-0 rounded-lg bg-gradient-to-r from-primary to-primary/80 shadow-[0_4px_14px_-2px_rgba(228,6,19,0.4)]"
+                                    transition={{ type: "spring", bounce: 0.2, duration: 0.5 }}
+                                  />
+                                )}
+                                <span className={`relative z-10 transition-transform duration-200 ${!isActive ? "group-hover:scale-110" : ""}`}>{item.icon}</span>
+                                <span className="relative z-10">{item.label}</span>
                               </>
                             )}
                           </NavLink>
