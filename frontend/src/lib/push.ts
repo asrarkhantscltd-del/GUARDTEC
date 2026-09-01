@@ -37,7 +37,7 @@ export async function enablePush(): Promise<void> {
   const reg = await navigator.serviceWorker.ready
   const subscription = await reg.pushManager.subscribe({
     userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(key),
+    applicationServerKey: urlBase64ToUint8Array(key) as BufferSource,
   })
 
   await api.post("/api/push/subscribe", { subscription: subscription.toJSON() })
