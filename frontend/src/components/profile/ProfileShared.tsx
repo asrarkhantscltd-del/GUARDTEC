@@ -224,7 +224,7 @@ export const TRAINING_CERT_UPLOADS: { key: StandardTrainingKey; label: string }[
   { key: "firstAid",           label: "First Aid (Emergency)" },
   { key: "manualHandling",     label: "Manual Handling" },
   { key: "fireAwareness",      label: "Fire Awareness" },
-  { key: "conflictManagement", label: "Conflict Management" },
+  { key: "conflictManagement", label: "Conflict Management (ACT)" },
   { key: "bwcTraining",        label: "Body Worn Camera (BWC)" },
   { key: "cscsTest",           label: "CSCS Health & Safety Test" },
 ]

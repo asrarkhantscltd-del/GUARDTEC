@@ -1382,7 +1382,7 @@ var DOC_KEY_LABELS = {
 var TRAINING_KEY_LABELS = {
   siaCertificate: 'SIA Qualifying Certificate', firstAid: 'First Aid certificate',
   manualHandling: 'Manual Handling certificate', fireAwareness: 'Fire Awareness certificate',
-  conflictManagement: 'Conflict Management certificate', bwcTraining: 'BWC Training certificate',
+  conflictManagement: 'Conflict Management (ACT) certificate', bwcTraining: 'BWC Training certificate',
   cscsTest: 'CSCS Health & Safety Test certificate',
 };
 

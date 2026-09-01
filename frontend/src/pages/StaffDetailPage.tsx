@@ -1847,7 +1847,7 @@ export default function StaffDetailPage() {
                 [
                   { key: "siaCertificate",    label: "SIA Qualifying Certificate",    icon: <ShieldCheck className="h-4 w-4" /> },
                   { key: "firstAid",          label: "First Aid (Emergency)",         icon: <HeartPulse className="h-4 w-4" /> },
-                  { key: "conflictManagement",label: "Conflict Management",           icon: <Swords className="h-4 w-4" /> },
+                  { key: "conflictManagement",label: "Conflict Management (ACT)",       icon: <Swords className="h-4 w-4" /> },
                   { key: "manualHandling",    label: "Manual Handling",               icon: <HardHat className="h-4 w-4" /> },
                   { key: "fireAwareness",     label: "Fire Awareness",                icon: <Flame className="h-4 w-4" /> },
                   { key: "bwcTraining",       label: "Body Worn Camera (BWC)",        icon: <Camera className="h-4 w-4" /> },
