@@ -20,7 +20,10 @@ import type {
 // bwcTraining (Body Worn Camera) is deliberately excluded — not every role
 // carries a BWC, so it's optional at submission; staff can still upload it
 // later from My Profile if it becomes relevant.
-const MANDATORY_TRAINING_KEYS = ["siaCertificate", "firstAid", "fireAwareness", "conflictManagement", "cscsTest"]
+// siaCertificate is also excluded — holding a valid SIA licence (verified
+// separately via documents.siaPhysical below) already proves the person
+// qualified, so the separate qualifying-certificate upload is optional.
+const MANDATORY_TRAINING_KEYS = ["firstAid", "fireAwareness", "conflictManagement", "cscsTest"]
 
 function genId() { return Math.random().toString(36).slice(2, 10) }
 
