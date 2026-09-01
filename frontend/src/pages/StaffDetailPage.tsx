@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { motion } from "framer-motion"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
@@ -1052,7 +1053,7 @@ export default function StaffDetailPage() {
 
       {/* ════════ OVERVIEW ════════ */}
       {tab === "overview" && (
-        <div className="space-y-4">
+        <motion.div key="overview" className="space-y-4" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}>
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base">Compliance Documents</CardTitle></CardHeader>
             <CardContent className="divide-y px-4">
@@ -1151,12 +1152,12 @@ export default function StaffDetailPage() {
               )}
             </CardContent>
           </Card>
-        </div>
+        </motion.div>
       )}
 
       {/* ════════ DOCUMENTS ════════ */}
       {tab === "documents" && (
-        <div className="space-y-4">
+        <motion.div key="documents" className="space-y-4" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}>
           {/* Inline doc edit / upload form */}
           {editingDocKey && (
             <div className="rounded-lg border bg-muted/20 p-4 space-y-4">
@@ -1510,12 +1511,12 @@ export default function StaffDetailPage() {
               )}
             </>
           )}
-        </div>
+        </motion.div>
       )}
 
       {/* ════════ VETTING (BS 7858) ════════ */}
       {tab === "vetting" && (
-        <div className="space-y-4">
+        <motion.div key="vetting" className="space-y-4" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}>
 
           {/* ── DBS ── */}
           <Card>
@@ -1825,12 +1826,12 @@ export default function StaffDetailPage() {
               )}
             </CardContent>
           </Card>
-        </div>
+        </motion.div>
       )}
 
       {/* ════════ TRAINING ════════ */}
       {tab === "training" && (
-        <div className="space-y-4">
+        <motion.div key="training" className="space-y-4" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}>
           {/* ── Standard courses ── */}
           <Card>
             <CardHeader className="pb-2">
@@ -2060,12 +2061,12 @@ export default function StaffDetailPage() {
               )}
             </CardContent>
           </Card>
-        </div>
+        </motion.div>
       )}
 
       {/* ════════ ACS AUDIT ════════ */}
       {tab === "acs" && (
-        <div className="space-y-4">
+        <motion.div key="acs" className="space-y-4" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}>
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium">ACS Readiness Score</p>
@@ -2130,12 +2131,12 @@ export default function StaffDetailPage() {
               <AcsCheckRow label="Emergency contact recorded"       done={acs.emergencyContact} note="Name, phone, and relationship" />
             </CardContent>
           </Card>
-        </div>
+        </motion.div>
       )}
 
       {/* ════════ HR RECORDS ════════ */}
       {tab === "hr" && (
-        <div className="space-y-4">
+        <motion.div key="hr" className="space-y-4" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}>
 
           {/* ── Disciplinary Records ── */}
           <Card>
@@ -2298,12 +2299,12 @@ export default function StaffDetailPage() {
             </CardContent>
           </Card>
 
-        </div>
+        </motion.div>
       )}
 
       {/* ── Provisions tab ── */}
       {tab === "provisions" && (
-        <div className="space-y-4">
+        <motion.div key="provisions" className="space-y-4" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}>
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
@@ -2403,12 +2404,12 @@ export default function StaffDetailPage() {
               ))}
             </CardContent>
           </Card>
-        </div>
+        </motion.div>
       )}
 
       {/* ── Messages tab ── */}
       {tab === "messages" && (
-        <div className="space-y-4">
+        <motion.div key="messages" className="space-y-4" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}>
           <Card className="flex flex-col" style={{ minHeight: "480px" }}>
             <CardHeader className="pb-2 border-b">
               <CardTitle className="text-base flex items-center gap-2">
@@ -2514,7 +2515,7 @@ export default function StaffDetailPage() {
               </div>
             </CardContent>
           </Card>
-        </div>
+        </motion.div>
       )}
 
       {/* ── Edit Profile slide-over ── */}
