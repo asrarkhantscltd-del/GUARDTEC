@@ -41,6 +41,7 @@ const navItems: NavItem[] = [
   { label: "Fleet",            to: "/fleet",           icon: <Truck className="h-4 w-4" />,            permission: "fleet",          group: "operations" },
   { label: "Sites",            to: "/sites",           icon: <MapPin className="h-4 w-4" />,           permission: "sites",          group: "operations" },
   { label: "Compliance",       to: "/compliance",      icon: <ShieldCheck className="h-4 w-4" />,      permission: "compliance",     group: "compliance" },
+  { label: "Compliance Calendar", to: "/compliance-calendar", icon: <CalendarDays className="h-4 w-4" />, permission: "compliance_calendar", group: "compliance" },
   { label: "Pending Review",   to: "/pending-review",  icon: <ClipboardCheck className="h-4 w-4" />,  permission: "pending_review", group: "compliance" },
   { label: "Incident Reports", to: "/incident-reports",icon: <AlertTriangle className="h-4 w-4" />,    permission: "staff",          group: "compliance" },
   { label: "Agencies",         to: "/admin/agencies",           icon: <Building2 className="h-4 w-4" />,     permission: "staff",  group: "operations" },
@@ -157,6 +158,7 @@ export default function DashboardLayout() {
     setShowAlerts(false)
     if (n.type === "incident_report") navigate("/incident-reports")
     else if (n.type === "profile_submission") navigate("/pending-review")
+    else if (n.type === "compliance_calendar_reminder") navigate("/compliance-calendar")
     else if (n.link_agency_id) navigate(`/admin/agencies/${n.link_agency_id}${n.link_tab ? `?tab=${n.link_tab}` : ""}`)
     else if (n.link_staff_id) navigate(`/staff/${n.link_staff_id}${n.link_tab ? `?tab=${n.link_tab}` : ""}`)
   }

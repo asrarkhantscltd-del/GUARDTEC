@@ -13,6 +13,8 @@ import StaffPage from "@/pages/StaffPage"
 import StaffDetailPage from "@/pages/StaffDetailPage"
 import FleetPage from "@/pages/FleetPage"
 import CompliancePage from "@/pages/CompliancePage"
+import ComplianceCalendarPage from "@/pages/ComplianceCalendarPage"
+import PublicComplianceCalendarPage from "@/pages/PublicComplianceCalendarPage"
 import SitesPage from "@/pages/SitesPage"
 import UsersPage from "@/pages/UsersPage"
 import ManageRolesPage from "@/pages/ManageRolesPage"
@@ -100,6 +102,7 @@ function AuthenticatedApp() {
         <Route path="fleet" element={<FleetPage />} />
         <Route path="sites" element={<SitesPage />} />
         <Route path="compliance" element={<CompliancePage />} />
+        <Route path="compliance-calendar" element={<ComplianceCalendarPage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="roles" element={<ManageRolesPage />} />
         <Route path="audit-trail" element={<AuditTrailPage />} />
@@ -162,6 +165,7 @@ export default function App() {
               comment on why. */}
           <Route path="/acknowledge/:token" element={<AcknowledgmentFormPage />} />
           <Route path="/custom-forms/:formId/fill" element={<CustomFormFillPage />} />
+          <Route path="/compliance-calendar/shared/:token" element={<PublicComplianceCalendarPage />} />
           <Route
             path="/*"
             element={
