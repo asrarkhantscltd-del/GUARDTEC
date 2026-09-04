@@ -400,12 +400,22 @@ export default function ComplianceCalendarPage() {
   }
 
   async function shareLink(email: string) {
+    let url: string
     try {
       const d = await api.post<{ url: string }>("/api/compliance-calendar/share-link", { email })
-      await navigator.clipboard.writeText(d.url)
-      toast.success(`Reminder link copied for ${email}`)
+      url = d.url
     } catch {
       toast.error("Failed to generate share link")
+      return
+    }
+    // Clipboard write can fail independently of link generation (blocked
+    // permission, non-secure context, etc.) — the link itself is already
+    // valid at this point, so surface it instead of a misleading failure.
+    try {
+      await navigator.clipboard.writeText(url)
+      toast.success(`Reminder link copied for ${email}`)
+    } catch {
+      toast.message(`Reminder link for ${email}`, { description: url, duration: 15000 })
     }
   }
 
