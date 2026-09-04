@@ -154,7 +154,7 @@ App runs at `http://localhost:5173`
 
 ## Contact
 
-**Asrar Khan** — asrar.khan@guardtec-security.co.uk
+**Asrar Khan** — asrar.khan.tscltd@gmail.com / asrar.khan19@gmail.com / asrar.khan@guardtec-security.co.uk
 
 Project: [https://github.com/asrarkhantscltd-del/GUARDTEC](https://github.com/asrarkhantscltd-del/GUARDTEC)
 
