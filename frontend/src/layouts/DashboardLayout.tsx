@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
+import ChangePasswordModal from "@/components/ChangePasswordModal"
 // import AiChat from "@/components/AiChat" — see the note by its (commented-out) render call below
 
 interface NavItem {
@@ -60,6 +61,7 @@ export default function DashboardLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [showChangePassword, setShowChangePassword] = useState(false)
   const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const photoInputRef = useRef<HTMLInputElement>(null)
@@ -382,6 +384,11 @@ export default function DashboardLayout() {
               onClick={handleLogout}>
               <LogOut className="h-4 w-4" />Sign out
             </Button>
+            <Button variant="ghost" size="icon" onClick={() => setShowChangePassword(true)}
+              title="Change password"
+              className="shrink-0 opacity-60 hover:opacity-100 hover:bg-sidebar-accent">
+              <KeyRound className="h-4 w-4" />
+            </Button>
             <Button variant="ghost" size="icon" onClick={toggleTheme}
               title={isDark ? "Switch to light mode" : "Switch to dark mode"}
               className="shrink-0 opacity-60 hover:opacity-100 hover:bg-sidebar-accent">
@@ -390,6 +397,7 @@ export default function DashboardLayout() {
           </div>
         </div>
       </aside>
+      {showChangePassword && <ChangePasswordModal onClose={() => setShowChangePassword(false)} />}
 
       {/* ── Main content area ── */}
       <div className="flex flex-1 flex-col overflow-hidden">

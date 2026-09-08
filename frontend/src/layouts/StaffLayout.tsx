@@ -2,11 +2,12 @@ import { Outlet, useNavigate } from "react-router-dom"
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 import { Button } from "@/components/ui/button"
-import { LogOut, Camera, Loader2, Sun, Moon, Bell, MessageSquare, BellRing, BellOff } from "lucide-react"
+import { LogOut, Camera, Loader2, Sun, Moon, Bell, MessageSquare, BellRing, BellOff, KeyRound } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import { api } from "@/lib/api"
 import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
 import { toast } from "sonner"
+import ChangePasswordModal from "@/components/ChangePasswordModal"
 
 export default function StaffLayout() {
   const { user, logout } = useAuth()
@@ -22,6 +23,7 @@ export default function StaffLayout() {
   // existing-subscription check is in flight.
   const [pushOn, setPushOn] = useState<boolean | null>(null)
   const [pushBusy, setPushBusy] = useState(false)
+  const [showChangePassword, setShowChangePassword] = useState(false)
   const canUsePush = pushSupported()
 
   useEffect(() => {
@@ -178,6 +180,10 @@ export default function StaffLayout() {
             className="text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground">
             {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
+          <Button variant="ghost" size="icon-sm" onClick={() => setShowChangePassword(true)}
+            className="text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground" title="Change password">
+            <KeyRound className="h-4 w-4" />
+          </Button>
           <Button variant="ghost" size="icon-sm" onClick={handleLogout}
             className="text-sidebar-foreground/70 hover:bg-destructive/10 hover:text-destructive" title="Sign out">
             <LogOut className="h-4 w-4" />
@@ -188,6 +194,7 @@ export default function StaffLayout() {
       <main className="w-full flex-1 px-4 py-8 md:px-6">
         <Outlet />
       </main>
+      {showChangePassword && <ChangePasswordModal onClose={() => setShowChangePassword(false)} />}
     </div>
   )
 }
