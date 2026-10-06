@@ -10,7 +10,7 @@ import {
   LayoutDashboard, Users, Truck, ShieldCheck, LogOut,
   Menu, X, MapPin,
   KeyRound, Bell, ClipboardCheck, Shield,
-  Camera, Loader2, Sun, Moon, AlertTriangle, XCircle,
+  Camera, Loader2, Sun, Moon, AlertTriangle,
   ChevronDown, UserCog, Eye, EyeOff, FileSpreadsheet,
   Building2, CalendarDays, FileText, ListChecks,
   BellRing, BellOff, History,
@@ -63,7 +63,6 @@ export default function DashboardLayout() {
   const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const photoInputRef = useRef<HTMLInputElement>(null)
-  const [alertCount, setAlertCount] = useState(0)
   const [notifications, setNotifications] = useState<{
     id: string; type: string; actor_name: string; summary: string
     link_staff_id?: string; link_tab?: string; link_incident_id?: string; link_agency_id?: string; created_at: string
@@ -110,7 +109,6 @@ export default function DashboardLayout() {
   const [driverFilters, setDriverFilters] = useState({ status: "" })
   const reportsRef = useRef<HTMLDivElement>(null)
   const [ringHidden, setRingHidden] = useState(() => localStorage.getItem("guardtec_ring_hidden") === "true")
-  const [complianceHidden, setComplianceHidden] = useState(() => localStorage.getItem("guardtec_compliance_hidden") === "true")
 
   function toggleRing() {
     const next = !ringHidden
@@ -118,21 +116,9 @@ export default function DashboardLayout() {
     localStorage.setItem("guardtec_ring_hidden", String(next))
   }
 
-  function toggleComplianceHidden() {
-    const next = !complianceHidden
-    setComplianceHidden(next)
-    localStorage.setItem("guardtec_compliance_hidden", String(next))
-  }
-
   useEffect(() => {
     api.getBlob("/api/me/photo")
       .then(blob => { if (blob) setMyPhotoUrl(URL.createObjectURL(blob)) })
-      .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    api.get<{ total: number }>("/api/compliance/alerts")
-      .then(d => { if (d) setAlertCount(d.total ?? 0) })
       .catch(() => {})
   }, [])
 
@@ -206,11 +192,13 @@ export default function DashboardLayout() {
     closeReports()
   }
 
-  // Close alert dropdown when clicking outside — also mark all as seen on close
+  // Close alert dropdown when clicking outside. This must NOT mark anything as
+  // seen — a stray tap elsewhere on the page (easy to do on a phone) used to wipe
+  // every unread notification. Notifications are only cleared by tapping one
+  // (goToNotification) or the explicit "Clear all" button.
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (alertsRef.current && !alertsRef.current.contains(e.target as Node)) {
-        clearAllNotifications()
         setShowAlerts(false)
       }
     }
@@ -267,7 +255,7 @@ export default function DashboardLayout() {
     navigate("/login", { replace: true })
   }
 
-  const bellBadgeTotal = (complianceHidden ? 0 : alertCount) + notifications.length
+  const bellBadgeTotal = notifications.length
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -582,8 +570,11 @@ export default function DashboardLayout() {
               </div>
             )}
 
-            {/* ── Bell — shows dropdown on click ── */}
-            <div className="relative" ref={alertsRef}>
+            {/* ── Bell — shows dropdown on click ──
+                Below `sm` the wrapper is NOT positioned, so the panel anchors to the
+                (relative) header and spans the screen with a margin instead of hanging
+                off the bell's right edge and getting clipped on narrow phones. */}
+            <div className="sm:relative" ref={alertsRef}>
               <button
                 onClick={() => setShowAlerts(prev => !prev)}
                 className="relative rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -604,7 +595,7 @@ export default function DashboardLayout() {
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -8, scale: 0.97 }}
                   transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                  className="absolute right-0 top-12 z-50 w-80 rounded-2xl glass shadow-2xl overflow-hidden">
+                  className="absolute inset-x-3 top-14 z-50 rounded-2xl glass shadow-2xl overflow-hidden sm:inset-x-auto sm:right-0 sm:top-12 sm:w-80">
                   <div className="flex items-center justify-between border-b border-border px-4 py-3">
                     <p className="text-sm font-semibold">Notifications</p>
                     <div className="flex items-center gap-1">
@@ -623,7 +614,7 @@ export default function DashboardLayout() {
                           Clear all
                         </button>
                       )}
-                      <button onClick={() => { clearAllNotifications(); setShowAlerts(false) }}
+                      <button onClick={() => setShowAlerts(false)}
                         className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
                         <X className="h-3.5 w-3.5" />
                       </button>
@@ -653,35 +644,8 @@ export default function DashboardLayout() {
                       )
                     })}
 
-                    {/* ── Compliance section — persists until the real issue is fixed, not a dismissible event ── */}
-                    {alertCount > 0 && (
-                      <div className="flex w-full items-start gap-2 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-left transition-colors">
-                        <button
-                          onClick={() => { if (complianceHidden) return; navigate("/compliance"); setShowAlerts(false) }}
-                          className={`flex flex-1 items-start gap-3 text-left ${complianceHidden ? "cursor-default" : "hover:opacity-80"}`}
-                        >
-                          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-                          <div>
-                            <p className="text-sm font-medium text-destructive">
-                              {complianceHidden ? "Compliance attention hidden" : `${alertCount} officer${alertCount !== 1 ? "s" : ""} need compliance attention`}
-                            </p>
-                            <p className="mt-0.5 text-xs text-muted-foreground">
-                              {complianceHidden ? "Tap the eye to reveal" : "Tap to open Compliance Dashboard"}
-                            </p>
-                          </div>
-                        </button>
-                        <button
-                          onClick={toggleComplianceHidden}
-                          title={complianceHidden ? "Show compliance count" : "Hide compliance count"}
-                          className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
-                        >
-                          {complianceHidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                        </button>
-                      </div>
-                    )}
-
                     {/* All clear */}
-                    {alertCount === 0 && notifications.length === 0 && (
+                    {notifications.length === 0 && (
                       <div className="flex items-center gap-3 rounded-xl border border-success/20 bg-success/5 p-3">
                         <ShieldCheck className="h-4 w-4 shrink-0 text-success" />
                         <p className="text-sm font-medium text-success">All clear — no new notifications</p>
