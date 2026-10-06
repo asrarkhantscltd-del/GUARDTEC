@@ -2,7 +2,7 @@
 
 <div align="center">
 
-<img src="frontend/public/logo-on-dark.svg" alt="GuardTec Logo" width="300"/>
+<img src="frontend/public/logo-on-light.svg" alt="GuardTec Logo" width="300"/>
 
 <h1>GuardTec Compliance Platform</h1>
 

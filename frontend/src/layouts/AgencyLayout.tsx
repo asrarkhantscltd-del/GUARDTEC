@@ -4,9 +4,10 @@ import { useTheme } from "@/contexts/ThemeContext"
 import { Button } from "@/components/ui/button"
 import {
   LayoutDashboard, Users, CalendarDays, MessageSquare,
-  LogOut, Menu, X, Sun, Moon,
+  LogOut, Menu, X, Sun, Moon, KeyRound,
 } from "lucide-react"
 import { useState } from "react"
+import ChangePasswordModal from "@/components/ChangePasswordModal"
 
 // Distinct, minimal shell for the 'agency' role — an external staffing
 // agency's own self-service portal. Deliberately NOT DashboardLayout with a
@@ -27,6 +28,7 @@ export default function AgencyLayout() {
   const { isDark, toggleTheme } = useTheme()
   const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [showChangePassword, setShowChangePassword] = useState(false)
 
   async function handleLogout() {
     await logout()
@@ -91,6 +93,11 @@ export default function AgencyLayout() {
               onClick={handleLogout}>
               <LogOut className="h-4 w-4" />Sign out
             </Button>
+            <Button variant="ghost" size="icon" onClick={() => setShowChangePassword(true)}
+              title="Change password"
+              className="shrink-0 opacity-60 hover:opacity-100 hover:bg-sidebar-accent">
+              <KeyRound className="h-4 w-4" />
+            </Button>
             <Button variant="ghost" size="icon" onClick={toggleTheme}
               title={isDark ? "Switch to light mode" : "Switch to dark mode"}
               className="shrink-0 opacity-60 hover:opacity-100 hover:bg-sidebar-accent">
@@ -99,6 +106,7 @@ export default function AgencyLayout() {
           </div>
         </div>
       </aside>
+      {showChangePassword && <ChangePasswordModal onClose={() => setShowChangePassword(false)} />}
 
       <div className="flex flex-1 flex-col overflow-hidden">
         <header className="relative z-10 flex h-14 items-center gap-4 border-b bg-background/80 px-4 backdrop-blur-md md:hidden">

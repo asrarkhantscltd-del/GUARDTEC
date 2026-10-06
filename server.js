@@ -4433,6 +4433,34 @@ app.patch('/api/users/:id', requireLogin, requireRole('director'), async functio
   }
 });
 
+// Self-service password change — any logged-in role (staff/agency/office/
+// director), unlike /api/users/:id/reset-password below which is
+// director-only and skips the current-password check entirely (that's the
+// "I forgot it" recovery path; this is the "I know it, just want to change
+// it" path).
+app.post('/api/account/change-password', requireLogin, async function(req, res) {
+  try {
+    var currentPassword = String(req.body.currentPassword || '');
+    var newPassword = String(req.body.newPassword || '');
+    var pwError = passwordStrengthError(newPassword);
+    if (pwError) return res.status(400).json({ ok: false, error: pwError });
+
+    var result = await pgPool.query('SELECT password_hash, full_name FROM users WHERE id = $1', [req.user.id]);
+    if (!result.rows.length) return res.status(404).json({ ok: false, error: 'User not found.' });
+    var match = await bcrypt.compare(currentPassword, result.rows[0].password_hash);
+    if (!match) return res.status(400).json({ ok: false, error: 'Current password is incorrect.' });
+
+    if (await isPasswordBreached(newPassword)) return res.status(400).json({ ok: false, error: 'That password has appeared in a known data breach. Please choose a different one.' });
+
+    var hash = await bcrypt.hash(newPassword, 10);
+    await pgPool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
+    logAuditEvent(req, 'USER_PASSWORD_CHANGED_SELF', 'user', req.user.id, result.rows[0].full_name, {});
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.post('/api/users/:id/reset-password', requireLogin, requireRole('director'), async function(req, res) {
   try {
     var password = String(req.body.password || '');
