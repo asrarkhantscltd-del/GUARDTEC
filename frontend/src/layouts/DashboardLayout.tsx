@@ -13,7 +13,7 @@ import {
   Camera, Loader2, Sun, Moon, AlertTriangle,
   ChevronDown, UserCog, Eye, EyeOff, FileSpreadsheet,
   Building2, CalendarDays, FileText, ListChecks,
-  BellRing, BellOff, History,
+  BellRing, BellOff, History, Target,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
@@ -41,6 +41,7 @@ const navItems: NavItem[] = [
   { label: "Staff",            to: "/staff",           icon: <Users className="h-4 w-4" />,            permission: "staff",          group: "operations" },
   { label: "Fleet",            to: "/fleet",           icon: <Truck className="h-4 w-4" />,            permission: "fleet",          group: "operations" },
   { label: "Sites",            to: "/sites",           icon: <MapPin className="h-4 w-4" />,           permission: "sites",          group: "operations" },
+  { label: "CRM",              to: "/crm",             icon: <Target className="h-4 w-4" />,          permission: "crm",            group: "operations" },
   { label: "Compliance",       to: "/compliance",      icon: <ShieldCheck className="h-4 w-4" />,      permission: "compliance",     group: "compliance" },
   { label: "Compliance Calendar", to: "/compliance-calendar", icon: <CalendarDays className="h-4 w-4" />, permission: "compliance_calendar", group: "compliance" },
   { label: "Pending Review",   to: "/pending-review",  icon: <ClipboardCheck className="h-4 w-4" />,  permission: "pending_review", group: "compliance" },

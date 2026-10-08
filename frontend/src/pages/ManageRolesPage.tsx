@@ -3,7 +3,7 @@ import { toast } from "sonner"
 import { api } from "@/lib/api"
 import {
   Plus, Pencil, Trash2, X, Users, Truck, MapPin,
-  ShieldCheck, ClipboardCheck, Lock, UserCog, UserX, CalendarDays,
+  ShieldCheck, ClipboardCheck, Lock, UserCog, UserX, CalendarDays, Target,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -22,6 +22,7 @@ const MODULES = [
   { key: "sites",                label: "Sites",                icon: MapPin },
   { key: "compliance",           label: "Compliance",           icon: ShieldCheck },
   { key: "compliance_calendar",  label: "Compliance Calendar",  icon: CalendarDays },
+  { key: "crm",                  label: "CRM (leads & events)", icon: Target },
   { key: "pending_review",       label: "Pending Review",       icon: ClipboardCheck },
   { key: "edit_staff",           label: "Edit Staff",           icon: UserCog },
   { key: "delete_staff",         label: "Delete Staff Records", icon: UserX },
@@ -29,7 +30,7 @@ const MODULES = [
   { key: "delete_fleet",         label: "Delete Fleet",         icon: Trash2 },
 ] as const
 
-const BLANK_PERMISSIONS = { staff: false, fleet: false, sites: false, compliance: false, compliance_calendar: false, pending_review: false, edit_staff: false, delete_staff: false, delete_sites: false, delete_fleet: false }
+const BLANK_PERMISSIONS = { staff: false, fleet: false, sites: false, compliance: false, compliance_calendar: false, crm: false, pending_review: false, edit_staff: false, delete_staff: false, delete_sites: false, delete_fleet: false }
 
 export default function ManageRolesPage() {
   const [roles, setRoles]     = useState<Role[]>([])

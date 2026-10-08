@@ -46,6 +46,9 @@ export default defineConfig({
       // automatically via `workbox.maximumFileSizeToCacheInBytes`.
       injectManifest: {
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        // CRM export/QR/OCR libraries load on first use instead of being
+        // pre-cached on every phone (jspdf + html2canvas alone are ~0.6 MB).
+        globIgnores: ['**/jspdf*', '**/html2canvas*', '**/index.es-*', '**/purify*'],
       },
     }),
   ],

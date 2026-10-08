@@ -14,6 +14,8 @@ import StaffDetailPage from "@/pages/StaffDetailPage"
 import FleetPage from "@/pages/FleetPage"
 import CompliancePage from "@/pages/CompliancePage"
 import ComplianceCalendarPage from "@/pages/ComplianceCalendarPage"
+import CrmPage from "@/pages/CrmPage"
+import CrmEventPage from "@/pages/CrmEventPage"
 import PublicComplianceCalendarPage from "@/pages/PublicComplianceCalendarPage"
 import SitesPage from "@/pages/SitesPage"
 import UsersPage from "@/pages/UsersPage"
@@ -103,6 +105,8 @@ function AuthenticatedApp() {
         <Route path="sites" element={<SitesPage />} />
         <Route path="compliance" element={<CompliancePage />} />
         <Route path="compliance-calendar" element={<ComplianceCalendarPage />} />
+        <Route path="crm" element={<CrmPage />} />
+        <Route path="crm/:eventId" element={<CrmEventPage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="roles" element={<ManageRolesPage />} />
         <Route path="audit-trail" element={<AuditTrailPage />} />
