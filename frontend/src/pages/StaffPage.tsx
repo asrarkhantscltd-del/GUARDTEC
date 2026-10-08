@@ -582,10 +582,10 @@ export default function StaffPage() {
       </div>
 
       {/* ── Section tabs ── */}
-      <div className="flex w-fit gap-0 rounded-lg border bg-muted/40 p-1">
+      <div className="flex w-fit max-w-full gap-0 overflow-x-auto rounded-lg border bg-muted/40 p-1">
         {SECTIONS.map(({ id, label, icon }) => (
           <button key={id} onClick={() => switchSection(id)}
-            className={`flex items-center gap-1.5 rounded-md px-4 py-1.5 text-sm font-medium transition-all ${
+            className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-all sm:px-4 ${
               activeSection === id ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
             }`}>
             {icon}{label}
@@ -817,7 +817,7 @@ export default function StaffPage() {
 
         /* ── DETAILS VIEW ── */
         view === "details" ? (
-          <div className="rounded-lg border overflow-hidden">
+          <div className="rounded-lg border overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">

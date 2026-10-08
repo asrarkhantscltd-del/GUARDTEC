@@ -371,3 +371,17 @@ input:-webkit-autofill:focus {
 .gradient-border:hover::before {
   opacity: 1;
 }
+
+/* ── Mobile: stop iOS Safari zooming the page when a field is focused ────────
+   iOS auto-zooms (and then leaves the layout shifted/"unfocused") whenever a
+   focused input/select/textarea has a computed font-size under 16px. Many of
+   our fields use text-xs/text-sm, so on phones force 16px. Unlayered +
+   !important on purpose: it must beat Tailwind's layered utility classes.
+   Checkboxes/radios/ranges/files/colours are excluded — they don't zoom. */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}

@@ -260,7 +260,7 @@ export default function DashboardLayout() {
   const bellBadgeTotal = notifications.length
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-dvh overflow-hidden">
       {sidebarOpen && (
         <div className="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={() => setSidebarOpen(false)} />
       )}
@@ -418,9 +418,11 @@ export default function DashboardLayout() {
               {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
             </p>
 
-            {/* ── Generate Report — shows dropdown on click ── */}
+            {/* ── Generate Report — shows dropdown on click ──
+                Same mobile treatment as the bell below: not positioned under `sm`, so the
+                panel spans the header with a margin instead of overflowing off-screen. */}
             {(user?.role === "director" || user?.permissions?.staff || user?.permissions?.fleet) && (
-              <div className="relative" ref={reportsRef}>
+              <div className="sm:relative" ref={reportsRef}>
                 <button
                   onClick={() => setShowReports(prev => !prev)}
                   className="relative rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -436,7 +438,7 @@ export default function DashboardLayout() {
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: -8, scale: 0.97 }}
                     transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                    className="absolute right-0 top-12 z-50 w-72 rounded-2xl glass shadow-2xl overflow-hidden">
+                    className="absolute inset-x-3 top-14 z-50 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-2xl glass shadow-2xl sm:inset-x-auto sm:right-0 sm:top-12 sm:w-72">
                     <div className="flex items-center justify-between border-b border-border px-4 py-3">
                       <div className="flex items-center gap-2">
                         {reportType && (

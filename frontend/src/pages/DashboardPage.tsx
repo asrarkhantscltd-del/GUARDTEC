@@ -108,7 +108,7 @@ export default function DashboardPage() {
     <div className="space-y-6">
 
       {/* ── Hero banner ── */}
-      <div className={`relative overflow-hidden rounded-2xl p-8 ${isDark ? "text-white" : "text-[hsl(224_14%_10%)]"}`}
+      <div className={`relative overflow-hidden rounded-2xl p-5 sm:p-8 ${isDark ? "text-white" : "text-[hsl(224_14%_10%)]"}`}
         style={{ minHeight: "200px" }}
       >
         {/* ShaderGradient canvas — full bleed behind all content */}
@@ -204,10 +204,10 @@ export default function DashboardPage() {
 
           {/* Right: compliance ring — toggleable */}
           {compliancePct !== null && !ringHidden && (
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 max-w-full items-center gap-3">
               <button
                 onClick={() => navigate("/compliance")}
-                className={`group flex shrink-0 cursor-pointer items-center gap-4 rounded-2xl border px-6 py-4 backdrop-blur-sm transition-all duration-200 hover:scale-[1.02] hover:shadow-lg ${
+                className={`group flex min-w-0 max-w-full cursor-pointer items-center gap-3 rounded-2xl border px-4 py-4 backdrop-blur-sm transition-all duration-200 hover:scale-[1.02] hover:shadow-lg sm:gap-4 sm:px-6 ${
                   isDark
                     ? "border-white/10 bg-white/[0.06] hover:border-white/20 hover:bg-white/[0.10]"
                     : "border-black/10 bg-white/[0.50] hover:border-black/20 hover:bg-white/[0.70]"
