@@ -41,7 +41,7 @@ export default function AgencyLayout() {
         <div className="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
-      <aside className={`fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-transform md:relative md:translate-x-0 ${
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-60 flex-col pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-transform md:relative md:translate-x-0 ${
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
       }`}>
         <div className="flex shrink-0 flex-col items-center justify-center gap-1 border-b border-sidebar-border py-5">
@@ -109,7 +109,7 @@ export default function AgencyLayout() {
       {showChangePassword && <ChangePasswordModal onClose={() => setShowChangePassword(false)} />}
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="relative z-10 flex h-14 items-center gap-4 border-b bg-background/80 px-4 backdrop-blur-md md:hidden">
+        <header className="relative z-10 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-center gap-4 border-b bg-background/80 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md md:hidden">
           <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)}>
             {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </Button>
@@ -120,7 +120,7 @@ export default function AgencyLayout() {
           />
         </header>
 
-        <main className="flex-1 overflow-y-auto bg-background p-4 md:p-6">
+        <main className="flex-1 overflow-y-auto bg-background p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] md:p-6">
           <Outlet />
         </main>
       </div>

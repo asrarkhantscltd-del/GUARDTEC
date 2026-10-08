@@ -266,7 +266,7 @@ export default function DashboardLayout() {
       )}
 
       {/* ── Sidebar — uses CSS vars so it switches with dark/light mode ── */}
-      <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-transform md:relative md:translate-x-0 ${
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-transform md:relative md:translate-x-0 ${
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
       }`}>
 
@@ -389,7 +389,10 @@ export default function DashboardLayout() {
 
       {/* ── Main content area ── */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="relative z-10 flex h-16 items-center gap-4 border-b bg-background/80 px-4 backdrop-blur-md md:px-6">
+        {/* iOS PWA runs edge-to-edge (viewport-fit=cover + black-translucent status bar), so
+            the header must reserve the notch/status-bar height or its buttons sit under it
+            and can't be tapped. env() is 0 everywhere else, so desktop/Android are unchanged. */}
+        <header className="relative z-10 flex h-[calc(4rem+env(safe-area-inset-top))] items-center gap-4 border-b bg-background/80 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md md:px-6">
           <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setSidebarOpen(!sidebarOpen)}>
             {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </Button>
@@ -438,7 +441,7 @@ export default function DashboardLayout() {
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: -8, scale: 0.97 }}
                     transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                    className="absolute inset-x-3 top-14 z-50 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-2xl glass shadow-2xl sm:inset-x-auto sm:right-0 sm:top-12 sm:w-72">
+                    className="absolute inset-x-3 top-[calc(3.5rem+env(safe-area-inset-top))] z-50 max-h-[calc(100dvh-5rem-env(safe-area-inset-top))] overflow-y-auto rounded-2xl glass shadow-2xl sm:inset-x-auto sm:right-0 sm:top-12 sm:w-72">
                     <div className="flex items-center justify-between border-b border-border px-4 py-3">
                       <div className="flex items-center gap-2">
                         {reportType && (
@@ -605,7 +608,7 @@ export default function DashboardLayout() {
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -8, scale: 0.97 }}
                   transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                  className="absolute inset-x-3 top-14 z-50 rounded-2xl glass shadow-2xl overflow-hidden sm:inset-x-auto sm:right-0 sm:top-12 sm:w-80">
+                  className="absolute inset-x-3 top-[calc(3.5rem+env(safe-area-inset-top))] z-50 rounded-2xl glass shadow-2xl overflow-hidden sm:inset-x-auto sm:right-0 sm:top-12 sm:w-80">
                   <div className="flex items-center justify-between border-b border-border px-4 py-3">
                     <p className="text-sm font-semibold">Notifications</p>
                     <div className="flex items-center gap-1">
@@ -840,7 +843,7 @@ export default function DashboardLayout() {
           </div>
         </header>
 
-        <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-background p-4 md:p-6">
+        <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-background p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] md:p-6">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={location.pathname}
