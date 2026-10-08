@@ -337,13 +337,13 @@ async function checkComplianceCalendarReminders() {
 }
 
 // ── ROLES (configurable, module-level permissions) ────────────────────────────
-// Modules a role can be granted: staff, fleet, sites, compliance, compliance_calendar, pending_review.
+// Modules a role can be granted: staff, fleet, sites, compliance, compliance_calendar, pending_review, crm.
 // Team Access + Manage Roles are deliberately NOT part of this system — they stay
 // hardcoded director-only everywhere, so no role can ever grant itself the power
 // to create/edit other accounts or roles (privilege-escalation guard).
 var DEFAULT_ROLES = [
-  { slug: 'director',       name: 'Director',            is_system: true,  permissions: { staff: true,  fleet: true,  sites: true,  compliance: true,  compliance_calendar: true,  pending_review: true  } },
-  { slug: 'ops_manager',    name: 'Operations Manager',  is_system: true,  permissions: { staff: true,  fleet: true,  sites: true,  compliance: true,  compliance_calendar: true,  pending_review: true  } },
+  { slug: 'director',       name: 'Director',            is_system: true,  permissions: { staff: true,  fleet: true,  sites: true,  compliance: true,  compliance_calendar: true,  pending_review: true,  crm: true  } },
+  { slug: 'ops_manager',    name: 'Operations Manager',  is_system: true,  permissions: { staff: true,  fleet: true,  sites: true,  compliance: true,  compliance_calendar: true,  pending_review: true,  crm: true  } },
   { slug: 'hr_manager',     name: 'HR Manager',          is_system: true,  permissions: { staff: true,  fleet: false, sites: true,  compliance: true,  compliance_calendar: true,  pending_review: false } },
   { slug: 'office_manager', name: 'Office Manager',      is_system: true,  permissions: { staff: true,  fleet: false, sites: true,  compliance: false, compliance_calendar: false, pending_review: false } },
   { slug: 'accounts',       name: 'Accounts',            is_system: true,  permissions: { staff: true,  fleet: false, sites: false, compliance: false, compliance_calendar: false, pending_review: false } },
@@ -3194,6 +3194,9 @@ app.post('/api/public/compliance-calendar/:token/:itemId/complete', async functi
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
+// ── CRM (event-based leads — see crm.js) ──────────────────────────────────────
+require('./crm')({ app: app, pgPool: pgPool, requireLogin: requireLogin, requirePermission: requirePermission, logAuditEvent: logAuditEvent, sendXlsx: sendXlsx });
 
 // ── SITE DOCUMENTATION ─────────────────────────────────────────────────────────
 // Per-site file library: general documentation, presentations, induction packs.
