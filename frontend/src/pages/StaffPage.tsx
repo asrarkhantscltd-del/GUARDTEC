@@ -565,7 +565,7 @@ export default function StaffPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
         <div>
           <h2 className="font-display text-2xl font-bold tracking-tight">Staff</h2>
           <p className="text-muted-foreground text-sm">{staff.length} active staff members</p>
@@ -727,7 +727,7 @@ export default function StaffPage() {
 
       {/* ── Search + View toggles ── */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 max-w-sm">
+        <div className="relative w-full max-w-sm sm:w-auto sm:flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Search by name..." value={search}
             onChange={(e) => setSearch(e.target.value)} className="pl-9" />
@@ -818,7 +818,8 @@ export default function StaffPage() {
         /* ── DETAILS VIEW ── */
         view === "details" ? (
           <div className="rounded-lg border overflow-x-auto">
-            <table className="w-full text-sm">
+            {/* Tighter cell padding below `sm` so Name + Compliance + actions fit a phone without side-scrolling. */}
+            <table className="w-full text-sm [&_td]:px-2 [&_th]:px-2 sm:[&_td]:px-4 sm:[&_th]:px-4">
               <thead>
                 <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
                   <th className="px-4 py-3 w-8">
