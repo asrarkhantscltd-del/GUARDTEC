@@ -121,7 +121,10 @@ async function createNotification(opts) {
   // fired from this single choke point so none of createNotification()'s
   // six call sites need editing individually. Never let a push failure
   // affect the caller — the in-app notification above already succeeded.
-  pushToManagers(opts.summary).catch(function(e) { console.error('[PUSH] broadcast failed:', e.message); });
+  // Calendar reminders are personal (only the responsible person's devices);
+  // every other event keeps the original "all subscribed managers" audience.
+  pushToManagers(opts.summary, opts.type === 'compliance_calendar_reminder' ? { type: opts.type, summary: opts.summary } : null)
+    .catch(function(e) { console.error('[PUSH] broadcast failed:', e.message); });
 }
 
 // ── WEB PUSH (browser/phone notifications) ─────────────────────────────────
@@ -169,9 +172,22 @@ async function deliverPush(subs, payload) {
 // existing audience (see notifications table above). Used for the six
 // existing createNotification() events, none of which have a specific
 // target person to narrow to.
-async function pushToManagers(body) {
+// Optional visibilityRow ({ type, summary }) narrows the audience to subscribers
+// who are allowed to see that notification (see canViewNotification); null =
+// everyone subscribed, as before.
+async function pushToManagers(body, visibilityRow) {
   if (!process.env.VAPID_PUBLIC_KEY) return; // not configured — no-op, not an error
-  var subs = (await pgPool.query('SELECT id, endpoint, p256dh, auth FROM push_subscriptions')).rows;
+  var subs = (await pgPool.query(
+    'SELECT ps.id, ps.endpoint, ps.p256dh, ps.auth, u.role AS role, u.email AS email FROM push_subscriptions ps JOIN users u ON u.id = ps.user_id'
+  )).rows;
+  if (visibilityRow) {
+    var allowed = [];
+    for (var i = 0; i < subs.length; i++) {
+      var viewer = { email: subs[i].email, hasCalendarModule: await roleHasPermission(subs[i].role, 'compliance_calendar') };
+      if (canViewNotification(visibilityRow, viewer)) allowed.push(subs[i]);
+    }
+    subs = allowed;
+  }
   await deliverPush(subs, JSON.stringify({ title: 'GuardTec Compliance', body: body, url: '/' }));
 }
 
@@ -1055,6 +1071,66 @@ function requirePermission(moduleKey) {
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
+  };
+}
+
+// Same rule as requirePermission(), but as a plain yes/no so a handler can
+// decide WHAT to return (or who to push to) instead of 403-ing the whole
+// request. Used to keep compliance-calendar alerts away from roles that
+// don't have the compliance_calendar module (e.g. supervisors).
+async function roleHasPermission(roleSlug, moduleKey) {
+  if (!roleSlug) return false;
+  if (roleSlug === 'director') return true;
+  var roles = await loadRoles();
+  var roleDef = roles.find(function(r){ return r.slug === roleSlug; });
+  return !!(roleDef && roleDef.permissions && roleDef.permissions[moduleKey]);
+}
+
+// ── NOTIFICATION VISIBILITY (who may see which bell/push alert) ──────────────
+// Every notification type used to go to everyone holding `staff`. Compliance
+// calendar reminders are personal: they go only to the person(s) named in the
+// item's responsible_email (the reminder summary ends with ' — email, email'),
+// and only if their role also has the compliance_calendar module.
+// An item with NO responsible person has nobody to target, so it falls back to
+// everyone holding the module (the managers) rather than vanishing.
+var COMPANY_EMAIL_DOMAINS = ['firstcallsiteservices.co.uk', 'guardtec-security.co.uk', 'principalsecurityconsultants.com'];
+
+function splitEmails(s) {
+  return String(s || '').toLowerCase().split(/[,;\s]+/).filter(Boolean);
+}
+
+// Two addresses are the same mailbox if identical, or if they have the same
+// name part and both are company domains (the staff roster has a primary
+// @firstcallsiteservices address plus an @guardtec-security alias for the same person).
+function sameMailbox(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  var ap = a.split('@'), bp = b.split('@');
+  return ap.length === 2 && bp.length === 2 && ap[0] === bp[0] &&
+    COMPANY_EMAIL_DOMAINS.indexOf(ap[1]) !== -1 && COMPANY_EMAIL_DOMAINS.indexOf(bp[1]) !== -1;
+}
+
+function calendarTargetsFromSummary(summary) {
+  var s = String(summary || '');
+  var i = s.lastIndexOf(' — ');
+  return i === -1 ? '' : s.slice(i + 3);
+}
+
+// row = { type, summary }; viewer = { email, hasCalendarModule }
+function canViewNotification(row, viewer) {
+  if (row.type !== 'compliance_calendar_reminder') return true;
+  if (!viewer.hasCalendarModule) return false;
+  var targets = splitEmails(calendarTargetsFromSummary(row.summary));
+  if (!targets.length) return true;
+  var mine = String(viewer.email || '').toLowerCase();
+  return targets.some(function(t) { return sameMailbox(t, mine); });
+}
+
+async function notificationViewer(user) {
+  var r = await pgPool.query('SELECT email FROM users WHERE id = $1', [user.id]);
+  return {
+    email: r.rows.length ? r.rows[0].email : '',
+    hasCalendarModule: await roleHasPermission(user.role, 'compliance_calendar')
   };
 }
 
@@ -7885,11 +7961,15 @@ app.get('/api/internal/fleet', requireN8nToken, async function(req, res) {
 // each disappears (seen_at set) once the manager has navigated to it.
 app.get('/api/notifications', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
+    // Calendar reminders are personal — see canViewNotification(). Fetch a
+    // wider window, then filter, so hidden rows don't crowd out visible ones.
+    var viewer = await notificationViewer(req.user);
     var result = await pgPool.query(
       `SELECT id, type, actor_name, summary, link_staff_id, link_tab, link_incident_id, link_agency_id, created_at
-       FROM notifications WHERE seen_at IS NULL ORDER BY created_at DESC LIMIT 50`
+       FROM notifications WHERE seen_at IS NULL ORDER BY created_at DESC LIMIT 300`
     );
-    res.json({ ok: true, notifications: result.rows });
+    var visible = result.rows.filter(function(n) { return canViewNotification(n, viewer); }).slice(0, 50);
+    res.json({ ok: true, notifications: visible });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -7897,7 +7977,12 @@ app.get('/api/notifications', requireLogin, requirePermission('staff'), async fu
 
 app.post('/api/notifications/:id/seen', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
-    await pgPool.query('UPDATE notifications SET seen_at = NOW() WHERE id = $1', [req.params.id]);
+    // Only mark it seen if this user is actually allowed to see it.
+    var viewer = await notificationViewer(req.user);
+    var row = await pgPool.query('SELECT type, summary FROM notifications WHERE id = $1', [req.params.id]);
+    if (row.rows.length && canViewNotification(row.rows[0], viewer)) {
+      await pgPool.query('UPDATE notifications SET seen_at = NOW() WHERE id = $1', [req.params.id]);
+    }
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -7906,7 +7991,14 @@ app.post('/api/notifications/:id/seen', requireLogin, requirePermission('staff')
 
 app.post('/api/notifications/seen-all', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
-    await pgPool.query('UPDATE notifications SET seen_at = NOW() WHERE seen_at IS NULL');
+    // "Clear all" only clears what this user can actually see — otherwise one
+    // person clearing their bell would silently wipe someone else's calendar alerts.
+    var viewer = await notificationViewer(req.user);
+    var unseen = await pgPool.query('SELECT id, type, summary FROM notifications WHERE seen_at IS NULL');
+    var ids = unseen.rows.filter(function(n) { return canViewNotification(n, viewer); }).map(function(n) { return n.id; });
+    if (ids.length) {
+      await pgPool.query('UPDATE notifications SET seen_at = NOW() WHERE id = ANY($1::uuid[])', [ids]);
+    }
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
