@@ -3279,6 +3279,15 @@ require('./crm')({ app: app, pgPool: pgPool, requireLogin: requireLogin, require
 // Files stay on disk under SITE_DOCS_DIR; site_documents holds only metadata
 // (same split as message_attachments/incident_attachments elsewhere in this file).
 
+// File types a browser can show in a tab without running anything — see the
+// GET route below for why everything else is forced to download.
+var SITE_DOC_INLINE_TYPES = {
+  '.pdf': 'application/pdf',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp',
+  '.txt': 'text/plain; charset=utf-8',
+  '.mp4': 'video/mp4', '.mp3': 'audio/mpeg'
+};
+
 function ensureSiteDocsDir(siteId) {
   var dir = path.join(SITE_DOCS_DIR, siteId);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -3347,7 +3356,22 @@ app.get('/api/sites/:id/documents/:filename', requireLogin, requirePermission('s
     var r = await pgPool.query('SELECT original_name FROM site_documents WHERE site_id = $1 AND filename = $2', [siteId, filename]);
     var originalName = r.rows.length ? r.rows[0].original_name : filename;
 
-    res.setHeader('Content-Disposition', 'inline; filename="' + originalName.replace(/"/g, '\\"') + '"');
+    // Without an explicit Content-Type, res.send(Buffer) defaults to
+    // application/octet-stream and every browser downloads instead of showing the
+    // file. Only types browsers render safely are served inline; anything else
+    // (office files, and especially HTML/SVG/JS, which would run as this app's
+    // own origin = stored XSS) is forced to download.
+    var inlineType = SITE_DOC_INLINE_TYPES[path.extname(filename).toLowerCase()];
+    // Folder uploads store "Folder/Sub/file.pdf" as the name — download as just file.pdf.
+    var shownName = path.basename(String(originalName).replace(/\\/g, '/')) || filename;
+    // Header values must be latin-1: give an ASCII fallback plus an RFC 5987 UTF-8 name,
+    // otherwise a file called "Plan – final.pdf" makes res.setHeader throw -> 500.
+    var asciiName = shownName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+    res.setHeader('Content-Type', inlineType || 'application/octet-stream');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition',
+      (inlineType ? 'inline' : 'attachment') + '; filename="' + asciiName + '"; filename*=UTF-8\'\'' +
+      encodeURIComponent(shownName).replace(/'/g, '%27'));
     res.setHeader('Cache-Control', 'no-store');
     res.send(fs.readFileSync(filePath));
   } catch (e) {

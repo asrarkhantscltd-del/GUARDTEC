@@ -8,6 +8,8 @@ import {
   Briefcase, Store, MoreHorizontal, Phone, Mail, Package,
   Monitor, Smartphone, Sofa, Utensils, ChevronRight, Users, Search,
   FileText, Upload, Loader2, Eye, FolderUp,
+  Presentation, FileImage, FileSpreadsheet, FileArchive, FileVideo, File as FileIcon,
+  LayoutGrid, Check, ChevronDown,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -43,6 +45,271 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return bytes + " B"
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
   return (bytes / (1024 * 1024)).toFixed(1) + " MB"
+}
+
+// ── Site documents: Explorer-style view modes ─────────────────────────────────
+
+type DocViewMode = "xl" | "large" | "medium" | "small" | "list" | "details" | "tiles" | "content"
+
+const DOC_VIEW_OPTIONS: { mode: DocViewMode; label: string }[] = [
+  { mode: "xl",      label: "Extra large icons" },
+  { mode: "large",   label: "Large icons" },
+  { mode: "medium",  label: "Medium icons" },
+  { mode: "small",   label: "Small icons" },
+  { mode: "list",    label: "List" },
+  { mode: "details", label: "Details" },
+  { mode: "tiles",   label: "Tiles" },
+  { mode: "content", label: "Content" },
+]
+const DOC_VIEW_KEY = "guardtec_site_docs_view"
+
+type DocKind = "pdf" | "image" | "sheet" | "slides" | "doc" | "video" | "archive" | "other"
+
+function docKind(name: string): DocKind {
+  const ext = (name.split(".").pop() ?? "").toLowerCase()
+  if (ext === "pdf") return "pdf"
+  if (["png", "jpg", "jpeg", "gif", "webp", "bmp"].includes(ext)) return "image"
+  if (["xls", "xlsx", "csv"].includes(ext)) return "sheet"
+  if (["ppt", "pptx"].includes(ext)) return "slides"
+  if (["doc", "docx", "txt", "rtf"].includes(ext)) return "doc"
+  if (["mp4", "mov", "avi", "mkv", "webm"].includes(ext)) return "video"
+  if (["zip", "rar", "7z"].includes(ext)) return "archive"
+  return "other"
+}
+
+function DocTypeIcon({ name, className }: { name: string; className: string }) {
+  switch (docKind(name)) {
+    case "pdf":     return <FileText className={`${className} text-red-500`} />
+    case "image":   return <FileImage className={`${className} text-emerald-500`} />
+    case "sheet":   return <FileSpreadsheet className={`${className} text-green-600`} />
+    case "slides":  return <Presentation className={`${className} text-orange-500`} />
+    case "doc":     return <FileText className={`${className} text-blue-500`} />
+    case "video":   return <FileVideo className={`${className} text-purple-500`} />
+    case "archive": return <FileArchive className={`${className} text-yellow-600`} />
+    default:        return <FileIcon className={`${className} text-muted-foreground`} />
+  }
+}
+
+// A picked folder stores "Folder/Sub/file.pdf" as the name — show the file name
+// prominently and the folder path as secondary text.
+function splitDocPath(originalName: string): { base: string; folder: string } {
+  const parts = originalName.replace(/\\/g, "/").split("/")
+  return { base: parts[parts.length - 1] || originalName, folder: parts.slice(0, -1).join("/") }
+}
+
+function DocViewMenu({ mode, onChange }: { mode: DocViewMode; onChange: (m: DocViewMode) => void }) {
+  const [open, setOpen] = useState(false)
+  const current = DOC_VIEW_OPTIONS.find(o => o.mode === mode)
+  return (
+    <div className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 rounded-md border bg-background px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+        <LayoutGrid className="h-3.5 w-3.5" />{current?.label}<ChevronDown className="h-3 w-3" />
+      </button>
+      {open && (
+        <>
+          {/* Transparent click-catcher: tapping anywhere else just closes the menu. */}
+          <button type="button" aria-label="Close menu" className="fixed inset-0 z-40 cursor-default" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-50 mt-1 w-48 overflow-hidden rounded-xl border bg-card py-1 shadow-xl">
+            {DOC_VIEW_OPTIONS.map(o => (
+              <button key={o.mode} type="button" onClick={() => { onChange(o.mode); setOpen(false) }}
+                className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted ${o.mode === mode ? "font-medium text-foreground" : "text-muted-foreground"}`}>
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center">{o.mode === mode && <Check className="h-3.5 w-3.5" />}</span>
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+const DOC_ICON_TILE = {
+  xl:     { grid: "grid-cols-2 sm:grid-cols-3", box: "h-32", icon: "h-16 w-16" },
+  large:  { grid: "grid-cols-3 sm:grid-cols-4", box: "h-24", icon: "h-12 w-12" },
+  medium: { grid: "grid-cols-4 sm:grid-cols-5", box: "h-16", icon: "h-8 w-8" },
+} as const
+
+function DocItems({ docs, siteId, mode, canDelete, onDelete }: {
+  docs: SiteDoc[]; siteId: string; mode: DocViewMode; canDelete: boolean; onDelete: (filename: string) => void
+}) {
+  const url = (d: SiteDoc) => `/api/sites/${siteId}/documents/${d.filename}`
+  const catLabel = (d: SiteDoc) => DOC_CATEGORY_LABELS[d.category] ?? d.category
+  const dateStr = (d: SiteDoc) => new Date(d.uploadedAt).toLocaleDateString("en-GB")
+
+  const deleteBtn = (d: SiteDoc, extra = "") => canDelete && (
+    <button type="button" onClick={() => onDelete(d.filename)} title="Delete"
+      className={`rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive ${extra}`}>
+      <Trash2 className="h-3.5 w-3.5" />
+    </button>
+  )
+  const viewLink = (d: SiteDoc) => (
+    <a href={url(d)} target="_blank" rel="noopener noreferrer" title="View"
+      className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+      <Eye className="h-3.5 w-3.5" />
+    </a>
+  )
+
+  // Extra large / Large / Medium icons — image files show a real thumbnail.
+  if (mode === "xl" || mode === "large" || mode === "medium") {
+    const cfg = DOC_ICON_TILE[mode]
+    return (
+      <div className={`grid gap-3 ${cfg.grid}`}>
+        {docs.map(d => {
+          const { base } = splitDocPath(d.originalName)
+          return (
+            <div key={d.filename} className="group relative">
+              <a href={url(d)} target="_blank" rel="noopener noreferrer" title={d.originalName}
+                className="flex flex-col items-center gap-1.5 rounded-lg border bg-card p-2 text-center transition-colors hover:bg-muted/50">
+                <div className={`flex w-full items-center justify-center overflow-hidden rounded-md bg-muted/40 ${cfg.box}`}>
+                  {docKind(base) === "image"
+                    ? <img src={url(d)} alt={base} loading="lazy" className="h-full w-full object-cover" />
+                    : <DocTypeIcon name={base} className={cfg.icon} />}
+                </div>
+                <span className="w-full truncate text-[11px] font-medium">{base}</span>
+              </a>
+              {canDelete && deleteBtn(d, "absolute right-1 top-1 bg-background/90 shadow-sm sm:opacity-0 sm:group-hover:opacity-100")}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  // Small icons — compact, icon beside the name, laid out in a grid.
+  if (mode === "small") {
+    return (
+      <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+        {docs.map(d => {
+          const { base } = splitDocPath(d.originalName)
+          return (
+            <div key={d.filename} className="flex items-center gap-1 rounded-md hover:bg-muted/50">
+              <a href={url(d)} target="_blank" rel="noopener noreferrer" title={d.originalName}
+                className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-sm">
+                <DocTypeIcon name={base} className="h-5 w-5 shrink-0" />
+                <span className="truncate">{base}</span>
+              </a>
+              {deleteBtn(d)}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  // List — text-first, flows down each column before starting the next (like Explorer).
+  if (mode === "list") {
+    return (
+      <div className="columns-1 gap-x-6 sm:columns-2">
+        {docs.map(d => {
+          const { base } = splitDocPath(d.originalName)
+          return (
+            <a key={d.filename} href={url(d)} target="_blank" rel="noopener noreferrer" title={d.originalName}
+              className="flex break-inside-avoid items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-muted/50">
+              <DocTypeIcon name={base} className="h-4 w-4 shrink-0" />
+              <span className="truncate">{base}</span>
+            </a>
+          )
+        })}
+      </div>
+    )
+  }
+
+  // Details — a table with columns.
+  if (mode === "details") {
+    return (
+      <div className="overflow-x-auto rounded-lg border">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
+              <th className="px-3 py-2">Name</th>
+              <th className="hidden px-3 py-2 sm:table-cell">Category</th>
+              <th className="px-3 py-2">Size</th>
+              <th className="hidden px-3 py-2 sm:table-cell">Uploaded</th>
+              <th className="w-20 px-3 py-2"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {docs.map(d => {
+              const { base, folder } = splitDocPath(d.originalName)
+              return (
+                <tr key={d.filename} className="hover:bg-muted/30">
+                  <td className="px-3 py-2">
+                    <a href={url(d)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
+                      <DocTypeIcon name={base} className="h-4 w-4 shrink-0" />
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium">{base}</span>
+                        {folder && <span className="block truncate text-[11px] text-muted-foreground">{folder}</span>}
+                      </span>
+                    </a>
+                  </td>
+                  <td className="hidden px-3 py-2 text-muted-foreground sm:table-cell">{catLabel(d)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">{formatBytes(d.size)}</td>
+                  <td className="hidden whitespace-nowrap px-3 py-2 text-muted-foreground sm:table-cell">{dateStr(d)}</td>
+                  <td className="px-3 py-2"><div className="flex items-center justify-end gap-0.5">{viewLink(d)}{deleteBtn(d)}</div></td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  // Tiles — medium icon with name, type and size beside it.
+  if (mode === "tiles") {
+    return (
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {docs.map(d => {
+          const { base } = splitDocPath(d.originalName)
+          return (
+            <div key={d.filename} className="flex items-center gap-1 rounded-lg border bg-card pr-1 hover:bg-muted/40">
+              <a href={url(d)} target="_blank" rel="noopener noreferrer" title={d.originalName}
+                className="flex min-w-0 flex-1 items-center gap-3 p-2.5">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-muted/40">
+                  <DocTypeIcon name={base} className="h-6 w-6" />
+                </div>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">{base}</div>
+                  <div className="text-[11px] text-muted-foreground">{catLabel(d)}</div>
+                  <div className="text-[11px] text-muted-foreground">{formatBytes(d.size)}</div>
+                </div>
+              </a>
+              {deleteBtn(d)}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  // Content — one row each with a larger preview and all the details underneath.
+  return (
+    <div className="space-y-2">
+      {docs.map(d => {
+        const { base, folder } = splitDocPath(d.originalName)
+        return (
+          <div key={d.filename} className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5">
+            <a href={url(d)} target="_blank" rel="noopener noreferrer" className="flex min-w-0 flex-1 items-center gap-3">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted/40">
+                {docKind(base) === "image"
+                  ? <img src={url(d)} alt={base} loading="lazy" className="h-full w-full object-cover" />
+                  : <DocTypeIcon name={base} className="h-7 w-7" />}
+              </div>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium">{base}</div>
+                {folder && <div className="truncate text-[11px] text-muted-foreground">{folder}</div>}
+                <div className="text-[11px] text-muted-foreground">{catLabel(d)} · {formatBytes(d.size)} · {dateStr(d)}</div>
+              </div>
+            </a>
+            {viewLink(d)}
+            {deleteBtn(d)}
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 interface AssignedStaff {
@@ -163,6 +430,16 @@ export default function SitesPage() {
   const [docs, setDocs]                     = useState<SiteDoc[]>([])
   const [docsLoading, setDocsLoading]       = useState(false)
   const [uploadDocFiles, setUploadDocFiles] = useState<File[]>([])
+  const [docView, setDocView] = useState<DocViewMode>(() => {
+    try {
+      const v = localStorage.getItem(DOC_VIEW_KEY)
+      return DOC_VIEW_OPTIONS.some(o => o.mode === v) ? (v as DocViewMode) : "content"
+    } catch { return "content" }
+  })
+  function changeDocView(m: DocViewMode) {
+    setDocView(m)
+    try { localStorage.setItem(DOC_VIEW_KEY, m) } catch { /* private mode — fine, just not remembered */ }
+  }
   const [uploadDocCategory, setUploadDocCategory] = useState("documentation")
   const [uploadingDoc, setUploadingDoc]     = useState(false)
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null)
@@ -328,34 +605,54 @@ export default function SitesPage() {
 
   async function handleUploadDocs() {
     if (!uploadDocFiles.length || !docsSite) return
+    // OS housekeeping files that come along with a folder pick — never real documents.
+    const JUNK = /^(\.DS_Store|Thumbs\.db|desktop\.ini|~\$.*)$/i
+    const MAX_BYTES = 20 * 1024 * 1024 // matches nginx client_max_body_size (frontend/nginx.conf)
+    const toSend = uploadDocFiles.filter(f => !JUNK.test(f.name))
     setUploadingDoc(true); setDocError("")
-    setUploadProgress({ done: 0, total: uploadDocFiles.length })
+    setUploadProgress({ done: 0, total: toSend.length })
     const uploaded: SiteDoc[] = []
-    let failed = 0
+    const failures: string[] = []
     try {
-      for (let i = 0; i < uploadDocFiles.length; i++) {
-        const file = uploadDocFiles[i]
-        try {
-          const res = await fetch(`/api/sites/${docsSite.id}/documents`, {
-            method: "POST",
-            credentials: "include",
-            headers: {
-              "Content-Type": file.type || "application/octet-stream",
-              "X-Filename": encodeURIComponent(file.name),
-              "X-Doc-Category": uploadDocCategory,
-            },
-            body: file,
-          })
-          const d = await res.json()
-          if (d.ok) uploaded.push(d.doc); else failed++
-        } catch {
-          failed++
+      for (let i = 0; i < toSend.length; i++) {
+        const file = toSend[i]
+        // For a picked folder this is "Folder/Sub/file.pdf", so nested files stay
+        // distinguishable (two subfolders can both hold a "Plan.pdf").
+        const shownName = file.webkitRelativePath || file.name
+        if (file.size > MAX_BYTES) {
+          failures.push(`${shownName} (over 20 MB)`)
+        } else if (file.size === 0) {
+          failures.push(`${shownName} (empty file)`)
+        } else {
+          try {
+            const res = await fetch(`/api/sites/${docsSite.id}/documents`, {
+              method: "POST",
+              credentials: "include",
+              headers: {
+                // Always octet-stream: the server reads the raw body itself, and a file whose own
+                // type is application/json (e.g. a .json inside the folder) would otherwise be
+                // swallowed by the server's JSON body parser and never reach the upload route.
+                "Content-Type": "application/octet-stream",
+                "X-Filename": encodeURIComponent(shownName),
+                "X-Doc-Category": uploadDocCategory,
+              },
+              body: file,
+            })
+            const d = await res.json().catch(() => null)
+            if (res.ok && d?.ok) uploaded.push(d.doc)
+            else failures.push(`${shownName} (${res.status === 413 ? "too large for the server" : d?.error ?? `error ${res.status}`})`)
+          } catch {
+            failures.push(`${shownName} (network error)`)
+          }
         }
-        setUploadProgress({ done: i + 1, total: uploadDocFiles.length })
+        setUploadProgress({ done: i + 1, total: toSend.length })
       }
       if (uploaded.length) setDocs(prev => [...prev, ...uploaded])
-      if (failed > 0) {
-        setDocError(`${uploaded.length} of ${uploadDocFiles.length} file(s) uploaded — ${failed} failed.`)
+      if (failures.length > 0) {
+        setDocError(
+          `${uploaded.length} of ${toSend.length} file(s) uploaded — ${failures.length} failed: ` +
+          failures.slice(0, 5).join(", ") + (failures.length > 5 ? `, +${failures.length - 5} more` : "")
+        )
       } else {
         toast.success(uploaded.length > 1 ? `${uploaded.length} files uploaded` : "File uploaded")
       }
@@ -969,7 +1266,7 @@ export default function SitesPage() {
             </div>
           </div>
 
-          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-5 py-5 space-y-6">
+          <div className="mx-auto w-full max-w-4xl flex-1 overflow-y-auto px-5 py-5 space-y-6">
 
               {/* Upload section */}
               <div>
@@ -1026,9 +1323,12 @@ export default function SitesPage() {
 
               {/* Stored docs list */}
               <div>
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Stored files {!docsLoading && `(${docs.length})`}
-                </p>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Stored files {!docsLoading && `(${docs.length})`}
+                  </p>
+                  {docs.length > 0 && <DocViewMenu mode={docView} onChange={changeDocView} />}
+                </div>
                 {docsLoading ? (
                   <p className="text-sm text-muted-foreground">Loading…</p>
                 ) : docs.length === 0 ? (
@@ -1038,34 +1338,7 @@ export default function SitesPage() {
                     <p className="mt-1 text-xs text-muted-foreground/60">Site documentation, presentations, induction packs — upload above.</p>
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    {docs.map((doc) => (
-                      <div key={doc.filename} className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5">
-                        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium">{doc.originalName}</div>
-                          <div className="text-[11px] text-muted-foreground">
-                            {DOC_CATEGORY_LABELS[doc.category] ?? doc.category}
-                            {" · "}{formatBytes(doc.size)}
-                            {" · "}{new Date(doc.uploadedAt).toLocaleDateString("en-GB")}
-                          </div>
-                        </div>
-                        <a href={`/api/sites/${docsSite.id}/documents/${doc.filename}`}
-                          target="_blank" rel="noopener noreferrer"
-                          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                          title="View">
-                          <Eye className="h-3.5 w-3.5" />
-                        </a>
-                        {canDelete && (
-                          <button onClick={() => handleDeleteDoc(doc.filename)}
-                            className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                            title="Delete">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                  <DocItems docs={docs} siteId={docsSite.id} mode={docView} canDelete={canDelete} onDelete={handleDeleteDoc} />
                 )}
               </div>
           </div>
