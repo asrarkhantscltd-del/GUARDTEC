@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
 import { api, ApiError } from "@/lib/api"
@@ -477,6 +477,12 @@ export default function SitesPage() {
   const [uploadDocCategory, setUploadDocCategory] = useState("documentation")
   const [uploadingDoc, setUploadingDoc]     = useState(false)
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null)
+  // Which site the running upload belongs to. Without this, opening a different
+  // site's documents panel mid-upload showed the first site's "Uploading 3 of 9…",
+  // and on completion appended its files to whichever site's list was on screen.
+  const [uploadSite, setUploadSite] = useState<{ id: string; name: string } | null>(null)
+  const docsSiteIdRef = useRef<string | null>(null)
+  useEffect(() => { docsSiteIdRef.current = docsSite?.id ?? null }, [docsSite])
   const [docError, setDocError]             = useState("")
 
   // Staff panel
@@ -627,13 +633,15 @@ export default function SitesPage() {
 
   async function openDocsPanel(site: Site) {
     setDocsSite(site); setDocsLoading(true); setDocError("")
+    setDocs([]) // never show another site's files while this site's list is loading
     setUploadDocFiles([]); setUploadDocCategory("documentation")
     clearDocSelection()
     try {
       const d = await api.get<{ items: SiteDoc[] }>(`/api/sites/${site.id}/documents`)
-      setDocs(d.items ?? [])
+      // A slow response for an earlier site must not overwrite the site now on screen.
+      if (docsSiteIdRef.current === site.id) setDocs(d.items ?? [])
     } finally {
-      setDocsLoading(false)
+      if (docsSiteIdRef.current === site.id) setDocsLoading(false)
     }
   }
   function closeDocsPanel() { setDocsSite(null); setDocs([]); setUploadDocFiles([]); setDocError(""); clearDocSelection() }
@@ -663,8 +671,8 @@ export default function SitesPage() {
     setSelectedDocs(new Set(Array.from(selectedDocs).filter(f => !removed.includes(f))))
     setBulkConfirm(false)
     setBulkDeleting(false)
-    if (failed > 0) toast.error(`${removed.length} deleted, ${failed} could not be deleted`)
-    else toast.success(`${removed.length} file${removed.length !== 1 ? "s" : ""} deleted`)
+    if (failed > 0) toast.error(`${removed.length} moved to the Recycle Bin, ${failed} could not be deleted`)
+    else toast.success(`${removed.length} file${removed.length !== 1 ? "s" : ""} moved to the Recycle Bin`)
   }
 
   async function handleUploadDocs() {
@@ -673,7 +681,9 @@ export default function SitesPage() {
     const JUNK = /^(\.DS_Store|Thumbs\.db|desktop\.ini|~\$.*)$/i
     const MAX_BYTES = 20 * 1024 * 1024 // matches nginx client_max_body_size (frontend/nginx.conf)
     const toSend = uploadDocFiles.filter(f => !JUNK.test(f.name))
+    const site = docsSite // pin the target now — the panel may be switched to another site mid-upload
     setUploadingDoc(true); setDocError("")
+    setUploadSite({ id: site.id, name: site.name })
     setUploadProgress({ done: 0, total: toSend.length })
     const uploaded: SiteDoc[] = []
     const failures: string[] = []
@@ -689,7 +699,7 @@ export default function SitesPage() {
           failures.push(`${shownName} (empty file)`)
         } else {
           try {
-            const res = await fetch(`/api/sites/${docsSite.id}/documents`, {
+            const res = await fetch(`/api/sites/${site.id}/documents`, {
               method: "POST",
               credentials: "include",
               headers: {
@@ -711,19 +721,28 @@ export default function SitesPage() {
         }
         setUploadProgress({ done: i + 1, total: toSend.length })
       }
-      if (uploaded.length) setDocs(prev => [...prev, ...uploaded])
+      // Is the panel still showing the site this upload was for? If the user moved to
+      // another site meanwhile, don't touch that site's list, file picker or error line.
+      const stillHere = docsSiteIdRef.current === site.id
+      if (uploaded.length && stillHere) setDocs(prev => [...prev, ...uploaded])
       if (failures.length > 0) {
-        setDocError(
-          `${uploaded.length} of ${toSend.length} file(s) uploaded — ${failures.length} failed: ` +
+        const msg = `${uploaded.length} of ${toSend.length} file(s) uploaded — ${failures.length} failed: ` +
           failures.slice(0, 5).join(", ") + (failures.length > 5 ? `, +${failures.length - 5} more` : "")
-        )
+        if (stillHere) setDocError(msg)
+        else toast.error(`${site.name}: ${msg}`)
       } else {
-        toast.success(uploaded.length > 1 ? `${uploaded.length} files uploaded` : "File uploaded")
+        const n = uploaded.length
+        toast.success(
+          stillHere
+            ? (n > 1 ? `${n} files uploaded` : "File uploaded")
+            : `${n} file${n !== 1 ? "s" : ""} uploaded to ${site.name}`
+        )
       }
-      setUploadDocFiles([])
+      if (stillHere) setUploadDocFiles([])
     } finally {
       setUploadingDoc(false)
       setUploadProgress(null)
+      setUploadSite(null)
     }
   }
 
@@ -733,7 +752,7 @@ export default function SitesPage() {
       await api.delete(`/api/sites/${docsSite.id}/documents/${filename}`)
       setDocs(prev => prev.filter(d => d.filename !== filename))
       setSelectedDocs(prev => { const next = new Set(prev); next.delete(filename); return next })
-      toast.success("Document removed")
+      toast.success("Moved to the Recycle Bin — a Director can restore it for 30 days")
     } catch {
       toast.error("Failed to delete document")
     }
@@ -1377,9 +1396,18 @@ export default function SitesPage() {
 
                   {docError && <p className="text-xs text-destructive">{docError}</p>}
 
+                  {/* An upload to a DIFFERENT site is still running: say so instead of
+                      pretending it's this site's, and keep the button disabled until it ends. */}
+                  {uploadingDoc && uploadSite && uploadSite.id !== docsSite.id && (
+                    <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+                      An upload to “{uploadSite.name}” is still running ({uploadProgress?.done ?? 0} of {uploadProgress?.total ?? 0}).
+                      You can upload here once it finishes.
+                    </p>
+                  )}
+
                   <Button onClick={handleUploadDocs} disabled={!uploadDocFiles.length || uploadingDoc} className="w-full gap-2">
-                    {uploadingDoc ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                    {uploadingDoc
+                    {uploadingDoc && uploadSite?.id === docsSite.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    {uploadingDoc && uploadSite?.id === docsSite.id
                       ? `Uploading ${uploadProgress?.done ?? 0} of ${uploadProgress?.total ?? uploadDocFiles.length}…`
                       : uploadDocFiles.length > 1 ? `Upload ${uploadDocFiles.length} files` : "Upload file"}
                   </Button>
@@ -1431,12 +1459,12 @@ export default function SitesPage() {
                           ) : (
                             <>
                               <span className="text-xs font-medium text-destructive">
-                                Delete {selectedDocs.size} file{selectedDocs.size !== 1 ? "s" : ""}? This cannot be undone.
+                                Move {selectedDocs.size} file{selectedDocs.size !== 1 ? "s" : ""} to the Recycle Bin? A Director can restore them for 30 days.
                               </span>
                               <button type="button" onClick={handleBulkDeleteDocs} disabled={bulkDeleting}
                                 className="ml-auto flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-destructive/90 disabled:opacity-50">
                                 {bulkDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                                {bulkDeleting ? "Deleting…" : "Yes, delete"}
+                                {bulkDeleting ? "Moving…" : "Yes, move"}
                               </button>
                               <button type="button" onClick={() => setBulkConfirm(false)} disabled={bulkDeleting}
                                 className="rounded-md border px-3 py-1.5 text-xs transition-colors hover:bg-muted disabled:opacity-50">

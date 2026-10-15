@@ -17,7 +17,7 @@ interface AuditEvent {
 
 const OBJECT_TYPES = [
   "employee", "site", "vehicle", "agency", "agency_staff",
-  "agency_deployment", "incident_report", "user", "role",
+  "agency_deployment", "incident_report", "user", "role", "site_document",
 ]
 
 const ACTION_LABELS: Record<string, string> = {
@@ -44,6 +44,10 @@ const ACTION_LABELS: Record<string, string> = {
   ROLE_CREATED: "Created role",
   ROLE_UPDATED: "Updated role",
   ROLE_DELETED: "Deleted role",
+  SITE_DOCUMENT_RECYCLED: "Moved site document to Recycle Bin",
+  SITE_DOCUMENT_RESTORED: "Restored site document from Recycle Bin",
+  SITE_DOCUMENT_PURGED: "Permanently deleted site document from Recycle Bin",
+  RECYCLE_BIN_EMPTIED: "Emptied the Recycle Bin",
 }
 
 function actionLabel(action: string) {
