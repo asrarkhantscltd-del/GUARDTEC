@@ -13,7 +13,7 @@ import {
   Camera, Loader2, Sun, Moon, AlertTriangle,
   ChevronDown, UserCog, Eye, EyeOff, FileSpreadsheet,
   Building2, CalendarDays, FileText, ListChecks,
-  BellRing, BellOff, History, Target,
+  BellRing, BellOff, History, Target, Trash2,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
@@ -54,6 +54,7 @@ const navItems: NavItem[] = [
   { label: "Team Access",      to: "/users",           icon: <KeyRound className="h-4 w-4" />,         directorOnly: true,           group: "admin" },
   { label: "Manage Roles",     to: "/roles",           icon: <Shield className="h-4 w-4" />,           directorOnly: true,           group: "admin" },
   { label: "Audit Trail",      to: "/audit-trail",     icon: <History className="h-4 w-4" />,          directorOnly: true,           group: "admin" },
+  { label: "Recycle Bin",      to: "/recycle-bin",     icon: <Trash2 className="h-4 w-4" />,           directorOnly: true,           group: "admin" },
 ]
 
 export default function DashboardLayout() {

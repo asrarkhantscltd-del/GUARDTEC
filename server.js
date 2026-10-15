@@ -1276,6 +1276,11 @@ const REFERENCE_TRACKER    = path.join(BASE, "05 - Reference Tracker", "GuardTec
 const SHAREPOINT_DASHBOARD = path.join(BASE, "! GuardTec Compliance Dashboard.html");
 const SITES_FILE           = path.join(BASE, "deployment-sites.json");
 const SITE_DOCS_DIR        = path.join(BASE, "site-documents");
+// Deleted site documents are MOVED here (not unlinked) so a Director can restore
+// them for RECYCLE_RETENTION_DAYS. Same data volume as everything else, so it
+// survives container rebuilds; nothing in here is ever served statically.
+const RECYCLE_DIR          = path.join(BASE, "recycle-bin", "site-documents");
+const RECYCLE_RETENTION_DAYS = 30;
 if (!fs.existsSync(SITE_DOCS_DIR)) fs.mkdirSync(SITE_DOCS_DIR, { recursive: true });
 
 const SUBFOLDERS = ['01 - SIA Licence','02 - CSCS Card','03 - Right to Work & Visa','04 - References','05 - Employment Contract','06 - Training & Induction'];
@@ -3059,6 +3064,14 @@ app.delete('/api/sites/:id', requireLogin, requirePermission('delete_sites'), as
       });
     }
 
+    // Deleting a site used to wipe its whole documents folder for good. Move each
+    // document into the Recycle Bin first (so a Director can still preview or
+    // permanently delete them; they can only be RESTORED while their site exists).
+    var siteBeingDeleted = await getSiteById(req.params.id);
+    var siteDocRows = (await pgPool.query('SELECT filename FROM site_documents WHERE site_id = $1', [req.params.id])).rows;
+    for (var di = 0; di < siteDocRows.length; di++) {
+      await recycleSiteDocument(req.user, req.params.id, siteDocRows[di].filename, siteBeingDeleted ? siteBeingDeleted.name : null);
+    }
     await pgPool.query('DELETE FROM sites WHERE id = $1', [req.params.id]);
     var docsDir = path.join(SITE_DOCS_DIR, req.params.id);
     if (fs.existsSync(docsDir)) {
@@ -3279,6 +3292,114 @@ require('./crm')({ app: app, pgPool: pgPool, requireLogin: requireLogin, require
 // Files stay on disk under SITE_DOCS_DIR; site_documents holds only metadata
 // (same split as message_attachments/incident_attachments elsewhere in this file).
 
+// ── RECYCLE BIN (site documents) ──────────────────────────────────────────────
+// Deleting a site document no longer destroys it: the file moves into RECYCLE_DIR
+// and its metadata moves from site_documents into recycle_bin. Director-only
+// page/routes below can restore it (back into its site) or delete it for good;
+// anything still here after RECYCLE_RETENTION_DAYS is purged automatically.
+(async function ensureRecycleBinSchema() {
+  try {
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS recycle_bin (
+        id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        kind              TEXT NOT NULL DEFAULT 'site_document',
+        site_id           TEXT NOT NULL,
+        site_name         TEXT,
+        original_filename TEXT NOT NULL,
+        original_name     TEXT NOT NULL,
+        category          TEXT,
+        size_bytes        INTEGER,
+        uploaded_at       TIMESTAMPTZ,
+        bin_filename      TEXT NOT NULL UNIQUE,
+        deleted_by        TEXT,
+        deleted_at        TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pgPool.query("CREATE INDEX IF NOT EXISTS idx_recycle_bin_deleted_at ON recycle_bin(deleted_at)");
+  } catch (e) {
+    console.error('[DB] recycle_bin schema migration failed:', e.message);
+  }
+})();
+
+// rename() is atomic and instant on one volume; fall back to copy+delete if the
+// bin ever ends up on a different filesystem (EXDEV).
+function moveFileSafe(src, dest) {
+  try {
+    fs.renameSync(src, dest);
+  } catch (e) {
+    if (e.code !== 'EXDEV') throw e;
+    fs.copyFileSync(src, dest);
+    fs.unlinkSync(src);
+  }
+}
+
+// Moves one site document into the bin. Returns its display name, or null if
+// there was nothing to move. If the DB step fails the file is put back, so a
+// failed delete never loses the document.
+async function recycleSiteDocument(actor, siteId, filename, knownSiteName) {
+  var filePath = path.join(SITE_DOCS_DIR, siteId, filename);
+  var row = (await pgPool.query('SELECT * FROM site_documents WHERE site_id = $1 AND filename = $2', [siteId, filename])).rows[0];
+  var fileExists = fs.existsSync(filePath);
+  if (!row && !fileExists) return null;
+
+  var siteName = knownSiteName;
+  if (!siteName) {
+    var s = await getSiteById(siteId);
+    siteName = s ? s.name : null;
+  }
+  var binName = crypto.randomUUID() + '-' + filename;
+  var binPath = path.join(RECYCLE_DIR, binName);
+  fs.mkdirSync(RECYCLE_DIR, { recursive: true });
+  if (fileExists) moveFileSafe(filePath, binPath);
+
+  var client = await pgPool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO recycle_bin (kind, site_id, site_name, original_filename, original_name, category, size_bytes, uploaded_at, bin_filename, deleted_by)
+       VALUES ('site_document',$1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [siteId, siteName, filename, row ? row.original_name : filename, row ? row.category : null,
+       row ? row.size_bytes : (fileExists ? fs.statSync(binPath).size : null), row ? row.uploaded_at : null,
+       binName, (actor && (actor.username || actor.full_name)) || null]
+    );
+    await client.query('DELETE FROM site_documents WHERE site_id = $1 AND filename = $2', [siteId, filename]);
+    await client.query('COMMIT');
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch (e2) {}
+    if (fileExists) { try { moveFileSafe(binPath, filePath); } catch (e3) { console.error('[RECYCLE] could not put file back:', e3.message); } }
+    throw e;
+  } finally {
+    client.release();
+  }
+  return row ? row.original_name : filename;
+}
+
+// Permanently removes bin entries (file + row). Used by "Delete forever",
+// "Empty bin" and the 30-day auto-purge, so all three behave identically.
+async function purgeRecycleRows(rows) {
+  var n = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var binPath = path.join(RECYCLE_DIR, path.basename(rows[i].bin_filename));
+    try { if (fs.existsSync(binPath)) fs.unlinkSync(binPath); } catch (e) { console.error('[RECYCLE] unlink failed:', e.message); continue; }
+    await pgPool.query('DELETE FROM recycle_bin WHERE id = $1', [rows[i].id]);
+    n++;
+  }
+  return n;
+}
+
+async function purgeExpiredRecycleBin() {
+  try {
+    var r = await pgPool.query(
+      'SELECT id, bin_filename FROM recycle_bin WHERE deleted_at < NOW() - make_interval(days => $1)', [RECYCLE_RETENTION_DAYS]
+    );
+    if (!r.rows.length) return;
+    var n = await purgeRecycleRows(r.rows);
+    console.log('[RECYCLE] auto-purged ' + n + ' item(s) older than ' + RECYCLE_RETENTION_DAYS + ' days');
+  } catch (e) {
+    console.error('[RECYCLE] auto-purge failed:', e.message);
+  }
+}
+
 // File types a browser can show in a tab without running anything — see the
 // GET route below for why everything else is forced to download.
 var SITE_DOC_INLINE_TYPES = {
@@ -3287,6 +3408,31 @@ var SITE_DOC_INLINE_TYPES = {
   '.txt': 'text/plain; charset=utf-8',
   '.mp4': 'video/mp4', '.mp3': 'audio/mpeg'
 };
+
+// Sends a stored document with the right Content-Type/Content-Disposition. Shared by
+// the site-documents route and the Recycle Bin preview so they can't drift apart.
+// extSource = the on-disk name (extension decides inline-vs-download);
+// originalName = what the user uploaded it as (may include a folder path).
+function sendSiteDocFile(res, filePath, extSource, originalName) {
+  // Without an explicit Content-Type, res.send(Buffer) defaults to
+  // application/octet-stream and every browser downloads instead of showing the
+  // file. Only types browsers render safely are served inline; anything else
+  // (office files, and especially HTML/SVG/JS, which would run as this app's
+  // own origin = stored XSS) is forced to download.
+  var inlineType = SITE_DOC_INLINE_TYPES[path.extname(extSource).toLowerCase()];
+  // Folder uploads store "Folder/Sub/file.pdf" as the name — download as just file.pdf.
+  var shownName = path.basename(String(originalName).replace(/\\/g, '/')) || extSource;
+  // Header values must be latin-1: give an ASCII fallback plus an RFC 5987 UTF-8 name,
+  // otherwise a file called "Plan – final.pdf" makes res.setHeader throw -> 500.
+  var asciiName = shownName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  res.setHeader('Content-Type', inlineType || 'application/octet-stream');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition',
+    (inlineType ? 'inline' : 'attachment') + '; filename="' + asciiName + '"; filename*=UTF-8\'\'' +
+    encodeURIComponent(shownName).replace(/'/g, '%27'));
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(fs.readFileSync(filePath));
+}
 
 function ensureSiteDocsDir(siteId) {
   var dir = path.join(SITE_DOCS_DIR, siteId);
@@ -3355,39 +3501,122 @@ app.get('/api/sites/:id/documents/:filename', requireLogin, requirePermission('s
 
     var r = await pgPool.query('SELECT original_name FROM site_documents WHERE site_id = $1 AND filename = $2', [siteId, filename]);
     var originalName = r.rows.length ? r.rows[0].original_name : filename;
-
-    // Without an explicit Content-Type, res.send(Buffer) defaults to
-    // application/octet-stream and every browser downloads instead of showing the
-    // file. Only types browsers render safely are served inline; anything else
-    // (office files, and especially HTML/SVG/JS, which would run as this app's
-    // own origin = stored XSS) is forced to download.
-    var inlineType = SITE_DOC_INLINE_TYPES[path.extname(filename).toLowerCase()];
-    // Folder uploads store "Folder/Sub/file.pdf" as the name — download as just file.pdf.
-    var shownName = path.basename(String(originalName).replace(/\\/g, '/')) || filename;
-    // Header values must be latin-1: give an ASCII fallback plus an RFC 5987 UTF-8 name,
-    // otherwise a file called "Plan – final.pdf" makes res.setHeader throw -> 500.
-    var asciiName = shownName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
-    res.setHeader('Content-Type', inlineType || 'application/octet-stream');
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Content-Disposition',
-      (inlineType ? 'inline' : 'attachment') + '; filename="' + asciiName + '"; filename*=UTF-8\'\'' +
-      encodeURIComponent(shownName).replace(/'/g, '%27'));
-    res.setHeader('Cache-Control', 'no-store');
-    res.send(fs.readFileSync(filePath));
+    sendSiteDocFile(res, filePath, filename, originalName);
   } catch (e) {
     res.status(500).end();
   }
 });
 
+// "Delete" now means "move to the Recycle Bin" — recoverable by a Director for 30 days.
 app.delete('/api/sites/:id/documents/:filename', requireLogin, requirePermission('delete_sites'), async function(req, res) {
   try {
     var siteId = path.basename(req.params.id);
     var filename = path.basename(req.params.filename);
-    var filePath = path.join(SITE_DOCS_DIR, siteId, filename);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    var name = await recycleSiteDocument(req.user, siteId, filename, null);
+    if (name !== null) {
+      logAuditEvent(req, 'SITE_DOCUMENT_RECYCLED', 'site_document', filename, name, { site_id: siteId });
+    }
+    res.json({ ok: true, recycled: name !== null });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
-    await pgPool.query('DELETE FROM site_documents WHERE site_id = $1 AND filename = $2', [siteId, filename]);
+// ── RECYCLE BIN routes (Director only) ────────────────────────────────────────
+app.get('/api/recycle-bin', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var r = await pgPool.query(
+      `SELECT rb.id, rb.kind, rb.site_id, COALESCE(s.name, rb.site_name) AS site_name, (s.id IS NOT NULL) AS site_exists,
+              rb.original_name, rb.category, rb.size_bytes, rb.uploaded_at, rb.deleted_by, rb.deleted_at,
+              GREATEST(0, CEIL(EXTRACT(EPOCH FROM (rb.deleted_at + make_interval(days => $1) - NOW())) / 86400))::int AS days_left
+       FROM recycle_bin rb LEFT JOIN sites s ON s.id = rb.site_id
+       ORDER BY rb.deleted_at DESC`,
+      [RECYCLE_RETENTION_DAYS]
+    );
+    res.json({ ok: true, retentionDays: RECYCLE_RETENTION_DAYS, items: r.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
+// Preview/download a binned file before deciding to restore it.
+app.get('/api/recycle-bin/:id/file', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var r = await pgPool.query('SELECT original_filename, original_name, bin_filename FROM recycle_bin WHERE id = $1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).end();
+    var binPath = path.join(RECYCLE_DIR, path.basename(r.rows[0].bin_filename));
+    if (!fs.existsSync(binPath)) return res.status(404).end();
+    sendSiteDocFile(res, binPath, r.rows[0].original_filename, r.rows[0].original_name);
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+app.post('/api/recycle-bin/:id/restore', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var r = await pgPool.query('SELECT * FROM recycle_bin WHERE id = $1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Item not found — it may already have been restored or removed.' });
+    var item = r.rows[0];
+
+    var site = await getSiteById(item.site_id);
+    if (!site) {
+      return res.status(409).json({ ok: false, error: 'The site "' + (item.site_name || item.site_id) + '" no longer exists, so this file cannot be restored into it. You can still preview it or delete it permanently.' });
+    }
+    var binPath = path.join(RECYCLE_DIR, path.basename(item.bin_filename));
+    if (!fs.existsSync(binPath)) {
+      return res.status(410).json({ ok: false, error: 'The stored file is missing from the Recycle Bin, so it cannot be restored.' });
+    }
+
+    ensureSiteDocsDir(item.site_id);
+    var filename = item.original_filename;
+    // Names are timestamp-based so this is practically never taken, but never overwrite a live file.
+    if (fs.existsSync(path.join(SITE_DOCS_DIR, item.site_id, filename))) {
+      filename = Date.now().toString() + path.extname(item.original_filename);
+    }
+    var destPath = path.join(SITE_DOCS_DIR, item.site_id, filename);
+    moveFileSafe(binPath, destPath);
+
+    var client = await pgPool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `INSERT INTO site_documents (site_id, filename, original_name, category, size_bytes, uploaded_at)
+         VALUES ($1,$2,$3,$4,$5,COALESCE($6, NOW()))`,
+        [item.site_id, filename, item.original_name, item.category, item.size_bytes, item.uploaded_at]
+      );
+      await client.query('DELETE FROM recycle_bin WHERE id = $1', [item.id]);
+      await client.query('COMMIT');
+    } catch (e) {
+      try { await client.query('ROLLBACK'); } catch (e2) {}
+      try { moveFileSafe(destPath, binPath); } catch (e3) { console.error('[RECYCLE] could not put file back in bin:', e3.message); }
+      throw e;
+    } finally {
+      client.release();
+    }
+    logAuditEvent(req, 'SITE_DOCUMENT_RESTORED', 'site_document', filename, item.original_name, { site_id: item.site_id });
+    res.json({ ok: true, siteName: site.name });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/recycle-bin/empty', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var r = await pgPool.query('SELECT id, bin_filename FROM recycle_bin');
+    var n = await purgeRecycleRows(r.rows);
+    logAuditEvent(req, 'RECYCLE_BIN_EMPTIED', 'site_document', null, null, { count: n });
+    res.json({ ok: true, deleted: n });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/recycle-bin/:id', requireLogin, requireRole('director'), async function(req, res) {
+  try {
+    var r = await pgPool.query('SELECT id, original_name, site_id, bin_filename FROM recycle_bin WHERE id = $1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Item not found.' });
+    await purgeRecycleRows(r.rows);
+    logAuditEvent(req, 'SITE_DOCUMENT_PURGED', 'site_document', req.params.id, r.rows[0].original_name, { site_id: r.rows[0].site_id });
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -8154,5 +8383,9 @@ app.post('/api/ai-chat', requireLogin, async function(req, res) {
     // every 6h (cheap enough to be safe against server restarts landing mid-day).
     setTimeout(checkComplianceCalendarReminders, 5000);
     setInterval(checkComplianceCalendarReminders, 6 * 60 * 60 * 1000);
+
+    // Recycle Bin — permanently remove anything binned more than RECYCLE_RETENTION_DAYS ago.
+    setTimeout(purgeExpiredRecycleBin, 10000);
+    setInterval(purgeExpiredRecycleBin, 6 * 60 * 60 * 1000);
   });
 })();

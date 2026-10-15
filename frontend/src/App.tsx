@@ -21,6 +21,7 @@ import SitesPage from "@/pages/SitesPage"
 import UsersPage from "@/pages/UsersPage"
 import ManageRolesPage from "@/pages/ManageRolesPage"
 import AuditTrailPage from "@/pages/AuditTrailPage"
+import RecycleBinPage from "@/pages/RecycleBinPage"
 import PendingReviewPage from "@/pages/PendingReviewPage"
 import IncidentReportsPage from "@/pages/IncidentReportsPage"
 import MyProfilePage from "@/pages/MyProfilePage"
@@ -110,6 +111,7 @@ function AuthenticatedApp() {
         <Route path="users" element={<UsersPage />} />
         <Route path="roles" element={<ManageRolesPage />} />
         <Route path="audit-trail" element={<AuditTrailPage />} />
+        <Route path="recycle-bin" element={<RecycleBinPage />} />
         <Route path="pending-review" element={<PendingReviewPage />} />
         <Route path="incident-reports" element={<IncidentReportsPage />} />
         <Route path="admin/agencies" element={<AgenciesListPage />} />
