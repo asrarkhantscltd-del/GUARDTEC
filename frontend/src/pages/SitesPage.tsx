@@ -131,10 +131,21 @@ const DOC_ICON_TILE = {
   medium: { grid: "grid-cols-4 sm:grid-cols-5", box: "h-16", icon: "h-8 w-8" },
 } as const
 
-function DocItems({ docs, siteId, mode, canDelete, onDelete }: {
-  docs: SiteDoc[]; siteId: string; mode: DocViewMode; canDelete: boolean; onDelete: (filename: string) => void
+function DocCheck({ checked, onChange, className = "" }: { checked: boolean; onChange: () => void; className?: string }) {
+  return (
+    <input type="checkbox" checked={checked} onChange={onChange} aria-label="Select file"
+      className={`h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-primary ${className}`} />
+  )
+}
+
+function DocItems({ docs, siteId, mode, canDelete, selected, onToggle, onDelete }: {
+  docs: SiteDoc[]; siteId: string; mode: DocViewMode; canDelete: boolean
+  selected: Set<string>; onToggle: (filename: string) => void; onDelete: (filename: string) => void
 }) {
   const url = (d: SiteDoc) => `/api/sites/${siteId}/documents/${d.filename}`
+  const sel = (d: SiteDoc) => selected.has(d.filename)
+  // Checkboxes only exist for people who can delete (selecting is only useful for bulk delete).
+  const check = (d: SiteDoc, extra = "") => canDelete && <DocCheck checked={sel(d)} onChange={() => onToggle(d.filename)} className={extra} />
   const catLabel = (d: SiteDoc) => DOC_CATEGORY_LABELS[d.category] ?? d.category
   const dateStr = (d: SiteDoc) => new Date(d.uploadedAt).toLocaleDateString("en-GB")
 
@@ -159,7 +170,8 @@ function DocItems({ docs, siteId, mode, canDelete, onDelete }: {
         {docs.map(d => {
           const { base } = splitDocPath(d.originalName)
           return (
-            <div key={d.filename} className="group relative">
+            <div key={d.filename} className={`group relative rounded-lg ${sel(d) ? "ring-2 ring-primary" : ""}`}>
+              {check(d, `absolute left-2 top-2 z-10 ${sel(d) ? "" : "sm:opacity-0 sm:group-hover:opacity-100"}`)}
               <a href={url(d)} target="_blank" rel="noopener noreferrer" title={d.originalName}
                 className="flex flex-col items-center gap-1.5 rounded-lg border bg-card p-2 text-center transition-colors hover:bg-muted/50">
                 <div className={`flex w-full items-center justify-center overflow-hidden rounded-md bg-muted/40 ${cfg.box}`}>
@@ -184,7 +196,8 @@ function DocItems({ docs, siteId, mode, canDelete, onDelete }: {
         {docs.map(d => {
           const { base } = splitDocPath(d.originalName)
           return (
-            <div key={d.filename} className="flex items-center gap-1 rounded-md hover:bg-muted/50">
+            <div key={d.filename} className={`flex items-center gap-1 rounded-md hover:bg-muted/50 ${sel(d) ? "bg-primary/10" : ""}`}>
+              {check(d, "ml-2")}
               <a href={url(d)} target="_blank" rel="noopener noreferrer" title={d.originalName}
                 className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-sm">
                 <DocTypeIcon name={base} className="h-5 w-5 shrink-0" />
@@ -205,11 +218,15 @@ function DocItems({ docs, siteId, mode, canDelete, onDelete }: {
         {docs.map(d => {
           const { base } = splitDocPath(d.originalName)
           return (
-            <a key={d.filename} href={url(d)} target="_blank" rel="noopener noreferrer" title={d.originalName}
-              className="flex break-inside-avoid items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-muted/50">
-              <DocTypeIcon name={base} className="h-4 w-4 shrink-0" />
-              <span className="truncate">{base}</span>
-            </a>
+            <div key={d.filename}
+              className={`flex break-inside-avoid items-center gap-2 rounded-md px-2 py-1 hover:bg-muted/50 ${sel(d) ? "bg-primary/10" : ""}`}>
+              {check(d)}
+              <a href={url(d)} target="_blank" rel="noopener noreferrer" title={d.originalName}
+                className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+                <DocTypeIcon name={base} className="h-4 w-4 shrink-0" />
+                <span className="truncate">{base}</span>
+              </a>
+            </div>
           )
         })}
       </div>
@@ -223,6 +240,7 @@ function DocItems({ docs, siteId, mode, canDelete, onDelete }: {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
+              {canDelete && <th className="w-8 px-3 py-2"></th>}
               <th className="px-3 py-2">Name</th>
               <th className="hidden px-3 py-2 sm:table-cell">Category</th>
               <th className="px-3 py-2">Size</th>
@@ -234,7 +252,8 @@ function DocItems({ docs, siteId, mode, canDelete, onDelete }: {
             {docs.map(d => {
               const { base, folder } = splitDocPath(d.originalName)
               return (
-                <tr key={d.filename} className="hover:bg-muted/30">
+                <tr key={d.filename} className={`hover:bg-muted/30 ${sel(d) ? "bg-primary/10" : ""}`}>
+                  {canDelete && <td className="px-3 py-2">{check(d)}</td>}
                   <td className="px-3 py-2">
                     <a href={url(d)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
                       <DocTypeIcon name={base} className="h-4 w-4 shrink-0" />
@@ -264,7 +283,8 @@ function DocItems({ docs, siteId, mode, canDelete, onDelete }: {
         {docs.map(d => {
           const { base } = splitDocPath(d.originalName)
           return (
-            <div key={d.filename} className="flex items-center gap-1 rounded-lg border bg-card pr-1 hover:bg-muted/40">
+            <div key={d.filename} className={`flex items-center gap-1 rounded-lg border bg-card pr-1 hover:bg-muted/40 ${sel(d) ? "ring-2 ring-primary" : ""}`}>
+              {check(d, "ml-2.5")}
               <a href={url(d)} target="_blank" rel="noopener noreferrer" title={d.originalName}
                 className="flex min-w-0 flex-1 items-center gap-3 p-2.5">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-muted/40">
@@ -290,7 +310,8 @@ function DocItems({ docs, siteId, mode, canDelete, onDelete }: {
       {docs.map(d => {
         const { base, folder } = splitDocPath(d.originalName)
         return (
-          <div key={d.filename} className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5">
+          <div key={d.filename} className={`flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5 ${sel(d) ? "ring-2 ring-primary" : ""}`}>
+            {check(d)}
             <a href={url(d)} target="_blank" rel="noopener noreferrer" className="flex min-w-0 flex-1 items-center gap-3">
               <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted/40">
                 {docKind(base) === "image"
@@ -440,6 +461,19 @@ export default function SitesPage() {
     setDocView(m)
     try { localStorage.setItem(DOC_VIEW_KEY, m) } catch { /* private mode — fine, just not remembered */ }
   }
+  // Multi-select for bulk delete (filenames of the ticked documents).
+  const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set())
+  const [bulkConfirm, setBulkConfirm] = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  function toggleDoc(filename: string) {
+    setSelectedDocs(prev => {
+      const next = new Set(prev)
+      if (next.has(filename)) next.delete(filename); else next.add(filename)
+      return next
+    })
+    setBulkConfirm(false)
+  }
+  function clearDocSelection() { setSelectedDocs(new Set()); setBulkConfirm(false) }
   const [uploadDocCategory, setUploadDocCategory] = useState("documentation")
   const [uploadingDoc, setUploadingDoc]     = useState(false)
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null)
@@ -594,6 +628,7 @@ export default function SitesPage() {
   async function openDocsPanel(site: Site) {
     setDocsSite(site); setDocsLoading(true); setDocError("")
     setUploadDocFiles([]); setUploadDocCategory("documentation")
+    clearDocSelection()
     try {
       const d = await api.get<{ items: SiteDoc[] }>(`/api/sites/${site.id}/documents`)
       setDocs(d.items ?? [])
@@ -601,7 +636,36 @@ export default function SitesPage() {
       setDocsLoading(false)
     }
   }
-  function closeDocsPanel() { setDocsSite(null); setDocs([]); setUploadDocFiles([]); setDocError("") }
+  function closeDocsPanel() { setDocsSite(null); setDocs([]); setUploadDocFiles([]); setDocError(""); clearDocSelection() }
+
+  function toggleAllDocs() {
+    setSelectedDocs(prev => prev.size === docs.length ? new Set() : new Set(docs.map(d => d.filename)))
+    setBulkConfirm(false)
+  }
+
+  // Deletes the ticked files one by one through the existing per-file route
+  // (same permission check as a single delete), then drops only the ones that
+  // really went from the list so a partial failure stays visible and retryable.
+  async function handleBulkDeleteDocs() {
+    if (!docsSite || selectedDocs.size === 0) return
+    setBulkDeleting(true)
+    const removed: string[] = []
+    let failed = 0
+    for (const filename of Array.from(selectedDocs)) {
+      try {
+        await api.delete(`/api/sites/${docsSite.id}/documents/${filename}`)
+        removed.push(filename)
+      } catch {
+        failed++
+      }
+    }
+    setDocs(prev => prev.filter(d => !removed.includes(d.filename)))
+    setSelectedDocs(new Set(Array.from(selectedDocs).filter(f => !removed.includes(f))))
+    setBulkConfirm(false)
+    setBulkDeleting(false)
+    if (failed > 0) toast.error(`${removed.length} deleted, ${failed} could not be deleted`)
+    else toast.success(`${removed.length} file${removed.length !== 1 ? "s" : ""} deleted`)
+  }
 
   async function handleUploadDocs() {
     if (!uploadDocFiles.length || !docsSite) return
@@ -668,6 +732,7 @@ export default function SitesPage() {
     try {
       await api.delete(`/api/sites/${docsSite.id}/documents/${filename}`)
       setDocs(prev => prev.filter(d => d.filename !== filename))
+      setSelectedDocs(prev => { const next = new Set(prev); next.delete(filename); return next })
       toast.success("Document removed")
     } catch {
       toast.error("Failed to delete document")
@@ -1338,7 +1403,53 @@ export default function SitesPage() {
                     <p className="mt-1 text-xs text-muted-foreground/60">Site documentation, presentations, induction packs — upload above.</p>
                   </div>
                 ) : (
-                  <DocItems docs={docs} siteId={docsSite.id} mode={docView} canDelete={canDelete} onDelete={handleDeleteDoc} />
+                  <>
+                    {/* Multi-select bar — Select all, then delete the ticked files in one go. */}
+                    {canDelete && (
+                      <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border bg-muted/20 px-3 py-2">
+                        <label className="flex cursor-pointer items-center gap-2 text-xs font-medium">
+                          <input type="checkbox"
+                            ref={(el) => { if (el) el.indeterminate = selectedDocs.size > 0 && selectedDocs.size < docs.length }}
+                            checked={docs.length > 0 && selectedDocs.size === docs.length}
+                            onChange={toggleAllDocs}
+                            className="h-4 w-4 cursor-pointer rounded border-border accent-primary" />
+                          Select all
+                        </label>
+                        {selectedDocs.size > 0 && (
+                          !bulkConfirm ? (
+                            <>
+                              <span className="text-xs text-muted-foreground">{selectedDocs.size} selected</span>
+                              <button type="button" onClick={() => setBulkConfirm(true)}
+                                className="ml-auto flex items-center gap-1.5 rounded-md bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20">
+                                <Trash2 className="h-3.5 w-3.5" />Delete selected
+                              </button>
+                              <button type="button" onClick={clearDocSelection}
+                                className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
+                                <X className="h-3.5 w-3.5" />Clear
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-xs font-medium text-destructive">
+                                Delete {selectedDocs.size} file{selectedDocs.size !== 1 ? "s" : ""}? This cannot be undone.
+                              </span>
+                              <button type="button" onClick={handleBulkDeleteDocs} disabled={bulkDeleting}
+                                className="ml-auto flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-destructive/90 disabled:opacity-50">
+                                {bulkDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                                {bulkDeleting ? "Deleting…" : "Yes, delete"}
+                              </button>
+                              <button type="button" onClick={() => setBulkConfirm(false)} disabled={bulkDeleting}
+                                className="rounded-md border px-3 py-1.5 text-xs transition-colors hover:bg-muted disabled:opacity-50">
+                                Cancel
+                              </button>
+                            </>
+                          )
+                        )}
+                      </div>
+                    )}
+                    <DocItems docs={docs} siteId={docsSite.id} mode={docView} canDelete={canDelete}
+                      selected={selectedDocs} onToggle={toggleDoc} onDelete={handleDeleteDoc} />
+                  </>
                 )}
               </div>
           </div>
