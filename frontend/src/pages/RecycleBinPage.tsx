@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
-import { Trash2, RotateCcw, Eye, Loader2, FileText, Info } from "lucide-react"
+import { Trash2, RotateCcw, Eye, Download, Loader2, FileText, Info } from "lucide-react"
+import { canPreviewInBrowser } from "@/lib/docPreview"
 import { api, ApiError } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 
@@ -216,9 +217,9 @@ export default function RecycleBinPage() {
                         </div>
                       ) : (
                         <div className="flex items-center justify-end gap-0.5">
-                          <a href={`/api/recycle-bin/${item.id}/file`} target="_blank" rel="noopener noreferrer" title="Preview"
+                          <a href={`/api/recycle-bin/${item.id}/file`} target="_blank" rel="noopener noreferrer" title={canPreviewInBrowser(item.original_name) ? "Preview" : "Download (can't be previewed in the browser)"}
                             className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
-                            <Eye className="h-3.5 w-3.5" />
+                            {canPreviewInBrowser(item.original_name) ? <Eye className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />}
                           </a>
                           <button type="button" disabled={busy || !item.site_exists} onClick={() => restore(item)}
                             title={item.site_exists ? "Restore to its site" : "Its site was deleted, so it cannot be restored"}

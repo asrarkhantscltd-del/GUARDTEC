@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import { canPreviewInBrowser } from "@/lib/docPreview"
 import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
 import { api, ApiError } from "@/lib/api"
@@ -7,7 +8,7 @@ import {
   MapPin, Plus, Pencil, Trash2, X, Building2, Car, Layers,
   Briefcase, Store, MoreHorizontal, Phone, Mail, Package,
   Monitor, Smartphone, Sofa, Utensils, ChevronRight, Users, Search,
-  FileText, Upload, Loader2, Eye, FolderUp,
+  FileText, Upload, Loader2, Eye, Download, FolderUp,
   Presentation, FileImage, FileSpreadsheet, FileArchive, FileVideo, File as FileIcon,
   LayoutGrid, Check, ChevronDown,
 } from "lucide-react"
@@ -155,12 +156,15 @@ function DocItems({ docs, siteId, mode, canDelete, selected, onToggle, onDelete 
       <Trash2 className="h-3.5 w-3.5" />
     </button>
   )
-  const viewLink = (d: SiteDoc) => (
-    <a href={url(d)} target="_blank" rel="noopener noreferrer" title="View"
-      className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
-      <Eye className="h-3.5 w-3.5" />
-    </a>
-  )
+  const viewLink = (d: SiteDoc) => {
+    const preview = canPreviewInBrowser(d.originalName)
+    return (
+      <a href={url(d)} target="_blank" rel="noopener noreferrer" title={preview ? "View" : "Download (can't be previewed in the browser)"}
+        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+        {preview ? <Eye className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />}
+      </a>
+    )
+  }
 
   // Extra large / Large / Medium icons — image files show a real thumbnail.
   if (mode === "xl" || mode === "large" || mode === "medium") {

@@ -3449,6 +3449,7 @@ function sendSiteDocFile(res, filePath, extSource, originalName) {
     encodeURIComponent(shownName).replace(/'/g, '%27'));
   res.setHeader('Cache-Control', 'no-store');
   res.send(fs.readFileSync(filePath));
+  return !inlineType; // true = delivered as a download (not displayed in the browser)
 }
 
 function ensureSiteDocsDir(siteId) {
@@ -3518,7 +3519,11 @@ app.get('/api/sites/:id/documents/:filename', requireLogin, requirePermission('s
 
     var r = await pgPool.query('SELECT original_name FROM site_documents WHERE site_id = $1 AND filename = $2', [siteId, filename]);
     var originalName = r.rows.length ? r.rows[0].original_name : filename;
-    sendSiteDocFile(res, filePath, filename, originalName);
+    // Downloads are logged (who took which file); inline views are not — image thumbnails
+    // would otherwise write an audit row per tile.
+    if (sendSiteDocFile(res, filePath, filename, originalName)) {
+      logAuditEvent(req, 'SITE_DOCUMENT_DOWNLOADED', 'site_document', filename, originalName, { site_id: siteId });
+    }
   } catch (e) {
     res.status(500).end();
   }
@@ -3563,7 +3568,9 @@ app.get('/api/recycle-bin/:id/file', requireLogin, requireRole('director'), asyn
     if (!r.rows.length) return res.status(404).end();
     var binPath = path.join(RECYCLE_DIR, path.basename(r.rows[0].bin_filename));
     if (!fs.existsSync(binPath)) return res.status(404).end();
-    sendSiteDocFile(res, binPath, r.rows[0].original_filename, r.rows[0].original_name);
+    if (sendSiteDocFile(res, binPath, r.rows[0].original_filename, r.rows[0].original_name)) {
+      logAuditEvent(req, 'SITE_DOCUMENT_DOWNLOADED', 'site_document', req.params.id, r.rows[0].original_name, { from_recycle_bin: true });
+    }
   } catch (e) {
     res.status(500).end();
   }
