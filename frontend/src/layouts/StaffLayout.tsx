@@ -1,4 +1,5 @@
 import { Outlet, useNavigate } from "react-router-dom"
+import { OfflineBanner } from "@/components/OfflineBanner"
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 import { Button } from "@/components/ui/button"
@@ -192,6 +193,7 @@ export default function StaffLayout() {
       </header>
 
       <main className="w-full flex-1 px-4 pt-8 pb-[calc(2rem+env(safe-area-inset-bottom))] md:px-6">
+        <OfflineBanner />
         <Outlet />
       </main>
       {showChangePassword && <ChangePasswordModal onClose={() => setShowChangePassword(false)} />}
