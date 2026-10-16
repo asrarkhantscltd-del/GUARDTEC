@@ -68,7 +68,10 @@ self.addEventListener('push', (event) => {
 // goToNotification, just from outside the page entirely.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  const url = (event.notification.data && event.notification.data.url) || '/'
+  // Absolute, same-origin URL: Android only hands a notification tap to the installed
+  // app (WebAPK) when the target is unambiguously inside its scope.
+  const raw = (event.notification.data && event.notification.data.url) || '/'
+  const url = new URL(raw, self.location.origin).href
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientsArr) => {
       // An already-open app window is steered to the notification's page
