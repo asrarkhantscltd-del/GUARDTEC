@@ -86,6 +86,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: "POST",
       credentials: "include",
     })
+    // The service worker caches /api responses (staff personal data) for a
+    // few minutes — don't leave them on a shared/lost phone after sign-out.
+    try { await caches.delete("api-cache") } catch { /* Cache API unavailable — nothing to clear */ }
     setUser(null)
   }
 

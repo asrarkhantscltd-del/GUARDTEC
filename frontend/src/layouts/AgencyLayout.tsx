@@ -1,4 +1,5 @@
 import { Outlet, NavLink, useNavigate } from "react-router-dom"
+import { OfflineBanner } from "@/components/OfflineBanner"
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 import { Button } from "@/components/ui/button"
@@ -121,6 +122,7 @@ export default function AgencyLayout() {
         </header>
 
         <main className="flex-1 overflow-y-auto bg-background p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] md:p-6">
+          <OfflineBanner />
           <Outlet />
         </main>
       </div>

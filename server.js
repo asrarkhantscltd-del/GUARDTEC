@@ -112,6 +112,18 @@ var authRateLimiter = rateLimit({
   }
 })();
 
+// Where tapping a push notification should land — mirrors the in-app bell's
+// goToNotification() routing in DashboardLayout.tsx (keep the two in step).
+function notificationUrl(opts) {
+  if (opts.type === 'incident_report') return '/incident-reports';
+  if (opts.type === 'profile_submission') return '/pending-review';
+  if (opts.type === 'compliance_calendar_reminder') return '/compliance-calendar';
+  var tab = opts.linkTab ? '?tab=' + encodeURIComponent(opts.linkTab) : '';
+  if (opts.linkAgencyId) return '/admin/agencies/' + encodeURIComponent(opts.linkAgencyId) + tab;
+  if (opts.linkStaffId) return '/staff/' + encodeURIComponent(opts.linkStaffId) + tab;
+  return '/';
+}
+
 async function createNotification(opts) {
   try {
     await pgPool.query(
@@ -128,7 +140,7 @@ async function createNotification(opts) {
   // affect the caller — the in-app notification above already succeeded.
   // Calendar reminders are personal (only the responsible person's devices);
   // every other event keeps the original "all subscribed managers" audience.
-  pushToManagers(opts.summary, opts.type === 'compliance_calendar_reminder' ? { type: opts.type, summary: opts.summary } : null)
+  pushToManagers(opts.summary, opts.type === 'compliance_calendar_reminder' ? { type: opts.type, summary: opts.summary } : null, notificationUrl(opts))
     .catch(function(e) { console.error('[PUSH] broadcast failed:', e.message); });
 }
 
@@ -180,7 +192,7 @@ async function deliverPush(subs, payload) {
 // Optional visibilityRow ({ type, summary }) narrows the audience to subscribers
 // who are allowed to see that notification (see canViewNotification); null =
 // everyone subscribed, as before.
-async function pushToManagers(body, visibilityRow) {
+async function pushToManagers(body, visibilityRow, url) {
   if (!process.env.VAPID_PUBLIC_KEY) return; // not configured — no-op, not an error
   var subs = (await pgPool.query(
     'SELECT ps.id, ps.endpoint, ps.p256dh, ps.auth, u.role AS role, u.email AS email FROM push_subscriptions ps JOIN users u ON u.id = ps.user_id'
@@ -193,7 +205,7 @@ async function pushToManagers(body, visibilityRow) {
     }
     subs = allowed;
   }
-  await deliverPush(subs, JSON.stringify({ title: 'GuardTec Compliance', body: body, url: '/' }));
+  await deliverPush(subs, JSON.stringify({ title: 'GuardTec Compliance', body: body, url: url || '/' }));
 }
 
 // Targeted push to one specific person — e.g. the staff member a manager

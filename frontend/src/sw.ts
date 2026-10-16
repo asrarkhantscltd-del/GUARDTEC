@@ -71,8 +71,12 @@ self.addEventListener('notificationclick', (event) => {
   const url = (event.notification.data && event.notification.data.url) || '/'
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientsArr) => {
-      const existing = clientsArr.find((c) => 'focus' in c && c.url.includes(url))
-      if (existing && 'focus' in existing) return (existing as WindowClient).focus()
+      // An already-open app window is steered to the notification's page
+      // (not merely focused on whatever it was showing); none open → new one.
+      const existing = clientsArr.find((c) => 'focus' in c) as WindowClient | undefined
+      if (existing) {
+        return existing.navigate(url).then((c) => (c || existing).focus()).catch(() => existing.focus())
+      }
       return self.clients.openWindow(url)
     })
   )

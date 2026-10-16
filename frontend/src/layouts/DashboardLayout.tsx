@@ -1,4 +1,5 @@
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom"
+import { OfflineBanner } from "@/components/OfflineBanner"
 import { AnimatePresence, motion } from "framer-motion"
 import { toast } from "sonner"
 import { useAuth, type Permissions } from "@/contexts/AuthContext"
@@ -854,6 +855,7 @@ export default function DashboardLayout() {
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             >
+              <OfflineBanner />
               <Outlet context={{ ringHidden, toggleRing }} />
             </motion.div>
           </AnimatePresence>

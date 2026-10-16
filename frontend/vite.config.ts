@@ -18,7 +18,7 @@ export default defineConfig({
       filename: 'sw.ts',
       registerType: 'autoUpdate',
       devOptions: { enabled: true, type: 'module' },
-      includeAssets: ['icon.svg', 'favicon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png'],
+      includeAssets: ['icon.svg', 'favicon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'],
       manifest: {
         id: '/',
         name: 'GuardTec Compliance',
@@ -34,7 +34,7 @@ export default defineConfig({
   { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
   { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
   { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-  { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+  { src: 'icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
 ],
         screenshots: [
           { src: 'screenshots/login-mobile.jpeg', sizes: '1072x2048', type: 'image/jpeg', form_factor: 'narrow', label: 'Sign in to the GuardTec compliance portal' },
