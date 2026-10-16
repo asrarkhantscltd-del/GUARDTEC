@@ -91,6 +91,20 @@ function DocTypeIcon({ name, className }: { name: string; className: string }) {
   }
 }
 
+// Explorer-style thumbnail: the real picture for images, the embedded preview for
+// Office files, page 1 for PDFs. Anything without one (or if loading fails) falls
+// back to the file-type icon.
+function DocThumb({ siteId, doc, base, iconClass }: { siteId: string; doc: SiteDoc; base: string; iconClass: string }) {
+  const [failed, setFailed] = useState(false)
+  const kind = docKind(base)
+  const hasThumb = kind === "image" || kind === "pdf" || kind === "slides" || kind === "doc" || kind === "sheet"
+  if (!hasThumb || failed) return <DocTypeIcon name={base} className={iconClass} />
+  const src = kind === "image"
+    ? `/api/sites/${siteId}/documents/${doc.filename}?thumb=1`
+    : `/api/sites/${siteId}/documents/${doc.filename}/thumbnail`
+  return <img src={src} alt={base} loading="lazy" onError={() => setFailed(true)} className="h-full w-full object-cover" />
+}
+
 // A picked folder stores "Folder/Sub/file.pdf" as the name — show the file name
 // prominently and the folder path as secondary text.
 function splitDocPath(originalName: string): { base: string; folder: string } {
@@ -179,9 +193,7 @@ function DocItems({ docs, siteId, mode, canDelete, selected, onToggle, onDelete 
               <a href={url(d)} target="_blank" rel="noopener noreferrer" title={d.originalName}
                 className="flex flex-col items-center gap-1.5 rounded-lg border bg-card p-2 text-center transition-colors hover:bg-muted/50">
                 <div className={`flex w-full items-center justify-center overflow-hidden rounded-md bg-muted/40 ${cfg.box}`}>
-                  {docKind(base) === "image"
-                    ? <img src={url(d)} alt={base} loading="lazy" className="h-full w-full object-cover" />
-                    : <DocTypeIcon name={base} className={cfg.icon} />}
+                  <DocThumb siteId={siteId} doc={d} base={base} iconClass={cfg.icon} />
                 </div>
                 <span className="w-full truncate text-[11px] font-medium">{base}</span>
               </a>
@@ -318,9 +330,7 @@ function DocItems({ docs, siteId, mode, canDelete, selected, onToggle, onDelete 
             {check(d)}
             <a href={url(d)} target="_blank" rel="noopener noreferrer" className="flex min-w-0 flex-1 items-center gap-3">
               <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted/40">
-                {docKind(base) === "image"
-                  ? <img src={url(d)} alt={base} loading="lazy" className="h-full w-full object-cover" />
-                  : <DocTypeIcon name={base} className="h-7 w-7" />}
+                <DocThumb siteId={siteId} doc={d} base={base} iconClass="h-7 w-7" />
               </div>
               <div className="min-w-0">
                 <div className="truncate text-sm font-medium">{base}</div>

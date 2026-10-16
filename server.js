@@ -9,6 +9,7 @@ const bcrypt       = require('bcryptjs');
 const crypto       = require('crypto');
 const rateLimit    = require('express-rate-limit');
 const helmet       = require('helmet');
+const AdmZip       = require('adm-zip');
 const webpush      = require('web-push');
 const { Pool }     = require('pg');
 
@@ -3521,11 +3522,59 @@ app.get('/api/sites/:id/documents/:filename', requireLogin, requirePermission('s
     var originalName = r.rows.length ? r.rows[0].original_name : filename;
     // Downloads are logged (who took which file); inline views are not — image thumbnails
     // would otherwise write an audit row per tile.
-    if (sendSiteDocFile(res, filePath, filename, originalName)) {
-      logAuditEvent(req, 'SITE_DOCUMENT_DOWNLOADED', 'site_document', filename, originalName, { site_id: siteId });
-    }
+    var served = sendSiteDocFile(res, filePath, filename, originalName);
+    // Thumbnails ask with ?thumb=1 and aren't logged; a real open (click/View) is.
+    if (served) logAuditEvent(req, 'SITE_DOCUMENT_DOWNLOADED', 'site_document', filename, originalName, { site_id: siteId });
+    else if (req.query.thumb !== '1') logAuditEvent(req, 'SITE_DOCUMENT_VIEWED', 'site_document', filename, originalName, { site_id: siteId });
   } catch (e) {
     res.status(500).end();
+  }
+});
+
+// Thumbnail for the Explorer-style tiles — the same sources Windows uses:
+//  • Office files (.pptx/.docx/.xlsx) carry a ready-made preview inside the zip
+//    (docProps/thumbnail.jpeg), written by Office when the file is saved;
+//  • PDFs get their first page rendered (poppler's pdftoppm, installed in the image).
+// Anything else, or a file with no embedded preview, answers 404 and the page
+// falls back to the plain file-type icon.
+var THUMB_OFFICE_EXTS = ['.pptx', '.docx', '.xlsx'];
+var THUMB_MAX_BYTES = 2 * 1024 * 1024; // refuse to unpack anything bigger than this (zip-bomb guard)
+app.get('/api/sites/:id/documents/:filename/thumbnail', requireLogin, requirePermission('sites'), async function(req, res) {
+  var tmpDir = null;
+  try {
+    var siteId = path.basename(req.params.id);
+    var filename = path.basename(req.params.filename);
+    var filePath = path.join(SITE_DOCS_DIR, siteId, filename);
+    if (!fs.existsSync(filePath)) return res.status(404).end();
+    var ext = path.extname(filename).toLowerCase();
+    var buf = null, type = 'image/jpeg';
+
+    if (THUMB_OFFICE_EXTS.indexOf(ext) !== -1) {
+      var zip = new AdmZip(filePath);
+      var entry = zip.getEntry('docProps/thumbnail.jpeg') || zip.getEntry('docProps/thumbnail.jpg') || zip.getEntry('docProps/thumbnail.png');
+      if (!entry || entry.header.size > THUMB_MAX_BYTES) return res.status(404).end();
+      buf = entry.getData();
+      type = /.png$/i.test(entry.entryName) ? 'image/png' : 'image/jpeg';
+    } else if (ext === '.pdf') {
+      tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'gt-thumb-'));
+      var outBase = path.join(tmpDir, 'p');
+      await new Promise(function(resolve, reject) {
+        execFile('pdftoppm', ['-f', '1', '-l', '1', '-jpeg', '-scale-to', '400', '-singlefile', filePath, outBase],
+          { timeout: 10000 }, function(err) { err ? reject(err) : resolve(); });
+      });
+      buf = fs.readFileSync(outBase + '.jpg');
+    } else {
+      return res.status(404).end();
+    }
+
+    res.setHeader('Content-Type', type);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.send(buf);
+  } catch (e) {
+    res.status(404).end(); // unreadable/odd file → just show the icon
+  } finally {
+    if (tmpDir) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {} }
   }
 });
 
@@ -3568,9 +3617,8 @@ app.get('/api/recycle-bin/:id/file', requireLogin, requireRole('director'), asyn
     if (!r.rows.length) return res.status(404).end();
     var binPath = path.join(RECYCLE_DIR, path.basename(r.rows[0].bin_filename));
     if (!fs.existsSync(binPath)) return res.status(404).end();
-    if (sendSiteDocFile(res, binPath, r.rows[0].original_filename, r.rows[0].original_name)) {
-      logAuditEvent(req, 'SITE_DOCUMENT_DOWNLOADED', 'site_document', req.params.id, r.rows[0].original_name, { from_recycle_bin: true });
-    }
+    var served = sendSiteDocFile(res, binPath, r.rows[0].original_filename, r.rows[0].original_name);
+    logAuditEvent(req, served ? 'SITE_DOCUMENT_DOWNLOADED' : 'SITE_DOCUMENT_VIEWED', 'site_document', req.params.id, r.rows[0].original_name, { from_recycle_bin: true });
   } catch (e) {
     res.status(500).end();
   }
