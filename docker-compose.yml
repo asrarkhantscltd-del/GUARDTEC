@@ -2,7 +2,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "5173:80"
+      - "127.0.0.1:5173:80"
     depends_on:
       - guardtec-app
     restart: unless-stopped
@@ -10,7 +10,7 @@ services:
   guardtec-app:
     build: .
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     volumes:
       - "${HOST_DATA_PATH}:/data"
     environment:

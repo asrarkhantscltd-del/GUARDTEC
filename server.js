@@ -8,15 +8,20 @@ const jwt          = require('jsonwebtoken');
 const bcrypt       = require('bcryptjs');
 const crypto       = require('crypto');
 const rateLimit    = require('express-rate-limit');
+const helmet       = require('helmet');
 const webpush      = require('web-push');
 const { Pool }     = require('pg');
 
 const app  = express();
+app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false })); // security headers (nosniff, HSTS, frame, referrer…); CSP off — this server only returns JSON/files, the SPA's CSP belongs in nginx
 app.set('trust proxy', 2); // behind Caddy + frontend nginx in production (2 hops); needed for express-rate-limit to read X-Forwarded-For correctly
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const BASE_URL = process.env.BASE_URL || ('http://localhost:' + PORT); // link base for acknowledgment-form URLs (Feature 2)
 
 const JWT_SECRET = process.env.JWT_SECRET;
+// Cookies are Secure-only in production (HTTPS via Caddy). Plain-http local dev
+// would silently drop a Secure cookie, so it is off outside NODE_ENV=production.
+const COOKIE_SECURE = process.env.NODE_ENV === 'production';
 const pgPool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 // Web Push (real browser/phone push notifications, works even with the PWA
@@ -1177,7 +1182,7 @@ function issueCsrfCookie(res) {
   res.cookie('csrf_token', csrfToken, {
     httpOnly: false,
     sameSite: 'strict',
-    secure: false, // TODO: set true once Phase 7 adds HTTPS, matches the auth cookie's own TODO
+    secure: COOKIE_SECURE,
     maxAge: 7 * 24 * 60 * 60 * 1000
   });
 }
@@ -1346,7 +1351,7 @@ app.post('/api/login', authRateLimiter, async function(req, res) {
     res.cookie('token', token, {
       httpOnly: true,
       sameSite: 'strict',
-      secure: false, // TODO: set true once Phase 7 adds HTTPS — a secure cookie is silently dropped over plain HTTP
+      secure: COOKIE_SECURE,
       maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days, matches the token's own expiry
     });
     issueCsrfCookie(res);
@@ -1413,7 +1418,7 @@ app.post('/api/register', authRateLimiter, async function(req, res) {
     res.cookie('token', token, {
       httpOnly: true,
       sameSite: 'strict',
-      secure: false,
+      secure: COOKIE_SECURE,
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
     issueCsrfCookie(res);
