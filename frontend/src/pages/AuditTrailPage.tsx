@@ -44,6 +44,8 @@ const ACTION_LABELS: Record<string, string> = {
   ROLE_CREATED: "Created role",
   ROLE_UPDATED: "Updated role",
   ROLE_DELETED: "Deleted role",
+  SITE_DOCUMENT_VIEWED: "Opened site document",
+  SITE_DOCUMENT_DOWNLOADED: "Downloaded site document",
   SITE_DOCUMENT_RECYCLED: "Moved site document to Recycle Bin",
   SITE_DOCUMENT_RESTORED: "Restored site document from Recycle Bin",
   SITE_DOCUMENT_PURGED: "Permanently deleted site document from Recycle Bin",

@@ -5,6 +5,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
+# poppler-utils: pdftoppm renders the first page of a PDF for the document thumbnails.
+RUN apk add --no-cache poppler-utils
+
 COPY . .
 ENV DATA_PATH=/data
 ENV NODE_ENV=production
