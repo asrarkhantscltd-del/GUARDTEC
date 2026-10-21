@@ -3075,10 +3075,10 @@ app.delete('/api/sites/:id', requireLogin, requirePermission('delete_sites'), as
     if (b.deployments > 0 || b.instructions > 0) {
       var parts = [];
       if (b.deployments > 0) parts.push(b.deployments + ' deployment(s)');
-      if (b.instructions > 0) parts.push(b.instructions + ' event instruction(s)');
+      if (b.instructions > 0) parts.push(b.instructions + ' assignment instruction(s)');
       return res.status(400).json({
         ok: false,
-        error: 'Cannot delete this site — ' + parts.join(' and ') + ' still reference it. Delete or reassign those first (an event instruction with signed acknowledgments must be archived, not deleted, to keep the compliance record).'
+        error: 'Cannot delete this site — ' + parts.join(' and ') + ' still reference it. Delete or reassign those first (an assignment instruction with signed acknowledgments must be archived, not deleted, to keep the compliance record).'
       });
     }
 

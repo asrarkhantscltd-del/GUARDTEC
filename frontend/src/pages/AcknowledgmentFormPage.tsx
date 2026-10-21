@@ -84,7 +84,7 @@ function buildSteps(instruction: AckInstruction): AckStep[] {
     steps.push({ key: `req-${steps.length}`, title: req.title, description: req.description, mandatory: req.mandatory })
   }
   if (!steps.length) {
-    steps.push({ key: "instructions", title: instruction.title || "Instructions", html: "<p>Please review and confirm you have received this event instruction.</p>" })
+    steps.push({ key: "instructions", title: instruction.title || "Instructions", html: "<p>Please review and confirm you have received this assignment instruction.</p>" })
   }
   return steps
 }
