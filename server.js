@@ -2759,7 +2759,7 @@ function sanitizeForStaffView(emp) {
 
 // The logged-in staff member's own profile — reads via the staff_id baked
 // into their JWT at login/registration time.
-app.get('/api/my-profile', requireLogin, requireRole('staff'), function(req, res) {
+app.get('/api/my-profile', requireLogin, function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.user.staff_id; });
@@ -2801,7 +2801,7 @@ function applyPendingProfileFields(emp, fields) {
 
 // Staff submit changes here — they land in pending_submission and do NOT
 // touch the live compliance record until a manager approves them.
-app.post('/api/my-profile', requireLogin, requireRole('staff'), async function(req, res) {
+app.post('/api/my-profile', requireLogin, async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.user.staff_id; });
@@ -2837,7 +2837,7 @@ app.post('/api/my-profile', requireLogin, requireRole('staff'), async function(r
 // it's never shown to a manager, never triggers a notification, and gets
 // cleared the moment a real submission promotes it (above) — it's purely a
 // private resume-buffer for the person still filling the form in.
-app.put('/api/my-profile/draft', requireLogin, requireRole('staff'), async function(req, res) {
+app.put('/api/my-profile/draft', requireLogin, async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.user.staff_id; });
@@ -2856,7 +2856,7 @@ app.put('/api/my-profile/draft', requireLogin, requireRole('staff'), async funct
   }
 });
 
-app.post('/api/my-profile/photo', requireLogin, requireRole('staff'), async function(req, res) {
+app.post('/api/my-profile/photo', requireLogin, async function(req, res) {
   try {
     var all = loadAllStaff();
     var emp = all.find(function(e){ return e.id === req.user.staff_id; });
@@ -4772,8 +4772,21 @@ app.get('/api/vehicles/export', requireLogin, requirePermission('fleet'), async 
 
 app.get('/api/users', requireLogin, requireRole('director'), async function(req, res) {
   try {
-    var result = await pgPool.query('SELECT id, username, full_name, role, email, is_active, created_at FROM users ORDER BY full_name');
+    var result = await pgPool.query('SELECT id, username, full_name, role, email, is_active, staff_id, created_at FROM users ORDER BY full_name');
     res.json({ users: result.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Lightweight staff list used by the "Link staff record" dropdown in the
+// Edit User panel — returns only id + name so we don't over-fetch.
+app.get('/api/staff/for-link', requireLogin, requireRole('director'), function(req, res) {
+  try {
+    var all = loadAllStaff();
+    var list = all.map(function(e) { return { id: e.id, name: e.name }; })
+                  .sort(function(a, b) { return a.name.localeCompare(b.name); });
+    res.json({ staff: list });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -4817,6 +4830,9 @@ app.patch('/api/users/:id', requireLogin, requireRole('director'), async functio
     var role      = String(b.role      || '').trim();
     var email     = String(b.email     || '').trim().toLowerCase();
     var is_active = b.is_active !== undefined ? Boolean(b.is_active) : true;
+    // staff_id links this portal account to a staff compliance record so the
+    // user can fill their own profile (My Profile page). null clears the link.
+    var staff_id  = b.staff_id !== undefined ? (b.staff_id || null) : undefined;
 
     if (!full_name) return res.status(400).json({ ok: false, error: 'Full name is required.' });
 
@@ -4825,10 +4841,18 @@ app.patch('/api/users/:id', requireLogin, requireRole('director'), async functio
       return res.status(400).json({ ok: false, error: 'You cannot suspend your own account.' });
     }
 
-    var r = await pgPool.query(
-      'UPDATE users SET full_name=$1, role=$2, email=$3, is_active=$4 WHERE id=$5 RETURNING id, username, full_name, role, email, is_active',
-      [full_name, role, email, is_active, id]
-    );
+    var r;
+    if (staff_id !== undefined) {
+      r = await pgPool.query(
+        'UPDATE users SET full_name=$1, role=$2, email=$3, is_active=$4, staff_id=$5 WHERE id=$6 RETURNING id, username, full_name, role, email, is_active, staff_id',
+        [full_name, role, email, is_active, staff_id, id]
+      );
+    } else {
+      r = await pgPool.query(
+        'UPDATE users SET full_name=$1, role=$2, email=$3, is_active=$4 WHERE id=$5 RETURNING id, username, full_name, role, email, is_active, staff_id',
+        [full_name, role, email, is_active, id]
+      );
+    }
     if (!r.rows.length) return res.status(404).json({ ok: false, error: 'User not found.' });
     logAuditEvent(req, 'USER_UPDATED', 'user', id, r.rows[0].full_name, { role: r.rows[0].role, is_active: r.rows[0].is_active });
     res.json({ ok: true, user: r.rows[0] });
