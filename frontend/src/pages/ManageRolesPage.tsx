@@ -129,8 +129,8 @@ export default function ManageRolesPage() {
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
-        <div className="surface overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="surface" style={{ overflowX: "auto" }}>
+          <table className="w-full min-w-[700px] text-sm">
             <thead className="border-b bg-muted/30">
               <tr>
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Role</th>
