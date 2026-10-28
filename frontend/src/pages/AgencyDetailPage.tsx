@@ -431,8 +431,8 @@ export default function AgencyDetailPage() {
               No cover guards registered yet.
             </div>
           ) : (
-            <div className="rounded-lg border overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="rounded-lg border overflow-x-auto">
+              <table className="w-full min-w-[480px] text-sm">
                 <thead>
                   <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
                     <th className="px-4 py-3">Name</th>
@@ -512,8 +512,8 @@ export default function AgencyDetailPage() {
             No deployments booked yet. Deployments are created from the agency's own login.
           </div>
         ) : (
-          <div className="rounded-lg border overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="rounded-lg border overflow-x-auto">
+            <table className="w-full min-w-[480px] text-sm">
               <thead>
                 <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
                   <th className="px-4 py-3">Event date</th>

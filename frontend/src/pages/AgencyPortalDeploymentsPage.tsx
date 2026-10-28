@@ -198,11 +198,11 @@ export default function AgencyPortalDeploymentsPage({ agencyId: agencyIdProp }: 
           <Loader2 className="h-4 w-4 animate-spin" /><span className="text-sm">Loading deployments…</span>
         </div>
       ) : (
-        <div className="rounded-lg border overflow-hidden">
-          <div className="grid grid-cols-7 border-b bg-muted/50 text-xs font-medium text-muted-foreground">
+        <div className="rounded-lg border overflow-x-auto">
+          <div className="grid grid-cols-7 border-b bg-muted/50 text-xs font-medium text-muted-foreground" style={{ minWidth: "420px" }}>
             {WEEKDAYS.map(w => <div key={w} className="px-2 py-2 text-center">{w}</div>)}
           </div>
-          <div className="grid grid-cols-7">
+          <div className="grid grid-cols-7" style={{ minWidth: "420px" }}>
             {calendarCells(month).map((day, i) => {
               const dateStr = day ? `${month}-${String(day).padStart(2, "0")}` : ""
               const dayDeployments = day ? deploymentsByDay[day] ?? [] : []

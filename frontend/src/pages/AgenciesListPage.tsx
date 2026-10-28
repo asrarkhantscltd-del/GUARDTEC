@@ -186,8 +186,8 @@ export default function AgenciesListPage() {
           {agencies.length === 0 ? 'No agencies yet — click "Create agency" to add your first cover agency.' : "No agencies match your filters."}
         </div>
       ) : (
-        <div className="rounded-lg border overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="rounded-lg border overflow-x-auto">
+          <table className="w-full min-w-[480px] text-sm">
             <thead>
               <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
                 <th className="px-4 py-3">Agency</th>

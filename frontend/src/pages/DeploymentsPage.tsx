@@ -139,8 +139,8 @@ export default function DeploymentsPage() {
           ) : "No deployments booked yet."}
         </div>
       ) : (
-        <div className="rounded-lg border overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="rounded-lg border overflow-x-auto">
+          <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
                 <th className="px-4 py-3">Event date</th>

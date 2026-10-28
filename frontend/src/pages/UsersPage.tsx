@@ -350,8 +350,7 @@ export default function UsersPage() {
           <p className="text-sm text-muted-foreground">No accounts match your search</p>
         </div>
       ) : (
-        <div className="surface overflow-hidden">
-          <div className="overflow-x-auto">
+        <div className="surface" style={{ overflowX: "auto" }}>
           <table className="w-full min-w-[480px] text-sm">
             <thead className="border-b bg-muted/30">
               <tr>
@@ -429,7 +428,6 @@ export default function UsersPage() {
               ))}
             </tbody>
           </table>
-          </div>
           {filteredUsers.length > 0 && (
             <div className="border-t px-5 py-2.5">
               <p className="text-xs text-muted-foreground">
