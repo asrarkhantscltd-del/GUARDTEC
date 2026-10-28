@@ -22,7 +22,13 @@ interface PortalUser {
   role: string
   email: string
   is_active: boolean
+  staff_id: string | null
   created_at: string
+}
+
+interface StaffOption {
+  id: string
+  name: string
 }
 
 interface RoleOption {
@@ -95,13 +101,14 @@ function StatCard({ icon, label, value, colorClass, strip, onClick, active }: {
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-const BLANK_DRAFT = { full_name: "", username: "", role: "supervisor", email: "", password: "", is_active: true }
+const BLANK_DRAFT = { full_name: "", username: "", role: "supervisor", email: "", password: "", is_active: true, staff_id: "" }
 
 export default function UsersPage() {
   const { user: me } = useAuth()
 
   const [users, setUsers]     = useState<PortalUser[]>([])
   const [roleOptions, setRoleOptions] = useState<RoleOption[]>([])
+  const [staffOptions, setStaffOptions] = useState<StaffOption[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState("")
 
@@ -154,12 +161,14 @@ export default function UsersPage() {
   async function loadUsers() {
     setLoading(true)
     try {
-      const [uData, rData] = await Promise.all([
+      const [uData, rData, sData] = await Promise.all([
         api.get<{ users: PortalUser[] }>("/api/users"),
         api.get<{ roles: RoleOption[] }>("/api/roles"),
+        api.get<{ staff: StaffOption[] }>("/api/staff/for-link"),
       ])
       setUsers(uData.users ?? [])
       setRoleOptions(rData.roles ?? [])
+      setStaffOptions(sData.staff ?? [])
     } catch {
       setError("Failed to load users.")
     }
@@ -175,7 +184,7 @@ export default function UsersPage() {
   }
   function openEdit(u: PortalUser) {
     setEditing(u)
-    setDraft({ full_name: u.full_name, username: u.username, role: u.role, email: u.email ?? "", password: "", is_active: u.is_active })
+    setDraft({ full_name: u.full_name, username: u.username, role: u.role, email: u.email ?? "", password: "", is_active: u.is_active, staff_id: u.staff_id ?? "" })
     setPanelError(""); setShowPw(false); setPanel(true)
   }
   function closePanel() { setPanel(false); setEditing(null); setPanelError("") }
@@ -195,7 +204,10 @@ export default function UsersPage() {
         is_active: draft.is_active,
       }
       if (!editing) body.password = draft.password
-      if (editing) await api.patch(`/api/users/${editing.id}`, body)
+      if (editing) {
+        body.staff_id = draft.staff_id.trim() || null
+        await api.patch(`/api/users/${editing.id}`, body)
+      }
       else await api.post("/api/users", body)
       toast.success(editing ? "User updated" : "User created")
       await loadUsers(); closePanel()
@@ -251,14 +263,14 @@ export default function UsersPage() {
     <div className="space-y-5">
 
       {/* ── Header ── */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="font-display text-xl font-bold tracking-tight">Account Control Panel</h2>
           <p className="text-sm text-muted-foreground">
             Manage all portal accounts, roles, and access from one place
           </p>
         </div>
-        <Button onClick={openAdd} size="sm" className="gap-1.5">
+        <Button onClick={openAdd} size="sm" className="shrink-0 gap-1.5">
           <Plus className="h-4 w-4" /> Add user
         </Button>
       </div>
@@ -339,7 +351,8 @@ export default function UsersPage() {
         </div>
       ) : (
         <div className="surface overflow-hidden">
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[480px] text-sm">
             <thead className="border-b bg-muted/30">
               <tr>
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Account</th>
@@ -416,6 +429,7 @@ export default function UsersPage() {
               ))}
             </tbody>
           </table>
+          </div>
           {filteredUsers.length > 0 && (
             <div className="border-t px-5 py-2.5">
               <p className="text-xs text-muted-foreground">
@@ -488,6 +502,22 @@ export default function UsersPage() {
                       {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   </div>
+                </div>
+              )}
+
+              {editing && (
+                <div className="space-y-1.5">
+                  <Label>Link to staff record <span className="font-normal text-muted-foreground">(optional)</span></Label>
+                  <select value={draft.staff_id} onChange={(e) => setF("staff_id", e.target.value)}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring">
+                    <option value="">— None (no staff profile) —</option>
+                    {staffOptions.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    Link this account to a staff compliance record so they can fill their own profile and upload documents via <span className="font-medium">My Profile</span>.
+                  </p>
                 </div>
               )}
 
