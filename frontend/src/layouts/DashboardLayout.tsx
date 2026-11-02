@@ -14,7 +14,7 @@ import {
   Camera, Loader2, Sun, Moon, AlertTriangle,
   ChevronDown, UserCog, Eye, EyeOff, FileSpreadsheet,
   Building2, CalendarDays, FileText, ListChecks,
-  BellRing, BellOff, History, Target, Trash2,
+  BellRing, BellOff, History, Target, Trash2, ShoppingCart, BadgeCheck,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
@@ -51,6 +51,8 @@ const navItems: NavItem[] = [
   { label: "Agency Deployments", to: "/admin/deployments",       icon: <CalendarDays className="h-4 w-4" />, permission: "staff",  group: "operations" },
   { label: "Agency Performance", to: "/admin/agencies-dashboard", icon: <ShieldCheck className="h-4 w-4" />, permission: "staff",  group: "compliance" },
   { label: "Assignment Instructions", to: "/admin/event-instructions", icon: <ListChecks className="h-4 w-4" />,  permission: "staff",  group: "compliance" },
+  { label: "Purchase Orders",  to: "/purchase-orders",  icon: <ShoppingCart className="h-4 w-4" />,    permission: "purchase_orders", group: "admin" },
+  { label: "Approved Suppliers", to: "/suppliers",      icon: <BadgeCheck className="h-4 w-4" />,      permission: "suppliers",      group: "admin" },
   { label: "Custom Forms",     to: "/custom-forms",              icon: <FileText className="h-4 w-4" />,     permission: "staff",  group: "admin" },
   { label: "Team Access",      to: "/users",           icon: <KeyRound className="h-4 w-4" />,         directorOnly: true,           group: "admin" },
   { label: "Manage Roles",     to: "/roles",           icon: <Shield className="h-4 w-4" />,           directorOnly: true,           group: "admin" },
@@ -150,6 +152,7 @@ export default function DashboardLayout() {
     if (n.type === "incident_report") navigate("/incident-reports")
     else if (n.type === "profile_submission") navigate("/pending-review")
     else if (n.type === "compliance_calendar_reminder") navigate("/compliance-calendar")
+    else if (n.type === "supplier_evaluation") navigate("/suppliers")
     else if (n.link_agency_id) navigate(`/admin/agencies/${n.link_agency_id}${n.link_tab ? `?tab=${n.link_tab}` : ""}`)
     else if (n.link_staff_id) navigate(`/staff/${n.link_staff_id}${n.link_tab ? `?tab=${n.link_tab}` : ""}`)
   }

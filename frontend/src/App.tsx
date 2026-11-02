@@ -38,6 +38,9 @@ import AgencyPortalDeploymentsPage from "@/pages/AgencyPortalDeploymentsPage"
 import AgencyPortalMessagesPage from "@/pages/AgencyPortalMessagesPage"
 import AcknowledgmentFormPage from "@/pages/AcknowledgmentFormPage"
 import CustomFormFillPage from "@/pages/CustomFormFillPage"
+import PurchaseOrdersPage from "@/pages/PurchaseOrdersPage"
+import SuppliersPage from "@/pages/SuppliersPage"
+import PublicSupplierEvaluationPage from "@/pages/PublicSupplierEvaluationPage"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import type { ReactNode } from "react"
 
@@ -121,6 +124,8 @@ function AuthenticatedApp() {
         <Route path="admin/event-instructions" element={<EventInstructionsPanel />} />
         <Route path="custom-forms" element={<CustomFormsPage />} />
         <Route path="custom-forms/:id/responses" element={<CustomFormResponsesPage />} />
+        <Route path="purchase-orders" element={<PurchaseOrdersPage />} />
+        <Route path="suppliers" element={<SuppliersPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
@@ -172,6 +177,7 @@ export default function App() {
           <Route path="/acknowledge/:token" element={<AcknowledgmentFormPage />} />
           <Route path="/custom-forms/:formId/fill" element={<CustomFormFillPage />} />
           <Route path="/compliance-calendar/shared/:token" element={<PublicComplianceCalendarPage />} />
+          <Route path="/supplier-evaluation/:token" element={<PublicSupplierEvaluationPage />} />
           <Route
             path="/*"
             element={
