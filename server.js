@@ -5315,7 +5315,7 @@ function calculateComplianceStatus(staff) {
     cscs: staff.job_role !== 'Dog Handler',
     rtw: true,
     dog_handler: staff.job_role === 'Dog Handler',
-    training: true,
+    training: false,
   };
 
   var checks = {
