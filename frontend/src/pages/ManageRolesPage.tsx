@@ -3,7 +3,7 @@ import { toast } from "sonner"
 import { api } from "@/lib/api"
 import {
   Plus, Pencil, Trash2, X, Users, Truck, MapPin,
-  ShieldCheck, ClipboardCheck, Lock, UserCog, UserX, CalendarDays, Target,
+  ShieldCheck, ClipboardCheck, Lock, UserCog, UserX, CalendarDays, Target, ShoppingCart, BadgeCheck, Stamp,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -28,9 +28,12 @@ const MODULES = [
   { key: "delete_staff",         label: "Delete Staff Records", icon: UserX },
   { key: "delete_sites",         label: "Delete Sites",         icon: Trash2 },
   { key: "delete_fleet",         label: "Delete Fleet",         icon: Trash2 },
+  { key: "purchase_orders",      label: "Purchase Orders",      icon: ShoppingCart },
+  { key: "approve_purchase_orders", label: "Approve POs",       icon: Stamp },
+  { key: "suppliers",            label: "Approved Suppliers",   icon: BadgeCheck },
 ] as const
 
-const BLANK_PERMISSIONS = { staff: false, fleet: false, sites: false, compliance: false, compliance_calendar: false, crm: false, pending_review: false, edit_staff: false, delete_staff: false, delete_sites: false, delete_fleet: false }
+const BLANK_PERMISSIONS = { staff: false, fleet: false, sites: false, compliance: false, compliance_calendar: false, crm: false, pending_review: false, edit_staff: false, delete_staff: false, delete_sites: false, delete_fleet: false, purchase_orders: false, approve_purchase_orders: false, suppliers: false }
 
 export default function ManageRolesPage() {
   const [roles, setRoles]     = useState<Role[]>([])
@@ -130,7 +133,7 @@ export default function ManageRolesPage() {
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
         <div className="surface" style={{ overflowX: "auto" }}>
-          <table className="w-full min-w-[700px] text-sm">
+          <table className="w-full min-w-[900px] text-sm">
             <thead className="border-b bg-muted/30">
               <tr>
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Role</th>

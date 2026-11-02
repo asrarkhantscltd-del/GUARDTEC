@@ -119,6 +119,7 @@ function notificationUrl(opts) {
   if (opts.type === 'incident_report') return '/incident-reports';
   if (opts.type === 'profile_submission') return '/pending-review';
   if (opts.type === 'compliance_calendar_reminder') return '/compliance-calendar';
+  if (opts.type === 'supplier_evaluation') return '/suppliers';
   var tab = opts.linkTab ? '?tab=' + encodeURIComponent(opts.linkTab) : '';
   if (opts.linkAgencyId) return '/admin/agencies/' + encodeURIComponent(opts.linkAgencyId) + tab;
   if (opts.linkStaffId) return '/staff/' + encodeURIComponent(opts.linkStaffId) + tab;
@@ -1325,6 +1326,8 @@ app.use(function(req, res, next) {
   // boundary for these public compliance-calendar reminder links, not a
   // login session, so there's no CSRF cookie to check here either.
   if (req.path.indexOf('/api/public/compliance-calendar/') === 0) return next();
+  // Public supplier evaluation link — same token-is-the-boundary model.
+  if (req.path.indexOf('/api/public/supplier-evaluation/') === 0) return next();
   var cookieToken = req.cookies && req.cookies.csrf_token;
   var headerToken = req.headers['x-csrf-token'];
   if (!cookieToken || !headerToken || cookieToken !== headerToken) {
@@ -3304,6 +3307,9 @@ app.post('/api/public/compliance-calendar/:token/:itemId/complete', async functi
 
 // ── CRM (event-based leads — see crm.js) ──────────────────────────────────────
 require('./crm')({ app: app, pgPool: pgPool, requireLogin: requireLogin, requirePermission: requirePermission, logAuditEvent: logAuditEvent, sendXlsx: sendXlsx });
+
+// ── PROCUREMENT (purchase orders + approved suppliers — see procurement.js) ───
+require('./procurement')({ app: app, pgPool: pgPool, requireLogin: requireLogin, requirePermission: requirePermission, requireRole: requireRole, logAuditEvent: logAuditEvent, createNotification: createNotification, BASE: BASE, BASE_URL: BASE_URL, rateLimit: rateLimit });
 
 // ── SITE DOCUMENTATION ─────────────────────────────────────────────────────────
 // Per-site file library: general documentation, presentations, induction packs.
