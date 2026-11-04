@@ -1670,12 +1670,17 @@ export default function StaffDetailPage() {
             </CardHeader>
             <CardContent className="divide-y px-4">
               {(["ref1", "ref2"] as const).map((key, i) => {
-                const ref = staff.references?.[key]
+                const draftRef = staff.wizard_draft?.references?.[key]
+                const isDraftRef = !staff.references?.[key]?.name && !!draftRef?.name
+                const ref = isDraftRef ? draftRef : staff.references?.[key]
                 const isEditing = editingVetting === key
                 return (
                   <div key={key} className="py-3">
                     <div className="flex items-center justify-between mb-2">
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Reference {i + 1}</p>
+                      <p className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                        Reference {i + 1}
+                        {isDraftRef && <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[10px] normal-case tracking-normal text-warning">Draft — not submitted yet</span>}
+                      </p>
                       {canEdit && !isEditing && (
                         <button onClick={() => openVettingEdit(key)}
                           className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Edit">
@@ -1751,15 +1756,22 @@ export default function StaffDetailPage() {
               Read-only here (it's the staff's own submitted record, same
               treatment as References above); not to be confused with the
               separate freeform "Employment History" notes list below. */}
-          {(staff.employmentHistoryDetail ?? []).length > 0 && (
+          {(() => {
+            const live = (staff.employmentHistoryDetail ?? []) as EmploymentHistoryEntry[]
+            const draft = (staff.wizard_draft?.employmentHistoryDetail ?? []) as EmploymentHistoryEntry[]
+            const isDraftHist = live.length === 0 && draft.length > 0
+            const hist = isDraftHist ? draft : live
+            if (hist.length === 0) return null
+            return (
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
+                <CardTitle className="text-base flex flex-wrap items-center gap-2">
                   <Building2 className="h-4 w-4" />5-Year Employment History
+                  {isDraftHist && <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning">Draft — not submitted yet</span>}
                 </CardTitle>
               </CardHeader>
               <CardContent className="px-4 pb-3 space-y-3">
-                {(staff.employmentHistoryDetail as EmploymentHistoryEntry[]).map(e => (
+                {hist.map(e => (
                   <div key={e.id} className="rounded-lg border bg-muted/20 p-3 text-sm space-y-1.5">
                     <div className="flex items-center justify-between">
                       <p className="font-medium">{e.companyName} — {e.jobTitle}</p>
@@ -1783,7 +1795,8 @@ export default function StaffDetailPage() {
                 ))}
               </CardContent>
             </Card>
-          )}
+            )
+          })()}
 
           {/* ── Employment History ── */}
           <Card>

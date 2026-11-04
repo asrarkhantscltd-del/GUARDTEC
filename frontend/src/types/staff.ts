@@ -171,6 +171,10 @@ export interface StaffMember {
   driverLicence?: DriverLicenceInfo
   driverAssignment?: DriverAssignmentInfo
   pending_submission?: { driverLicence?: DriverLicenceInfo }
+  wizard_draft?: {
+    references?: { ref1?: ReferenceDetail; ref2?: ReferenceDetail }
+    employmentHistoryDetail?: unknown[]
+  }
   documents?: {
     siaPhysical?:      { uploaded?: boolean; date?: string }
     cscsCard?:         { uploaded?: boolean; date?: string }
