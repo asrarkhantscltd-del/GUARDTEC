@@ -23,8 +23,8 @@ import type {
 // siaCertificate is also excluded — holding a valid SIA licence (verified
 // separately via documents.siaPhysical below) already proves the person
 // qualified, so the separate qualifying-certificate upload is optional.
-// cscsTest excluded — new joiners often haven't sat it yet; collected later at vetting.
-const MANDATORY_TRAINING_KEYS = ["firstAid", "fireAwareness", "conflictManagement"]
+// cscsTest and fireAwareness excluded — new joiners often don't have them yet; collected later at vetting.
+const MANDATORY_TRAINING_KEYS = ["firstAid", "conflictManagement"]
 
 function genId() { return Math.random().toString(36).slice(2, 10) }
 
