@@ -267,6 +267,40 @@ export default function StaffDetailPage() {
   const [deletingDoc, setDeletingDoc]     = useState(false)
   const [confirmDeleteCertKey, setConfirmDeleteCertKey] = useState<string | null>(null)
   const [deletingCert, setDeletingCert]   = useState(false)
+  const docEditPanelRef                   = useRef<HTMLDivElement>(null)
+  const certFileInputRef                  = useRef<HTMLInputElement>(null)
+  const [uploadingCertKey, setUploadingCertKey] = useState<string | null>(null)
+
+  // Opening a document's Edit/Upload panel renders it at the top of the tab —
+  // bring it into view so the user doesn't have to scroll up to find it.
+  useEffect(() => {
+    if (editingDocKey) {
+      requestAnimationFrame(() => docEditPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }))
+    }
+  }, [editingDocKey])
+
+  useEffect(() => {
+    if (editingKey) {
+      requestAnimationFrame(() =>
+        document.querySelector(`[data-training-edit="${editingKey}"]`)?.scrollIntoView({ behavior: "smooth", block: "nearest" }))
+    }
+  }, [editingKey])
+
+  async function uploadCertFile(courseKey: string, file: File) {
+    if (!id) return
+    setUploadingCertKey(courseKey)
+    try {
+      const d = await api.post<{ ok: boolean; date: string }>(`/api/staff/${id}/training/${courseKey}/certificate`, file)
+      if (d.ok) {
+        await refreshStaffRecord()
+        toast.success("Certificate uploaded")
+      } else toast.error("Upload failed")
+    } catch {
+      toast.error("Upload failed — please try again")
+    } finally {
+      setUploadingCertKey(null)
+    }
+  }
 
   // Vetting editing
   const [editingVetting, setEditingVetting] = useState<"dbs" | "bs7858" | "ref1" | "ref2" | "driver" | null>(null)
@@ -1160,7 +1194,7 @@ export default function StaffDetailPage() {
         <motion.div key="documents" className="space-y-4" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}>
           {/* Inline doc edit / upload form */}
           {editingDocKey && (
-            <div className="rounded-lg border bg-muted/20 p-4 space-y-4">
+            <div ref={docEditPanelRef} className="scroll-mt-20 rounded-lg border-2 border-primary/40 bg-muted/20 p-4 space-y-4">
               <p className="text-sm font-semibold">Edit document record</p>
 
               {/* ── File upload section ── */}
@@ -1845,6 +1879,12 @@ export default function StaffDetailPage() {
       {/* ════════ TRAINING ════════ */}
       {tab === "training" && (
         <motion.div key="training" className="space-y-4" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}>
+          <input ref={certFileInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+            onChange={e => {
+              const f = e.target.files?.[0]; const k = e.currentTarget.dataset.key
+              if (f && k) uploadCertFile(k, f)
+              e.currentTarget.value = ""
+            }} />
           {/* ── Standard courses ── */}
           <Card>
             <CardHeader className="pb-2">
@@ -1889,8 +1929,15 @@ export default function StaffDetailPage() {
                               className="text-xs text-muted-foreground hover:text-destructive transition-colors">Remove</button>
                           </span>
                         ) : (
-                          <p className="mt-0.5 text-xs text-muted-foreground/60">No certificate uploaded by staff yet</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground/60">No certificate uploaded yet</p>
                         )}
+                        <button
+                          onClick={() => { if (certFileInputRef.current) { certFileInputRef.current.dataset.key = key; certFileInputRef.current.click() } }}
+                          disabled={uploadingCertKey === key}
+                          className="mt-1 inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50">
+                          {uploadingCertKey === key ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+                          {uploadingCertKey === key ? "Uploading…" : item?.certUploaded ? "Replace certificate" : "Upload certificate"}
+                        </button>
                         {confirmDeleteCertKey === key && (
                           <div className="mt-1.5 flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
                             <p className="text-xs font-medium text-destructive">Remove this certificate? Staff will need to re-upload it.</p>
@@ -1916,7 +1963,8 @@ export default function StaffDetailPage() {
                     </div>
                     {/* Inline edit form */}
                     {isEditing && (
-                      <div className="ml-8 mb-2 rounded-lg border bg-muted/20 p-3 space-y-2">
+                      <div data-training-edit={key}
+                        className="ml-8 mb-2 rounded-lg border bg-muted/20 p-3 space-y-2">
                         <div className="grid grid-cols-2 gap-2">
                           {[
                             { field: "date",     label: "Completed date", type: "date" },
