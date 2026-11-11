@@ -7899,6 +7899,42 @@ app.get('/api/staff/:id/messages', requireLogin, requirePermission('staff'), asy
   }
 });
 
+// Management: inbox — one row per staff conversation, newest first, with the
+// count of unread messages sent BY staff. Read-only (does not mark anything read).
+app.get('/api/messages/inbox', requireLogin, requirePermission('staff'), async function(req, res) {
+  try {
+    var r = await pgPool.query(`
+      SELECT sm.employee_id,
+             MAX(sm.created_at) AS last_at,
+             COUNT(*) FILTER (WHERE sm.is_read = FALSE AND u.role = 'staff') AS unread,
+             (ARRAY_AGG(sm.message ORDER BY sm.created_at DESC))[1] AS last_message,
+             (ARRAY_AGG(u.role ORDER BY sm.created_at DESC))[1] AS last_sender_role
+      FROM staff_messages sm
+      JOIN users u ON u.id = sm.sender_id
+      WHERE sm.employee_id IS NOT NULL
+      GROUP BY sm.employee_id
+      ORDER BY MAX(sm.created_at) DESC
+    `);
+    var byPg = {};
+    loadAllStaff().forEach(function(s) { if (s._pgId) byPg[s._pgId] = s; });
+    var conversations = r.rows
+      .filter(function(row) { return byPg[row.employee_id]; })
+      .map(function(row) {
+        var s = byPg[row.employee_id];
+        return {
+          staffId: s.id, name: s.name, jobRole: s.jobRole || null,
+          lastMessage: row.last_message, lastAt: row.last_at,
+          lastFromStaff: row.last_sender_role === 'staff',
+          unread: Number(row.unread) || 0,
+        };
+      });
+    var totalUnread = conversations.reduce(function(n, c) { return n + c.unread; }, 0);
+    res.json({ ok: true, conversations: conversations, totalUnread: totalUnread });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // Management: send a message to a staff member
 app.post('/api/staff/:id/messages', requireLogin, requirePermission('staff'), async function(req, res) {
   try {
@@ -7935,6 +7971,9 @@ app.get('/api/my-messages', requireLogin, requireRole('staff'), async function(r
     if (!empId) return res.json({ ok: true, messages: [], unread: 0 });
     var result = await pgPool.query(MESSAGES_SELECT, [empId]);
     var unread = result.rows.filter(function(m) { return !m.is_read && m.sender_role !== 'staff'; }).length;
+    // ?peek=1 = header badge poll: count only, never mark read (otherwise the
+    // badge cleared itself within 30s without the staff member reading anything).
+    if (req.query.peek === '1') return res.json({ ok: true, unread: unread });
     // Mark management messages as read
     await pgPool.query(
       `UPDATE staff_messages SET is_read = TRUE WHERE employee_id = $1 AND is_read = FALSE AND sender_id NOT IN (SELECT id FROM users WHERE role = 'staff')`,

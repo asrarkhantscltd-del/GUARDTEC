@@ -14,7 +14,7 @@ import {
   Camera, Loader2, Sun, Moon, AlertTriangle,
   ChevronDown, UserCog, Eye, EyeOff, FileSpreadsheet,
   Building2, CalendarDays, FileText, ListChecks,
-  BellRing, BellOff, History, Target, Trash2, ShoppingCart, BadgeCheck,
+  BellRing, BellOff, History, Target, Trash2, ShoppingCart, BadgeCheck, MessageSquare,
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
@@ -39,6 +39,7 @@ const navGroups = [
 
 const navItems: NavItem[] = [
   { label: "Dashboard",        to: "/",                icon: <LayoutDashboard className="h-4 w-4" />,  group: "core" },
+  { label: "Messages",         to: "/messages",        icon: <MessageSquare className="h-4 w-4" />,    permission: "staff",          group: "core" },
   { label: "Staff",            to: "/staff",           icon: <Users className="h-4 w-4" />,            permission: "staff",          group: "operations" },
   { label: "Fleet",            to: "/fleet",           icon: <Truck className="h-4 w-4" />,            permission: "fleet",          group: "operations" },
   { label: "Sites",            to: "/sites",           icon: <MapPin className="h-4 w-4" />,           permission: "sites",          group: "operations" },
@@ -139,6 +140,22 @@ export default function DashboardLayout() {
     const id = setInterval(fetchNotifs, 30000)
     return () => clearInterval(id)
   }, [])
+
+  // Unread staff messages — drives the highlighted Messages entry in the
+  // sidebar and header so replies from staff are impossible to miss.
+  const [msgUnread, setMsgUnread] = useState(0)
+  const canMessage = user?.role === "director" || !!user?.permissions?.staff
+  useEffect(() => {
+    if (!canMessage) return
+    function fetchInbox() {
+      api.get<{ ok: boolean; totalUnread: number }>("/api/messages/inbox")
+        .then(d => { if (d?.ok) setMsgUnread(d.totalUnread ?? 0) })
+        .catch(() => {})
+    }
+    fetchInbox()
+    const t = setInterval(fetchInbox, 30000)
+    return () => clearInterval(t)
+  }, [canMessage, location.pathname])
 
   function clearAllNotifications() {
     setNotifications([])
@@ -336,6 +353,11 @@ export default function DashboardLayout() {
                                 )}
                                 <span className={`relative z-10 transition-transform duration-200 ${!isActive ? "group-hover:scale-110" : ""}`}>{item.icon}</span>
                                 <span className="relative z-10">{item.label}</span>
+                                {item.to === "/messages" && msgUnread > 0 && (
+                                  <span className={`relative z-10 ml-auto flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-bold ${isActive ? "bg-white text-primary" : "bg-primary text-white animate-pulse"}`}>
+                                    {msgUnread > 99 ? "99+" : msgUnread}
+                                  </span>
+                                )}
                               </>
                             )}
                           </NavLink>
@@ -426,6 +448,24 @@ export default function DashboardLayout() {
             <p className="hidden text-xs text-muted-foreground md:block">
               {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
             </p>
+
+            {/* ── Messages — a labelled, highlighted button (not an icon in the corner) ── */}
+            {canMessage && (
+              <button onClick={() => navigate("/messages")} title="Messages"
+                className={`relative inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                  msgUnread > 0
+                    ? "bg-primary text-white shadow-[0_4px_14px_-2px_rgba(228,6,19,0.45)] hover:bg-primary/90"
+                    : "border border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
+                }`}>
+                <MessageSquare className="h-4 w-4" />
+                <span className="hidden sm:inline">Messages</span>
+                {msgUnread > 0 && (
+                  <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1.5 text-[11px] font-bold text-primary">
+                    {msgUnread > 99 ? "99+" : msgUnread}
+                  </span>
+                )}
+              </button>
+            )}
 
             {/* ── Generate Report — shows dropdown on click ──
                 Same mobile treatment as the bell below: not positioned under `sm`, so the
