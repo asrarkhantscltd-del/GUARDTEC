@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label"
 import { StatusBadge } from "@/components/ui/status-badge"
 import {
   ArrowLeft, Phone, Mail, User, ShieldCheck, CreditCard, FileText,
-  Loader2, Upload, Eye, CheckCircle2, AlertCircle, Clock, FileQuestion,
+  Loader2, Upload, Eye, EyeOff, CheckCircle2, AlertCircle, Clock, FileQuestion,
   Fingerprint, Building2, GraduationCap, ClipboardList, UserCheck,
   HeartPulse, Flame, Swords, HardHat, Camera, Briefcase, Car,
   MapPin, Contact, BadgeAlert, Pencil, Trash2, Plus, X as XIcon,
@@ -120,7 +120,15 @@ function DocRow({
 }
 
 
-function AcsCheckRow({ label, done, note, viewUrl }: { label: string; done?: boolean; note?: string; viewUrl?: string }) {
+// Every ACS row carries an eye: uploaded files open in a new tab (one eye per
+// file, labelled when there are several); data-only checks jump to the tab
+// where that data lives; nothing on file shows a disabled eye.
+function AcsCheckRow({ label, done, note, viewUrl, views, onGo }: {
+  label: string; done?: boolean; note?: string; viewUrl?: string
+  views?: { label: string; url?: string }[]; onGo?: () => void
+}) {
+  const files = (views ?? (viewUrl ? [{ label: "", url: viewUrl }] : [])).filter(v => v.url)
+  const eyeCls = "inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-primary hover:bg-primary/10 transition-colors"
   return (
     <div className={`flex items-start gap-3 rounded-md px-3 py-2.5 ${done ? "bg-success/5" : "bg-destructive/5"}`}>
       {done
@@ -130,12 +138,22 @@ function AcsCheckRow({ label, done, note, viewUrl }: { label: string; done?: boo
         <p className="text-sm font-medium">{label}</p>
         {note && <p className="text-xs text-muted-foreground">{note}</p>}
       </div>
-      {viewUrl && (
-        <a href={viewUrl} target="_blank" rel="noopener noreferrer"
-          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0" title="View document">
-          <Eye className="h-3.5 w-3.5" />
-        </a>
-      )}
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-0.5">
+        {files.length > 0 ? files.map(f => (
+          <a key={f.url} href={f.url} target="_blank" rel="noopener noreferrer" className={eyeCls}
+            title={f.label ? `View ${f.label}` : "View uploaded document"}>
+            <Eye className="h-3.5 w-3.5" />{f.label && <span>{f.label}</span>}
+          </a>
+        )) : onGo ? (
+          <button onClick={onGo} className={eyeCls} title="View the recorded details">
+            <Eye className="h-3.5 w-3.5" />
+          </button>
+        ) : (
+          <span className="inline-flex items-center gap-1 px-1.5 py-1 text-xs text-muted-foreground/50" title="Nothing uploaded">
+            <EyeOff className="h-3.5 w-3.5" /><span className="hidden sm:inline">Nothing uploaded</span>
+          </span>
+        )}
+      </div>
     </div>
   )
 }
@@ -2149,8 +2167,10 @@ export default function StaffDetailPage() {
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base">Licensing</CardTitle></CardHeader>
             <CardContent className="space-y-1.5 px-3 pb-3">
-              <AcsCheckRow label="Valid SIA licence held"           done={acs.siaValid}       note="Must be in-date and active" />
-              <AcsCheckRow label="SIA licence type recorded"        done={acs.siaType}        note="Door Supervisor / Security Guard / CCTV / Close Protection" />
+              <AcsCheckRow label="Valid SIA licence held"           done={acs.siaValid}       note="Must be in-date and active"
+                viewUrl={docs.siaPhysical?.uploaded ? `/api/staff/${id}/documents/siaPhysical` : undefined} onGo={() => setTab("overview")} />
+              <AcsCheckRow label="SIA licence type recorded"        done={acs.siaType}        note="Door Supervisor / Security Guard / CCTV / Close Protection"
+                onGo={() => setTab("overview")} />
               <AcsCheckRow label="Physical SIA copy on file"        done={acs.siaPhysicalCopy} note="Scanned front and back of badge"
                 viewUrl={docs.siaPhysical?.uploaded ? `/api/staff/${id}/documents/siaPhysical` : undefined} />
             </CardContent>
@@ -2159,11 +2179,18 @@ export default function StaffDetailPage() {
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base">Identity &amp; Right to Work</CardTitle></CardHeader>
             <CardContent className="space-y-1.5 px-3 pb-3">
-              <AcsCheckRow label="Right to Work verified"           done={acs.rtwVerified}    note="Passport, BRP, or share code confirmed" />
+              <AcsCheckRow label="Right to Work verified"           done={acs.rtwVerified}    note="Passport, BRP, or share code confirmed"
+                views={[
+                  { label: "BRP / Share code", url: docs.brpCard?.uploaded ? `/api/staff/${id}/documents/brpCard` : undefined },
+                  { label: "Passport", url: docs.passport?.uploaded ? `/api/staff/${id}/documents/passport` : undefined },
+                ]} />
               <AcsCheckRow label="Passport copy on file"           done={acs.passportOnFile}  note="Required for BS 7858 identity check"
                 viewUrl={docs.passport?.uploaded ? `/api/staff/${id}/documents/passport` : undefined} />
               <AcsCheckRow label="Proof of address on file"        done={acs.addressProof}    note="Two documents within last 3 months"
-                viewUrl={docs.proofOfAddress1?.uploaded ? `/api/staff/${id}/documents/proofOfAddress1` : undefined} />
+                views={[
+                  { label: "Doc 1", url: docs.proofOfAddress1?.uploaded ? `/api/staff/${id}/documents/proofOfAddress1` : undefined },
+                  { label: "Doc 2", url: docs.proofOfAddress2?.uploaded ? `/api/staff/${id}/documents/proofOfAddress2` : undefined },
+                ]} />
             </CardContent>
           </Card>
 
@@ -2171,9 +2198,11 @@ export default function StaffDetailPage() {
             <CardHeader className="pb-2"><CardTitle className="text-base">Vetting (BS 7858)</CardTitle></CardHeader>
             <CardContent className="space-y-1.5 px-3 pb-3">
               <AcsCheckRow label="DBS check obtained"              done={acs.dbsChecked}      note="Enhanced DBS recommended for security roles"
-                viewUrl={docs.dbsCertificate?.uploaded ? `/api/staff/${id}/documents/dbsCertificate` : undefined} />
-              <AcsCheckRow label="BS 7858 screening complete"      done={acs.bs7858}          note="Full 5-year employment history + references verified" />
-              <AcsCheckRow label="Two satisfactory references"     done={acs.twoRefs}         note="Both references marked Satisfactory" />
+                viewUrl={docs.dbsCertificate?.uploaded ? `/api/staff/${id}/documents/dbsCertificate` : undefined} onGo={() => setTab("vetting")} />
+              <AcsCheckRow label="BS 7858 screening complete"      done={acs.bs7858}          note="Full 5-year employment history + references verified"
+                onGo={() => setTab("vetting")} />
+              <AcsCheckRow label="Two satisfactory references"     done={acs.twoRefs}         note="Both references marked Satisfactory"
+                onGo={() => setTab("vetting")} />
             </CardContent>
           </Card>
 
@@ -2194,7 +2223,8 @@ export default function StaffDetailPage() {
                 viewUrl={contractExists ? `/api/staff/${id}/contract` : undefined} />
               <AcsCheckRow label="Assignment instructions signed"   done={acs.assignmentInstr}  note="Site-specific — legally required by SIA"
                 viewUrl={docs.assignmentInstructions?.uploaded ? `/api/staff/${id}/documents/assignmentInstructions` : undefined} />
-              <AcsCheckRow label="Emergency contact recorded"       done={acs.emergencyContact} note="Name, phone, and relationship" />
+              <AcsCheckRow label="Emergency contact recorded"       done={acs.emergencyContact} note="Name, phone, and relationship"
+                onGo={() => setTab("overview")} />
             </CardContent>
           </Card>
         </motion.div>
