@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react"
+import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { discTypeLabels, discTypeCls } from "@/lib/utils"
 import { api, ApiError } from "@/lib/api"
@@ -75,7 +76,16 @@ export default function MyProfilePage() {
   const [photo, setPhoto] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
 
-  const [activeTab, setActiveTab] = useState<"overview"|"details"|"report"|"messages">("overview")
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [activeTab, setActiveTab] = useState<"overview"|"details"|"report"|"messages">(
+    searchParams.get("tab") === "messages" ? "messages" : "overview")
+  // Header "Messages" button navigates to /?tab=messages — jump straight there.
+  useEffect(() => {
+    if (searchParams.get("tab") === "messages") {
+      setActiveTab("messages")
+      setSearchParams({}, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
 
   // Disciplinary history (read-only for staff)
   const [discRecords, setDiscRecords] = useState<DiscRecord[]>([])
@@ -449,6 +459,19 @@ export default function MyProfilePage() {
         </div>
       )}
 
+      {/* ── Unread messages banner — impossible to miss ── */}
+      {unreadCount > 0 && activeTab !== "messages" && (
+        <button onClick={() => setActiveTab("messages")}
+          className="mb-4 flex w-full items-center gap-3 rounded-xl bg-primary px-4 py-3 text-left text-white shadow-[0_6px_20px_-4px_rgba(228,6,19,0.5)] transition-colors hover:bg-primary/90">
+          <MessageSquare className="h-5 w-5 shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold">You have {unreadCount} new message{unreadCount !== 1 ? "s" : ""} from your manager</p>
+            <p className="text-xs opacity-80">Tap to read and reply</p>
+          </div>
+          <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-primary">Open</span>
+        </button>
+      )}
+
       {/* ── Tab bar ── */}
       <div className="flex gap-1 border-b mb-6 overflow-x-auto">
         {TABS.map(t => (
@@ -460,7 +483,7 @@ export default function MyProfilePage() {
             }`}>
             <t.Icon className="h-3.5 w-3.5" />
             {t.label}
-            {t.id === "messages" && unreadCount > 0 && (
+            {t.id === "messages" && activeTab !== "messages" && unreadCount > 0 && (
               <span className="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[10px] font-bold text-white">{unreadCount}</span>
             )}
           </button>

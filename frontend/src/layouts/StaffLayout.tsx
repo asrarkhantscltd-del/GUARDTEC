@@ -3,8 +3,8 @@ import { OfflineBanner } from "@/components/OfflineBanner"
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 import { Button } from "@/components/ui/button"
-import { LogOut, Camera, Loader2, Sun, Moon, Bell, MessageSquare, BellRing, BellOff, KeyRound } from "lucide-react"
-import { useState, useEffect, useRef } from "react"
+import { LogOut, Camera, Loader2, Sun, Moon, MessageSquare, BellRing, BellOff, KeyRound } from "lucide-react"
+import { useState, useEffect } from "react"
 import { api } from "@/lib/api"
 import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
 import { toast } from "sonner"
@@ -17,8 +17,6 @@ export default function StaffLayout() {
   const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [unreadMsgs, setUnreadMsgs] = useState(0)
-  const [showMsgBell, setShowMsgBell] = useState(false)
-  const bellRef = useRef<HTMLDivElement>(null)
   // Push notifications — so a message from a manager still reaches this
   // staff member even with the app fully closed. `null` while the
   // existing-subscription check is in flight.
@@ -59,7 +57,7 @@ export default function StaffLayout() {
 
   useEffect(() => {
     function fetchUnread() {
-      api.get<{ ok: boolean; unread: number }>("/api/my-messages")
+      api.get<{ ok: boolean; unread: number }>("/api/my-messages?peek=1")
         .then(d => { if (d?.ok) setUnreadMsgs(d.unread ?? 0) })
         .catch(() => {})
     }
@@ -67,14 +65,6 @@ export default function StaffLayout() {
     const id = setInterval(fetchUnread, 30000)
     return () => clearInterval(id)
   }, [])
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (bellRef.current && !bellRef.current.contains(e.target as Node)) setShowMsgBell(false)
-    }
-    if (showMsgBell) document.addEventListener("mousedown", handleClick)
-    return () => document.removeEventListener("mousedown", handleClick)
-  }, [showMsgBell])
 
   async function handleMyPhotoUpload(file: File | null) {
     if (!file) return
@@ -112,44 +102,23 @@ export default function StaffLayout() {
         </div>
 
         <div className="ml-auto flex items-center gap-3">
-          {/* Bell — unread messages from manager */}
-          <div className="relative" ref={bellRef}>
-            <button
-              onClick={() => setShowMsgBell(prev => !prev)}
-              className="relative rounded-full p-2 text-sidebar-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground"
-              title="Messages"
-            >
-              <Bell className="h-4 w-4" />
-              {unreadMsgs > 0 && (
-                <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-white ring-2 ring-sidebar">
-                  {unreadMsgs > 9 ? "9+" : unreadMsgs}
-                </span>
-              )}
-            </button>
-
-            {showMsgBell && (
-              <div className="absolute right-0 top-11 z-50 w-72 rounded-2xl border border-sidebar-border bg-sidebar shadow-2xl overflow-hidden">
-                <div className="flex items-center justify-between border-b border-sidebar-border px-4 py-3">
-                  <p className="text-sm font-semibold">Messages</p>
-                </div>
-                <div className="p-3">
-                  {unreadMsgs > 0 ? (
-                    <div className="flex items-start gap-3 rounded-xl border border-blue-500/20 bg-blue-500/10 p-3">
-                      <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-blue-400" />
-                      <div>
-                        <p className="text-sm font-medium text-blue-400">
-                          {unreadMsgs} unread message{unreadMsgs !== 1 ? "s" : ""} from your manager
-                        </p>
-                        <p className="mt-0.5 text-xs opacity-60">Scroll down to Messages tab to read</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-center text-sm opacity-50 py-2">No new messages</p>
-                  )}
-                </div>
-              </div>
+          {/* Messages — labelled, highlighted button that opens the Messages tab directly */}
+          <button
+            onClick={() => { setUnreadMsgs(0); navigate("/?tab=messages") }}
+            title="Messages from your manager"
+            className={`relative inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+              unreadMsgs > 0
+                ? "bg-primary text-white shadow-[0_4px_14px_-2px_rgba(228,6,19,0.5)] hover:bg-primary/90"
+                : "border border-primary/40 bg-primary/15 text-primary hover:bg-primary/25"
+            }`}>
+            <MessageSquare className="h-4 w-4" />
+            <span className="hidden sm:inline">Messages</span>
+            {unreadMsgs > 0 && (
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1.5 text-[11px] font-bold text-primary">
+                {unreadMsgs > 9 ? "9+" : unreadMsgs}
+              </span>
             )}
-          </div>
+          </button>
 
           <div className="hidden text-right sm:block">
             <p className="text-sm font-medium leading-tight">{user?.full_name}</p>

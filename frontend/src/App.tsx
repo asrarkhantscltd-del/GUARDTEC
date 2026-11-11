@@ -25,6 +25,7 @@ import RecycleBinPage from "@/pages/RecycleBinPage"
 import PendingReviewPage from "@/pages/PendingReviewPage"
 import IncidentReportsPage from "@/pages/IncidentReportsPage"
 import MyProfilePage from "@/pages/MyProfilePage"
+import MessagesPage from "@/pages/MessagesPage"
 import AgenciesListPage from "@/pages/AgenciesListPage"
 import AgencyDetailPage from "@/pages/AgencyDetailPage"
 import AgenciesDashboardPage from "@/pages/AgenciesDashboardPage"
@@ -126,6 +127,7 @@ function AuthenticatedApp() {
         <Route path="custom-forms/:id/responses" element={<CustomFormResponsesPage />} />
         <Route path="purchase-orders" element={<PurchaseOrdersPage />} />
         <Route path="suppliers" element={<SuppliersPage />} />
+        <Route path="messages" element={<MessagesPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
