@@ -924,7 +924,12 @@ export default function StaffDetailPage() {
   const acs = {
     siaValid:          isOfficeExempt || !!(staff.sia?.number && (daysUntil(staff.sia.expiry) ?? 1) >= 0),
     siaType:           isOfficeExempt || !!(staff.sia?.type),
-    rtwVerified:       !!(staff.visa?.type || staff.nationality?.toLowerCase().includes("british")),
+    // RTW needs actual evidence on file, not just a typed visa type — otherwise
+    // deleting the BRP/share-code document left this checkpoint passing.
+    // British: passport (or other RTW evidence). Everyone else: visa type + BRP/share-code doc.
+    rtwVerified:       staff.nationality?.toLowerCase().includes("british")
+                         ? !!(docs.passport?.uploaded || docs.brpCard?.uploaded)
+                         : !!(staff.visa?.type && docs.brpCard?.uploaded),
     dbsChecked:        !!(staff.dbs?.checkDate),
     bs7858:            !!(staff.bs7858?.completed),
     twoRefs:           !!(staff.references?.ref1?.status === "Satisfactory" && staff.references?.ref2?.status === "Satisfactory"),
