@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label"
 import { StatusBadge } from "@/components/ui/status-badge"
 import {
   ArrowLeft, Phone, Mail, User, ShieldCheck, CreditCard, FileText,
-  Loader2, Upload, Eye, EyeOff, CheckCircle2, AlertCircle, Clock, FileQuestion,
+  Loader2, Upload, Eye, EyeOff, ShieldOff, CheckCircle2, AlertCircle, Clock, FileQuestion,
   Fingerprint, Building2, GraduationCap, ClipboardList, UserCheck,
   HeartPulse, Flame, Swords, HardHat, Camera, Briefcase, Car,
   MapPin, Contact, BadgeAlert, Pencil, Trash2, Plus, X as XIcon,
@@ -123,19 +123,28 @@ function DocRow({
 // Every ACS row carries an eye: uploaded files open in a new tab (one eye per
 // file, labelled when there are several); data-only checks jump to the tab
 // where that data lives; nothing on file shows a disabled eye.
-function AcsCheckRow({ label, done, note, viewUrl, views, onGo }: {
+function AcsCheckRow({ label, done, note, viewUrl, views, onGo, exempt }: {
   label: string; done?: boolean; note?: string; viewUrl?: string
   views?: { label: string; url?: string }[]; onGo?: () => void
+  // Office login roles skip guard checks — shown as a neutral "Exempt" row,
+  // never a green pass, so it can't be mistaken for evidence being on file.
+  exempt?: boolean
 }) {
   const files = (views ?? (viewUrl ? [{ label: "", url: viewUrl }] : [])).filter(v => v.url)
   const eyeCls = "inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-primary hover:bg-primary/10 transition-colors"
+  const rowCls = exempt ? "bg-muted/40" : done ? "bg-success/5" : "bg-destructive/5"
   return (
-    <div className={`flex items-start gap-3 rounded-md px-3 py-2.5 ${done ? "bg-success/5" : "bg-destructive/5"}`}>
-      {done
+    <div className={`flex items-start gap-3 rounded-md px-3 py-2.5 ${rowCls}`}>
+      {exempt
+        ? <ShieldOff className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+        : done
         ? <CheckCircle2 className="h-4 w-4 text-success mt-0.5 shrink-0" />
         : <AlertCircle  className="h-4 w-4 text-destructive mt-0.5 shrink-0" />}
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium">{label}</p>
+        <p className="text-sm font-medium">
+          {label}
+          {exempt && <span className="ml-2 rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Exempt — office role</span>}
+        </p>
         {note && <p className="text-xs text-muted-foreground">{note}</p>}
       </div>
       <div className="flex shrink-0 flex-wrap items-center justify-end gap-0.5">
@@ -951,7 +960,9 @@ export default function StaffDetailPage() {
     dbsChecked:        !!(staff.dbs?.checkDate),
     bs7858:            !!(staff.bs7858?.completed),
     twoRefs:           !!(staff.references?.ref1?.status === "Satisfactory" && staff.references?.ref2?.status === "Satisfactory"),
-    contractSigned:    !!(staff.contract && staff.contract.toLowerCase() !== "not signed"),
+    // Needs the signed contract FILE uploaded — the free-text "Signed" field
+    // alone isn't evidence (it passed with nothing on file).
+    contractSigned:    contractExists,
     // A staff member uploading their certificate (certUploaded) is real
     // evidence for audit purposes, same as a manager manually ticking
     // "completed" — checking `completed` alone meant an uploaded cert never
@@ -2167,11 +2178,11 @@ export default function StaffDetailPage() {
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base">Licensing</CardTitle></CardHeader>
             <CardContent className="space-y-1.5 px-3 pb-3">
-              <AcsCheckRow label="Valid SIA licence held"           done={acs.siaValid}       note="Must be in-date and active"
+              <AcsCheckRow label="Valid SIA licence held"           done={acs.siaValid}       note="Must be in-date and active" exempt={isOfficeExempt}
                 viewUrl={docs.siaPhysical?.uploaded ? `/api/staff/${id}/documents/siaPhysical` : undefined} onGo={() => setTab("overview")} />
-              <AcsCheckRow label="SIA licence type recorded"        done={acs.siaType}        note="Door Supervisor / Security Guard / CCTV / Close Protection"
+              <AcsCheckRow label="SIA licence type recorded"        done={acs.siaType}        note="Door Supervisor / Security Guard / CCTV / Close Protection" exempt={isOfficeExempt}
                 onGo={() => setTab("overview")} />
-              <AcsCheckRow label="Physical SIA copy on file"        done={acs.siaPhysicalCopy} note="Scanned front and back of badge"
+              <AcsCheckRow label="Physical SIA copy on file"        done={acs.siaPhysicalCopy} note="Scanned front and back of badge" exempt={isOfficeExempt}
                 viewUrl={docs.siaPhysical?.uploaded ? `/api/staff/${id}/documents/siaPhysical` : undefined} />
             </CardContent>
           </Card>
@@ -2209,9 +2220,9 @@ export default function StaffDetailPage() {
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base">Training &amp; Competency</CardTitle></CardHeader>
             <CardContent className="space-y-1.5 px-3 pb-3">
-              <AcsCheckRow label="First Aid certificate held"       done={acs.firstAid}       note="Emergency First Aid at Work — valid 3 years"
+              <AcsCheckRow label="First Aid certificate held"       done={acs.firstAid}       note="Emergency First Aid at Work — valid 3 years" exempt={isOfficeExempt}
                 viewUrl={training.firstAid?.certUploaded ? `/api/staff/${id}/training/firstAid/certificate` : undefined} />
-              <AcsCheckRow label="Conflict management trained"      done={acs.conflictMgmt}   note="Mandatory for Door Supervisors under SIA guidance"
+              <AcsCheckRow label="Conflict management trained"      done={acs.conflictMgmt}   note="Mandatory for Door Supervisors under SIA guidance" exempt={isOfficeExempt}
                 viewUrl={training.conflictManagement?.certUploaded ? `/api/staff/${id}/training/conflictManagement/certificate` : undefined} />
             </CardContent>
           </Card>
@@ -2219,7 +2230,8 @@ export default function StaffDetailPage() {
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base">Employment &amp; Operations</CardTitle></CardHeader>
             <CardContent className="space-y-1.5 px-3 pb-3">
-              <AcsCheckRow label="Employment contract signed"       done={acs.contractSigned}   note="Signed copy on file"
+              <AcsCheckRow label="Employment contract signed"       done={acs.contractSigned}
+                note={!contractExists && staff.contract?.toLowerCase() === "signed" ? "Marked “Signed” on profile, but no signed copy uploaded" : "Signed copy on file"}
                 viewUrl={contractExists ? `/api/staff/${id}/contract` : undefined} />
               <AcsCheckRow label="Assignment instructions signed"   done={acs.assignmentInstr}  note="Site-specific — legally required by SIA"
                 viewUrl={docs.assignmentInstructions?.uploaded ? `/api/staff/${id}/documents/assignmentInstructions` : undefined} />
