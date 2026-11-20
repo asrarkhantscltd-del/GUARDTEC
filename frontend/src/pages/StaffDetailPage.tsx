@@ -700,51 +700,57 @@ export default function StaffDetailPage() {
   async function saveVetting() {
     if (!editingVetting || !staff) return
     setVettingSaving(true)
-    if (editingVetting === "dbs") {
-      await patchField({
-        dbs: {
-          type:          (vettingDraft.type as string) || undefined,
-          checkDate:     (vettingDraft.checkDate as string) || undefined,
-          certificateNo: (vettingDraft.certificateNo as string) || undefined,
-        },
-      })
-    } else if (editingVetting === "bs7858") {
-      await patchField({
-        bs7858: {
-          completed:      vettingDraft.completed as boolean,
-          completionDate: (vettingDraft.completionDate as string) || undefined,
-          reviewer:       (vettingDraft.reviewer as string) || undefined,
-        },
-      })
-    } else if (editingVetting === "driver") {
-      await patchField({
-        driverAssignment: {
-          fuelCardNumber: (vettingDraft.fuelCardNumber as string) || undefined,
-          tachoCard:      (vettingDraft.tachoCard as string) || undefined,
-          tachoExpiry:    (vettingDraft.tachoExpiry as string) || undefined,
-          dbsNumber:      (vettingDraft.dbsNumber as string) || undefined,
-          dbsDate:        (vettingDraft.dbsDate as string) || undefined,
-          lastAssessment: (vettingDraft.lastAssessment as string) || undefined,
-          status:         (vettingDraft.status as "active" | "suspended" | "on_leave") || "active",
-          notes:          (vettingDraft.notes as string) || undefined,
-        },
-      })
-    } else {
-      await patchField({
-        references: {
-          ...staff.references,
-          [editingVetting]: {
-            name:    (vettingDraft.name as string) || undefined,
-            company: (vettingDraft.company as string) || undefined,
-            email:   (vettingDraft.email as string) || undefined,
-            phone:   (vettingDraft.phone as string) || undefined,
-            status:  (vettingDraft.status as string) || undefined,
+    try {
+      if (editingVetting === "dbs") {
+        await patchField({
+          dbs: {
+            type:          (vettingDraft.type as string) || undefined,
+            checkDate:     (vettingDraft.checkDate as string) || undefined,
+            certificateNo: (vettingDraft.certificateNo as string) || undefined,
           },
-        },
-      })
+        })
+      } else if (editingVetting === "bs7858") {
+        await patchField({
+          bs7858: {
+            completed:      vettingDraft.completed as boolean,
+            completionDate: (vettingDraft.completionDate as string) || undefined,
+            reviewer:       (vettingDraft.reviewer as string) || undefined,
+          },
+        })
+      } else if (editingVetting === "driver") {
+        await patchField({
+          driverAssignment: {
+            fuelCardNumber: (vettingDraft.fuelCardNumber as string) || undefined,
+            tachoCard:      (vettingDraft.tachoCard as string) || undefined,
+            tachoExpiry:    (vettingDraft.tachoExpiry as string) || undefined,
+            dbsNumber:      (vettingDraft.dbsNumber as string) || undefined,
+            dbsDate:        (vettingDraft.dbsDate as string) || undefined,
+            lastAssessment: (vettingDraft.lastAssessment as string) || undefined,
+            status:         (vettingDraft.status as "active" | "suspended" | "on_leave") || "active",
+            notes:          (vettingDraft.notes as string) || undefined,
+          },
+        })
+      } else {
+        await patchField({
+          references: {
+            ...staff.references,
+            [editingVetting]: {
+              name:    (vettingDraft.name as string) || undefined,
+              company: (vettingDraft.company as string) || undefined,
+              email:   (vettingDraft.email as string) || undefined,
+              phone:   (vettingDraft.phone as string) || undefined,
+              status:  (vettingDraft.status as string) || undefined,
+            },
+          },
+        })
+      }
+      setEditingVetting(null)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save — please try again")
+      await refreshStaffRecord().catch(() => {})
+    } finally {
+      setVettingSaving(false)
     }
-    setEditingVetting(null)
-    setVettingSaving(false)
   }
 
   async function loadDiscRecords() {
@@ -978,6 +984,64 @@ export default function StaffDetailPage() {
 
   const acsScore = Object.values(acs).filter(Boolean).length
   const acsTotal = Object.values(acs).length
+
+  // Upload / edit panel for a staff document — rendered in whichever tab
+  // opened it (Documents, or Vetting for the DBS certificate scan).
+  const docEditPanel = editingDocKey ? (
+      <div ref={docEditPanelRef} className="scroll-mt-20 rounded-lg border-2 border-primary/40 bg-muted/20 p-4 space-y-4">
+        <p className="text-sm font-semibold">Edit document record</p>
+
+        {/* ── File upload section ── */}
+        <div className="rounded-md border border-dashed border-border bg-background p-3 space-y-2">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Upload file</p>
+          <input ref={docFileInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png"
+            className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) uploadDocFile(f) }} />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => docFileInputRef.current?.click()}
+              disabled={uploadingDoc}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50">
+              <Upload className="h-3.5 w-3.5" />
+              {uploadingDoc ? "Uploading…" : "Choose file"}
+            </button>
+            <span className="text-xs text-muted-foreground truncate max-w-[180px]">
+              {docFileName || (docDraft.uploaded ? "File already uploaded" : "PDF, JPG, or PNG")}
+            </span>
+          </div>
+          {docDraft.uploaded && (
+            <a href={`/api/staff/${id}/documents/${editingDocKey}`} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+              <Eye className="h-3 w-3" />View current document
+            </a>
+          )}
+        </div>
+
+        {/* ── Manual mark as on file ── */}
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Or mark manually</p>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={docDraft.uploaded}
+              onChange={e => setDocDraft(p => ({ ...p, uploaded: e.target.checked }))}
+              className="rounded" />
+            Document is on file
+          </label>
+          <div>
+            <p className="text-xs text-muted-foreground mb-0.5">Date received / uploaded</p>
+            <input type="date" value={docDraft.date}
+              onChange={e => setDocDraft(p => ({ ...p, date: e.target.value }))}
+              className="rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
+          </div>
+        </div>
+
+        <div className="flex gap-2">
+          <Button size="sm" className="h-7 text-xs" onClick={saveDoc} disabled={docSaving}>
+            {docSaving ? "Saving…" : "Save"}
+          </Button>
+          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingDocKey(null)}>Cancel</Button>
+        </div>
+      </div>
+  ) : null
 
   return (
     <div className="space-y-4">
@@ -1226,62 +1290,7 @@ export default function StaffDetailPage() {
       {/* ════════ DOCUMENTS ════════ */}
       {tab === "documents" && (
         <motion.div key="documents" className="space-y-4" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}>
-          {/* Inline doc edit / upload form */}
-          {editingDocKey && (
-            <div ref={docEditPanelRef} className="scroll-mt-20 rounded-lg border-2 border-primary/40 bg-muted/20 p-4 space-y-4">
-              <p className="text-sm font-semibold">Edit document record</p>
-
-              {/* ── File upload section ── */}
-              <div className="rounded-md border border-dashed border-border bg-background p-3 space-y-2">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Upload file</p>
-                <input ref={docFileInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png"
-                  className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) uploadDocFile(f) }} />
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => docFileInputRef.current?.click()}
-                    disabled={uploadingDoc}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50">
-                    <Upload className="h-3.5 w-3.5" />
-                    {uploadingDoc ? "Uploading…" : "Choose file"}
-                  </button>
-                  <span className="text-xs text-muted-foreground truncate max-w-[180px]">
-                    {docFileName || (docDraft.uploaded ? "File already uploaded" : "PDF, JPG, or PNG")}
-                  </span>
-                </div>
-                {docDraft.uploaded && (
-                  <a href={`/api/staff/${id}/documents/${editingDocKey}`} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
-                    <Eye className="h-3 w-3" />View current document
-                  </a>
-                )}
-              </div>
-
-              {/* ── Manual mark as on file ── */}
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Or mark manually</p>
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="checkbox" checked={docDraft.uploaded}
-                    onChange={e => setDocDraft(p => ({ ...p, uploaded: e.target.checked }))}
-                    className="rounded" />
-                  Document is on file
-                </label>
-                <div>
-                  <p className="text-xs text-muted-foreground mb-0.5">Date received / uploaded</p>
-                  <input type="date" value={docDraft.date}
-                    onChange={e => setDocDraft(p => ({ ...p, date: e.target.value }))}
-                    className="rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <Button size="sm" className="h-7 text-xs" onClick={saveDoc} disabled={docSaving}>
-                  {docSaving ? "Saving…" : "Save"}
-                </Button>
-                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingDocKey(null)}>Cancel</Button>
-              </div>
-            </div>
-          )}
+          {docEditPanel}
 
           <Card>
             <CardHeader className="pb-2">
@@ -1623,6 +1632,13 @@ export default function StaffDetailPage() {
                       {vettingSaving ? "Saving…" : "Save"}
                     </Button>
                     <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingVetting(null)}>Cancel</Button>
+                    {(staff.dbs?.type || staff.dbs?.checkDate || staff.dbs?.certificateNo) && (
+                      <Button size="sm" variant="ghost" className="ml-auto h-7 text-xs text-destructive hover:text-destructive"
+                        onClick={() => setVettingDraft({ type: "", checkDate: "", certificateNo: "" })}
+                        title="Empties the fields — press Save to remove the DBS details">
+                        <Trash2 className="h-3.5 w-3.5 mr-1" />Clear details
+                      </Button>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -1651,6 +1667,7 @@ export default function StaffDetailPage() {
                   note="Optional — the certificate file itself, separate from the check details above"
                   viewUrl={docs.dbsCertificate?.uploaded ? `/api/staff/${id}/documents/dbsCertificate` : undefined}
                   onEdit={canEdit ? () => openDocEdit("dbsCertificate") : undefined} {...docDeleteProps("dbsCertificate")} />
+                {editingDocKey === "dbsCertificate" && <div className="mt-3">{docEditPanel}</div>}
               </div>
             </CardContent>
           </Card>
