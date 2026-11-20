@@ -9,6 +9,7 @@ import { api } from "@/lib/api"
 import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
 import { toast } from "sonner"
 import ChangePasswordModal from "@/components/ChangePasswordModal"
+import { initials } from "@/lib/utils"
 
 export default function StaffLayout() {
   const { user, logout } = useAuth()
@@ -128,7 +129,7 @@ export default function StaffLayout() {
             {myPhotoUrl
               ? <img src={myPhotoUrl} alt="Profile" className="h-8 w-8 rounded-full object-cover" />
               : <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-xs font-bold text-white">
-                  {user?.full_name?.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase()}
+                  {initials(user?.full_name ?? "")}
                 </div>}
             <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
               {uploadingPhoto ? <Loader2 className="h-3 w-3 text-white animate-spin" /> : <Camera className="h-3 w-3 text-white" />}

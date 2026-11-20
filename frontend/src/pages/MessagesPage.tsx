@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { MessageSquare, Search, Loader2, PenSquare, X, CornerUpLeft } from "lucide-react"
 import { api } from "@/lib/api"
+import { initials } from "@/lib/utils"
 
 interface Conversation {
   staffId: string
@@ -11,10 +12,6 @@ interface Conversation {
   lastAt: string
   lastFromStaff: boolean
   unread: number
-}
-
-function initials(name: string) {
-  return name.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase()
 }
 
 function when(iso: string) {

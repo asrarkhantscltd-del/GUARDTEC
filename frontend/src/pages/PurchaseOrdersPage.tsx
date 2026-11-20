@@ -11,6 +11,7 @@ import { fmtMoney, uploadFile, openBlobInNewTab, UPLOAD_ACCEPT } from "@/lib/pro
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { usePermissions } from "@/hooks/usePermissions"
 
 type PoStatus = "requested" | "approved" | "ordered" | "received" | "paid" | "rejected"
 
@@ -88,7 +89,8 @@ function blankDraft(name: string) {
 
 export default function PurchaseOrdersPage() {
   const { user } = useAuth()
-  const canApprove = user?.role === "director" || !!user?.permissions?.approve_purchase_orders
+  const { can } = usePermissions()
+  const canApprove = can("approve_purchase_orders")
   const isDirector = user?.role === "director"
 
   const [orders, setOrders] = useState<PurchaseOrder[]>([])

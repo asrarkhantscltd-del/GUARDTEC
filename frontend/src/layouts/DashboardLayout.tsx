@@ -5,7 +5,7 @@ import { toast } from "sonner"
 import { useAuth, type Permissions } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 import { Button } from "@/components/ui/button"
-import { downloadExport } from "@/lib/utils"
+import { downloadExport, initials } from "@/lib/utils"
 import { api } from "@/lib/api"
 import {
   LayoutDashboard, Users, Truck, ShieldCheck, LogOut,
@@ -19,7 +19,7 @@ import {
 import { useState, useEffect, useRef } from "react"
 import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
 import ChangePasswordModal from "@/components/ChangePasswordModal"
-// import AiChat from "@/components/AiChat" — see the note by its (commented-out) render call below
+import { usePermissions } from "@/hooks/usePermissions"
 
 interface NavItem {
   label: string
@@ -63,6 +63,7 @@ const navItems: NavItem[] = [
 
 export default function DashboardLayout() {
   const { user, logout } = useAuth()
+  const { can } = usePermissions()
   const { isDark, toggleTheme } = useTheme()
   const navigate = useNavigate()
   const location = useLocation()
@@ -144,7 +145,7 @@ export default function DashboardLayout() {
   // Unread staff messages — drives the highlighted Messages entry in the
   // sidebar and header so replies from staff are impossible to miss.
   const [msgUnread, setMsgUnread] = useState(0)
-  const canMessage = user?.role === "director" || !!user?.permissions?.staff
+  const canMessage = can("staff")
   useEffect(() => {
     if (!canMessage) return
     function fetchInbox() {
@@ -382,7 +383,7 @@ export default function DashboardLayout() {
               {myPhotoUrl
                 ? <img src={myPhotoUrl} alt="Profile" className="h-9 w-9 rounded-full object-cover" />
                 : <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-xs font-bold text-white shadow-[0_2px_8px_rgba(228,6,19,0.35)]">
-                    {user?.full_name?.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase()}
+                    {initials(user?.full_name ?? "")}
                   </div>}
               <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                 {uploadingPhoto ? <Loader2 className="h-3.5 w-3.5 text-white animate-spin" /> : <Camera className="h-3.5 w-3.5 text-white" />}
@@ -727,7 +728,7 @@ export default function DashboardLayout() {
                   {myPhotoUrl
                     ? <img src={myPhotoUrl} alt="Profile" className="h-7 w-7 object-cover" />
                     : <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-[10px] font-bold text-white shadow-sm">
-                        {user?.full_name?.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase()}
+                        {initials(user?.full_name ?? "")}
                       </div>}
                   {uploadingPhoto && (
                     <div className="absolute inset-0 rounded-full bg-black/60 flex items-center justify-center">
@@ -767,7 +768,7 @@ export default function DashboardLayout() {
                         {myPhotoUrl
                           ? <img src={myPhotoUrl} alt="Profile" className="h-12 w-12 object-cover" />
                           : <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-sm font-bold text-white shadow-md">
-                              {user?.full_name?.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase()}
+                              {initials(user?.full_name ?? "")}
                             </div>}
                         <div className="absolute inset-0 rounded-full bg-black/55 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                           {uploadingPhoto ? <Loader2 className="h-4 w-4 text-white animate-spin" /> : <Camera className="h-4 w-4 text-white" />}
@@ -915,12 +916,6 @@ export default function DashboardLayout() {
         onChange={e => handleMyPhotoUpload(e.target.files?.[0] ?? null)}
       />
 
-      {/* AI Compliance Assistant — floating chat widget, hidden 2026-08-20:
-          the n8n webhook it calls (/api/ai-chat -> N8N_AI_WEBHOOK) is
-          returning 404, so every question just failed. Pulled from view
-          rather than deleted — the plan is a rebuilt version answering
-          directly off Postgres (no n8n hop), not restoring this one as-is. */}
-      {/* <AiChat /> */}
     </div>
   )
 }

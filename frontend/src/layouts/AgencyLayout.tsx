@@ -9,6 +9,7 @@ import {
 } from "lucide-react"
 import { useState } from "react"
 import ChangePasswordModal from "@/components/ChangePasswordModal"
+import { initials } from "@/lib/utils"
 
 // Distinct, minimal shell for the 'agency' role — an external staffing
 // agency's own self-service portal. Deliberately NOT DashboardLayout with a
@@ -81,7 +82,7 @@ export default function AgencyLayout() {
         <div className="border-t border-sidebar-border p-3">
           <div className="mb-2 flex items-center gap-2.5 rounded-lg px-3 py-2.5 bg-sidebar-accent">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-xs font-bold text-white">
-              {user?.full_name?.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase()}
+              {initials(user?.full_name ?? "")}
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium leading-tight">{user?.full_name}</p>

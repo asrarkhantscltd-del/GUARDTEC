@@ -142,6 +142,8 @@ export interface StaffMember {
   // Login role of the linked user account (director/ops_manager/etc), if any
   // — office-based roles are exempt from SIA/CSCS/training compliance checks.
   linkedRole?: string | null
+  // Computed server-side from linkedRole (lib/complianceCalc.js is the one list).
+  officeExempt?: boolean
   email?: string
   phone?: string
   nationality?: string

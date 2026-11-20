@@ -4,7 +4,6 @@ import { toast } from "sonner"
 import {
   Plus, X, Loader2, Pencil, Link as LinkIcon, ListChecks, Eye, EyeOff, ClipboardList, Sparkles, Trash2, AlertTriangle,
 } from "lucide-react"
-import { useAuth } from "@/contexts/AuthContext"
 import { api, ApiError } from "@/lib/api"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -13,6 +12,7 @@ import { FormFieldEditor, type FormFieldDraft } from "@/components/customforms/F
 import { FormLinkGenerator } from "@/components/customforms/FormLinkGenerator"
 import { FormFieldsRenderer } from "@/components/customforms/FormFieldsRenderer"
 import type { CustomFormType, CustomFormLinkedEntityType } from "@/types/agency"
+import { usePermissions } from "@/hooks/usePermissions"
 
 // Real row shape from GET/POST/PATCH /api/custom-forms (server.js:4630-4718)
 // — a plain `SELECT *`/`RETURNING *` on custom_forms, snake_case throughout.
@@ -70,11 +70,11 @@ function blankDraft(): FormDraft {
 }
 
 export default function CustomFormsPage() {
-  const { user } = useAuth()
+  const { can } = usePermissions()
   // No dedicated permission key exists for Custom Forms yet (Permissions
   // type, contexts/AuthContext.tsx) — "compliance" is the closest existing
   // gate for a cross-cutting admin feature like this, mirrored on directors.
-  const canManage = user?.role === "director" || !!user?.permissions?.compliance
+  const canManage = can("compliance")
   const navigate = useNavigate()
 
   const [forms, setForms]     = useState<CustomForm[]>([])

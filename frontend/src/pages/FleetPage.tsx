@@ -3,7 +3,6 @@ import { AnimatePresence, motion } from "framer-motion"
 import { makeStagger } from "@/lib/motion"
 import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
-import { useAuth } from "@/contexts/AuthContext"
 import {
   Truck, AlertTriangle, CheckCircle2, Search, Plus, ArrowUpRight,
   Car, Trash2, X, Save, Loader2, Camera, ImageOff,
@@ -14,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { downloadExport, daysUntil, formatDate } from "@/lib/utils"
 import { api } from "@/lib/api"
 import { parseRoles } from "@/components/ui/role-picker"
+import { usePermissions } from "@/hooks/usePermissions"
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -118,8 +118,8 @@ const VEHICLE_STATUS_STYLE: Record<string, string> = {
 const fleetStagger = makeStagger(0.07, 0.4)
 
 export default function FleetPage() {
-  const { user: me } = useAuth()
-  const canDelete = me?.role === "director" || !!me?.permissions?.delete_fleet
+  const { can } = usePermissions()
+  const canDelete = can("delete_fleet")
   const [searchParams, setSearchParams] = useSearchParams()
   const tabParam = searchParams.get("tab") as "vehicles" | "operations" | null
   const activeTab: "vehicles" | "operations" = tabParam ?? "vehicles"
