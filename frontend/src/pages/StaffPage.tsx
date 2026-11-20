@@ -2,211 +2,28 @@ import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
-import { daysUntil, fmtDate, downloadExport, initials } from "@/lib/utils"
+import { daysUntil, downloadExport } from "@/lib/utils"
 import type { StaffMember } from "@/types/staff"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
 import {
-  Search, ChevronRight, Loader2, Pencil,
-  Table2, StretchHorizontal, MapPin, Clock,
-  CircleCheck, ShieldCheck, HardHat, FileCheck, Building2, Plus, X,
-  BarChart3, FileWarning, UserX, RotateCcw, Archive, Briefcase, Trash2, Download,
+  Search, ChevronRight, Loader2, MapPin, Clock, CircleCheck, ShieldCheck, HardHat, FileCheck,
+  Building2, Plus, X, UserX, Briefcase, Download,
 } from "lucide-react"
 import { StatusBadge } from "@/components/ui/status-badge"
-import { makeStagger } from "@/lib/motion"
-import { api, ApiError } from "@/lib/api"
+import { api } from "@/lib/api"
 import { runBulk, reportBulk } from "@/lib/bulk"
-import { RoleChipPicker, parseRoles } from "@/components/ui/role-picker"
+import { parseRoles } from "@/components/ui/role-picker"
 import { usePermissions } from "@/hooks/usePermissions"
+import {
+  stagger, type Site, type ViewMode, type SortKey, normDeploy, docStatus, ExpiryCell, DocChip,
+  InitialsAvatar, RowActions, DeploySelect, viewButtons, type SectionId, SECTIONS,
+} from "./staff-list/shared"
+import { useExStaff } from "./staff-list/useExStaff"
+import ExStaffPanel from "./staff-list/ExStaffPanel"
+import { useAddStaff } from "./staff-list/useAddStaff"
+import AddStaffPanel from "./staff-list/AddStaffPanel"
 
-const stagger = makeStagger(0.05, 0.35)
-
-interface Site {
-  id: string
-  name: string
-  address?: string
-}
-
-interface ExStaffMember {
-  folderId: string
-  name: string
-  nationality?: string
-  gender?: string
-  overall: string
-}
-
-type ViewMode = "details" | "tiles"
-type SortKey = "name" | "sia" | "cscs" | "rtw"
-
-interface SameNameConflict {
-  error: string
-  existing: { id: string; name: string; phone: string | null; email: string | null; nationality: string | null; jobRole: string | null } | null
-}
-
-function normDeploy(raw?: string): "onsite" | "available" | "offduty" | "unknown" {
-  const v = (raw ?? "").toLowerCase().replace(/[\s_-]/g, "")
-  if (v.includes("onsite") || v.includes("site") || v.includes("deployed")) return "onsite"
-  if (v.includes("available") || v.includes("standby")) return "available"
-  if (v.includes("off") || v.includes("leave") || v.includes("rest") || v.includes("inactive")) return "offduty"
-  return "unknown"
-}
-
-function docStatus(iso?: string): "missing" | "expired" | "expiring" | "ok" {
-  if (!iso) return "missing"
-  const d = daysUntil(iso)
-  if (d === null) return "missing"
-  if (d < 0)  return "expired"
-  if (d < 91) return "expiring"
-  return "ok"
-}
-
-function ExpiryCell({ date }: { date?: string }) {
-  const days = daysUntil(date)
-  if (!date) return <span className="text-muted-foreground text-sm">—</span>
-  const colour =
-    days === null ? "text-muted-foreground"
-    : days < 0   ? "text-destructive font-medium"
-    : days < 91  ? "text-warning font-medium"
-    : "text-foreground"
-  return <span className={`text-sm ${colour}`}>{fmtDate(date)}</span>
-}
-
-function DocChip({ label, date }: { label: string; date?: string }) {
-  const st = docStatus(date)
-  const cfg = {
-    missing:  "bg-muted text-muted-foreground",
-    expired:  "bg-destructive/15 text-destructive border border-destructive/30",
-    expiring: "bg-warning/15 text-warning border border-warning/30",
-    ok:       "bg-success/15 text-success border border-success/30",
-  } as const
-  const suffix = st === "expired" ? " ✕" : st === "expiring" ? " !" : st === "ok" ? " ✓" : " —"
-  return <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${cfg[st]}`}>{label}{suffix}</span>
-}
-
-function InitialsAvatar({ name, status, size = "md" }: { name: string; status: string; size?: "sm" | "md" | "lg" }) {
-  const avatarText = initials(name)
-  const bg: Record<string, string> = {
-    green:   "bg-success/20 text-success border border-success/30",
-    amber:   "bg-warning/20 text-warning border border-warning/30",
-    red:     "bg-destructive/20 text-destructive border border-destructive/30",
-    unknown: "bg-muted text-muted-foreground border border-border",
-  }
-  const sz = size === "lg" ? "h-16 w-16 text-xl" : size === "sm" ? "h-8 w-8 text-xs" : "h-11 w-11 text-sm"
-  return (
-    <div className={`rounded-full flex items-center justify-center font-semibold shrink-0 ${sz} ${bg[status] ?? bg.unknown}`}>
-      {avatarText}
-    </div>
-  )
-}
-
-// Quick edit/delete actions for an Overview row — stopPropagation so they don't trigger the row's own onClick
-function RowActions({
-  canEdit, canDelete, confirming, deleting, onEdit, onDeleteClick, onConfirmDelete, onCancelDelete,
-}: {
-  canEdit: boolean; canDelete: boolean; confirming: boolean; deleting: boolean
-  onEdit: () => void; onDeleteClick: () => void; onConfirmDelete: () => void; onCancelDelete: () => void
-}) {
-  if (!canEdit && !canDelete) return null
-  if (confirming) {
-    return (
-      <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-        <button onClick={onConfirmDelete} disabled={deleting}
-          className="flex items-center gap-1 rounded-md bg-destructive px-2 py-1 text-[10px] font-medium text-white transition-colors hover:bg-destructive/90 disabled:opacity-50">
-          {deleting ? <Loader2 className="h-3 w-3 animate-spin" /> : "Confirm"}
-        </button>
-        <button onClick={onCancelDelete}
-          className="rounded-md border px-2 py-1 text-[10px] transition-colors hover:bg-muted">
-          Cancel
-        </button>
-      </div>
-    )
-  }
-  return (
-    <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-      {canEdit && (
-        <button onClick={onEdit} title="Quick edit"
-          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
-          <Pencil className="h-3.5 w-3.5" />
-        </button>
-      )}
-      {canDelete && (
-        <button onClick={onDeleteClick} title="Move to Ex-Staff"
-          className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive">
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
-      )}
-    </div>
-  )
-}
-
-// Combined deployment status + site selector (editable inline, local state for instant feedback)
-function DeploySelect({
-  staffId, deployStatus, currentSite, sites, onUpdate,
-}: {
-  staffId: string; deployStatus?: string; currentSite?: string; sites: Site[]
-  onUpdate: (id: string, status: string, site?: string) => void
-}) {
-  const [localStatus, setLocalStatus] = useState(() => {
-    const n = normDeploy(deployStatus); return n === "unknown" ? "" : n
-  })
-  useEffect(() => {
-    const n = normDeploy(deployStatus); setLocalStatus(n === "unknown" ? "" : n)
-  }, [deployStatus])
-
-  const statusCls: Record<string, string> = {
-    onsite:    "border-success/40 bg-success/5 text-success",
-    available: "border-warning/40 bg-warning/5 text-warning",
-    offduty:   "border-destructive/40 bg-destructive/5 text-destructive",
-    "":        "border-border bg-background text-muted-foreground",
-  }
-
-  function handleStatusChange(val: string) {
-    setLocalStatus(val)
-    if (val !== "onsite") onUpdate(staffId, val || "unknown")
-    // if onsite: wait for site selection before calling onUpdate
-  }
-
-  return (
-    <div className="flex items-center gap-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
-      <select
-        value={localStatus}
-        onChange={(e) => handleStatusChange(e.target.value)}
-        className={`rounded border text-xs px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring ${statusCls[localStatus] ?? statusCls[""]}`}
-      >
-        <option value="">— Status —</option>
-        <option value="onsite">Onsite</option>
-        <option value="available">Available</option>
-        <option value="offduty">Off Duty</option>
-      </select>
-      {localStatus === "onsite" && (
-        <select
-          value={currentSite ?? ""}
-          onChange={(e) => onUpdate(staffId, "onsite", e.target.value)}
-          className="rounded border border-success/30 bg-success/5 text-success text-xs px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring max-w-[150px]"
-        >
-          <option value="">— Location —</option>
-          {sites.map((s) => (
-            <option key={s.id} value={s.id}>{s.name}</option>
-          ))}
-        </select>
-      )}
-    </div>
-  )
-}
-
-const viewButtons: { mode: ViewMode; icon: React.ReactNode; label: string }[] = [
-  { mode: "details", icon: <Table2 className="h-4 w-4" />,           label: "Table" },
-  { mode: "tiles",   icon: <StretchHorizontal className="h-4 w-4" />, label: "Cards" },
-]
-
-type SectionId = "compliance" | "deployment" | "documents"
-
-const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode }[] = [
-  { id: "compliance", label: "Compliance Status", icon: <BarChart3 className="h-3.5 w-3.5" /> },
-  { id: "deployment", label: "Deployment",         icon: <MapPin className="h-3.5 w-3.5" /> },
-  { id: "documents",  label: "Document Issues",    icon: <FileWarning className="h-3.5 w-3.5" /> },
-]
 
 export default function StaffPage() {
   const [staff, setStaff]     = useState<StaffMember[]>([])
@@ -225,23 +42,8 @@ export default function StaffPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  // Ex-Staff panel
-  const [exPanel, setExPanel]         = useState(false)
-  const [exStaff, setExStaff]         = useState<ExStaffMember[]>([])
-  const [exLoading, setExLoading]     = useState(false)
-  const [restoringId, setRestoringId] = useState<string | null>(null)
-  const [exError, setExError]         = useState("")
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  const [confirmDeleteText, setConfirmDeleteText] = useState("")
-  const [permDeleting, setPermDeleting]       = useState(false)
-
-  // Ex-Staff search
-  const [exSearch, setExSearch] = useState("")
-
-  // Ex-Staff multi-select
-  const [exSelectedIds, setExSelectedIds]   = useState<Set<string>>(new Set())
-  const [exBulkConfirm, setExBulkConfirm]   = useState<"restore" | "delete" | null>(null)
-  const [exBulkWorking, setExBulkWorking]   = useState(false)
+  const exStaffPanel = useExStaff({ reloadStaff })
+  const { openExStaff } = exStaffPanel
 
   async function reloadStaff() {
     try {
@@ -250,41 +52,6 @@ export default function StaffPage() {
     } catch {}
   }
 
-  function toggleExSelect(id: string) {
-    setExSelectedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id); else next.add(id)
-      return next
-    })
-  }
-
-  function toggleExSelectAll() {
-    const allSelected = exStaff.length > 0 && exStaff.every(e => exSelectedIds.has(e.folderId))
-    setExSelectedIds(allSelected ? new Set() : new Set(exStaff.map(e => e.folderId)))
-  }
-
-  async function bulkRestoreEx() {
-    setExBulkWorking(true)
-    const result = await runBulk([...exSelectedIds], (folderId) =>
-      api.post("/api/exstaff/restore", { folderId }).then(() => undefined)
-    )
-    const done = new Set(result.succeeded)
-    setExStaff(prev => prev.filter(e => !done.has(e.folderId)))
-    if (result.succeeded.length > 0) await reloadStaff()
-    setExBulkWorking(false); setExBulkConfirm(null); setExSelectedIds(new Set())
-    reportBulk(result, "restored")
-  }
-
-  async function bulkDeleteEx() {
-    setExBulkWorking(true)
-    const result = await runBulk([...exSelectedIds], (folderId) =>
-      api.delete("/api/exstaff/permanent", { folderId }).then(() => undefined)
-    )
-    const done = new Set(result.succeeded)
-    setExStaff(prev => prev.filter(e => !done.has(e.folderId)))
-    setExBulkWorking(false); setExBulkConfirm(null); setExSelectedIds(new Set())
-    reportBulk(result, "permanently deleted", "record")
-  }
 
   // Quick edit/delete from the Overview rows
   const { can } = usePermissions()
@@ -311,16 +78,8 @@ export default function StaffPage() {
     }
   }
 
-  // Add Staff panel
-  const [addPanel, setAddPanel]   = useState(false)
-  const [addForm, setAddForm]     = useState({ name: "", jobRole: "", email: "", phone: "", nationality: "" })
-  const [addSaving, setAddSaving] = useState(false)
-  const [addError, setAddError]   = useState("")
-  // Set when the backend finds an active profile with the exact same name —
-  // two different people CAN genuinely share a name, so this isn't a hard
-  // block: it shows a side-by-side comparison and lets the admin either open
-  // the existing profile (the usual case) or confirm it's someone else.
-  const [sameNameConflict, setSameNameConflict] = useState<SameNameConflict | null>(null)
+  const addStaff = useAddStaff({ reloadStaff })
+  const { openAddStaff } = addStaff
 
   // Row selection for Excel export + bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -351,83 +110,7 @@ export default function StaffPage() {
       .catch(() => {})
   }, [])
 
-  async function openExStaff() {
-    setExPanel(true); setExLoading(true); setExError(""); setExSearch("")
-    try {
-      const d = await api.get<ExStaffMember[]>("/api/exstaff")
-      setExStaff(Array.isArray(d) ? d : [])
-    } catch {
-      setExError("Failed to load ex-staff.")
-    } finally {
-      setExLoading(false)
-    }
-  }
 
-  async function permanentDelete(folderId: string, confirmPhrase: string) {
-    setPermDeleting(true); setExError("")
-    try {
-      await api.delete("/api/exstaff/permanent", { folderId, confirmPhrase })
-      setExStaff(prev => prev.filter(e => e.folderId !== folderId))
-      setConfirmDeleteId(null); setConfirmDeleteText("")
-    } catch (err) {
-      // Surfaces the server's actual reason — e.g. the 7-year retention
-      // block, or "type the name exactly" — instead of a generic message.
-      setExError(err instanceof ApiError ? err.message : "Network error.")
-    } finally {
-      setPermDeleting(false)
-    }
-  }
-
-  async function restoreExStaff(folderId: string) {
-    setRestoringId(folderId); setExError("")
-    try {
-      await api.post("/api/exstaff/restore", { folderId })
-      setExStaff((prev) => prev.filter((e) => e.folderId !== folderId))
-      await reloadStaff()
-    } catch {
-      setExError("Network error.")
-    } finally {
-      setRestoringId(null)
-    }
-  }
-
-  function openAddStaff() {
-    setAddForm({ name: "", jobRole: "", email: "", phone: "", nationality: "" })
-    setAddError("")
-    setSameNameConflict(null)
-    setAddPanel(true)
-  }
-
-  async function handleAddStaff(confirmDifferentPerson = false) {
-    if (!addForm.name.trim()) { setAddError("Full name is required."); return }
-    setAddSaving(true); setAddError("")
-    try {
-      await api.post("/api/staff", {
-        name:        addForm.name.trim(),
-        jobRole:     addForm.jobRole || undefined,
-        email:       addForm.email.trim() || undefined,
-        phone:       addForm.phone.trim() || undefined,
-        nationality: addForm.nationality.trim() || undefined,
-        overall:     "unknown",
-        confirmDifferentPerson: confirmDifferentPerson || undefined,
-      })
-      await reloadStaff()
-      setAddPanel(false)
-      setSameNameConflict(null)
-      toast.success("Staff member added successfully")
-    } catch (err) {
-      const data = err instanceof ApiError
-        ? (err.data as { sameNameConflict?: boolean; error?: string; existing?: SameNameConflict["existing"] } | undefined)
-        : undefined
-      if (err instanceof ApiError && err.status === 409 && data?.sameNameConflict) {
-        setSameNameConflict({ error: data.error ?? err.message, existing: data.existing ?? null })
-      } else {
-        setAddError(err instanceof ApiError ? err.message : "Network error.")
-      }
-    } finally {
-      setAddSaving(false)
-    }
-  }
 
   async function updateDeploy(staffId: string, deployStatus: string, currentSite?: string) {
     try {
@@ -497,19 +180,16 @@ export default function StaffPage() {
     green:   staff.filter((s) => s.overall === "green").length,
     amber:   staff.filter((s) => s.overall === "amber").length,
     red:     staff.filter((s) => s.overall === "red").length,
-    unknown: staff.filter((s) => s.overall === "unknown").length,
-  }
+    unknown: staff.filter((s) => s.overall === "unknown").length }
   const deployCounts = {
     all:       staff.length,
     onsite:    staff.filter((s) => normDeploy(s.deployStatus) === "onsite").length,
     available: staff.filter((s) => normDeploy(s.deployStatus) === "available").length,
-    offduty:   staff.filter((s) => normDeploy(s.deployStatus) === "offduty").length,
-  }
+    offduty:   staff.filter((s) => normDeploy(s.deployStatus) === "offduty").length }
   const docCounts = {
     sia:  staff.filter((s) => docStatus(s.sia?.expiry) !== "ok").length,
     cscs: staff.filter((s) => docStatus(s.cscs?.expiry) !== "ok").length,
-    rtw:  staff.filter((s) => docStatus(s.visa?.expiry) !== "ok").length,
-  }
+    rtw:  staff.filter((s) => docStatus(s.visa?.expiry) !== "ok").length }
   function siteCount(id: string) {
     return staff.filter((s) => s.currentSite === id).length
   }
@@ -600,15 +280,13 @@ export default function StaffPage() {
           <div className="flex flex-wrap gap-2">
             {(["all", "green", "amber", "red", "unknown"] as const).map((f) => {
               const labels: Record<string, string> = {
-                all: "All", green: "Compliant", amber: "Action Needed", red: "Expired", unknown: "Incomplete",
-              }
+                all: "All", green: "Compliant", amber: "Action Needed", red: "Expired", unknown: "Incomplete" }
               const colours: Record<string, string> = {
                 all:     "bg-secondary text-secondary-foreground",
                 green:   "bg-success/15 text-success border border-success/30",
                 amber:   "bg-warning/15 text-warning border border-warning/30",
                 red:     "bg-destructive/15 text-destructive border border-destructive/30",
-                unknown: "bg-muted text-muted-foreground",
-              }
+                unknown: "bg-muted text-muted-foreground" }
               return (
                 <button key={f} onClick={() => setCompFilter(f)}
                   className={`rounded-full px-3 py-1 text-xs font-medium transition-opacity ${colours[f]} ${
@@ -633,8 +311,7 @@ export default function StaffPage() {
                   all:       { label: "All",       cls: "bg-secondary text-secondary-foreground",                       icon: null },
                   onsite:    { label: "Onsite",    cls: "bg-success/15 text-success border border-success/30",         icon: <MapPin className="h-3 w-3" /> },
                   available: { label: "Available", cls: "bg-warning/15 text-warning border border-warning/30",         icon: <CircleCheck className="h-3 w-3" /> },
-                  offduty:   { label: "Off Duty",  cls: "bg-destructive/15 text-destructive border border-destructive/30", icon: <Clock className="h-3 w-3" /> },
-                } as const
+                  offduty:   { label: "Off Duty",  cls: "bg-destructive/15 text-destructive border border-destructive/30", icon: <Clock className="h-3 w-3" /> } } as const
                 const { label, cls, icon } = cfg[f]
                 return (
                   <button key={f} onClick={() => setDeployFilter(f)}
@@ -959,344 +636,9 @@ export default function StaffPage() {
         )
       )}
 
-      {/* ── Add Staff panel ── */}
-      {addPanel && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-background">
-          <div className="flex items-center justify-between border-b px-6 py-4">
-            <div>
-              <h2 className="text-lg font-semibold">{sameNameConflict ? "Same name already on file" : "Add new staff member"}</h2>
-              <p className="text-xs text-muted-foreground">
-                {sameNameConflict ? "Confirm whether this is the same person or someone else" : "Basic details — full compliance data is added from their profile page"}
-              </p>
-            </div>
-            <button onClick={() => { setAddPanel(false); setSameNameConflict(null) }} className="rounded-md p-1.5 hover:bg-muted transition-colors">
-              <X className="h-5 w-5" />
-            </button>
-          </div>
+      <AddStaffPanel addStaff={addStaff} navigate={navigate} />
 
-          {sameNameConflict ? (
-            <>
-              <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-6 py-5 space-y-4">
-                <p className="rounded-lg bg-warning/10 px-3 py-2 text-sm text-warning">{sameNameConflict.error}</p>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1 rounded-lg border p-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Existing profile</p>
-                    <p className="text-sm font-medium">{sameNameConflict.existing?.name ?? addForm.name}</p>
-                    <p className="text-xs text-muted-foreground">{sameNameConflict.existing?.jobRole || "No role set"}</p>
-                    <p className="text-xs text-muted-foreground">{sameNameConflict.existing?.email || "No email on file"}</p>
-                    <p className="text-xs text-muted-foreground">{sameNameConflict.existing?.phone || "No phone on file"}</p>
-                    <p className="text-xs text-muted-foreground">{sameNameConflict.existing?.nationality || "No nationality on file"}</p>
-                  </div>
-                  <div className="space-y-1 rounded-lg border border-primary/30 p-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">What you just entered</p>
-                    <p className="text-sm font-medium">{addForm.name}</p>
-                    <p className="text-xs text-muted-foreground">{addForm.jobRole || "No role set"}</p>
-                    <p className="text-xs text-muted-foreground">{addForm.email || "No email"}</p>
-                    <p className="text-xs text-muted-foreground">{addForm.phone || "No phone"}</p>
-                    <p className="text-xs text-muted-foreground">{addForm.nationality || "No nationality"}</p>
-                  </div>
-                </div>
-
-                <p className="text-xs text-muted-foreground">
-                  If the email or phone above are different, this is very likely a different person who just happens to share a name — not the person you already have on file.
-                </p>
-              </div>
-
-              <div className="mx-auto flex w-full max-w-2xl flex-col gap-2 border-t px-6 py-4">
-                <div className="flex gap-2">
-                  <Button variant="outline" className="flex-1" onClick={() => setSameNameConflict(null)}>
-                    Back
-                  </Button>
-                  {sameNameConflict.existing && (
-                    <Button variant="outline" className="flex-1" onClick={() => {
-                      const id = sameNameConflict.existing!.id
-                      setAddPanel(false); setSameNameConflict(null)
-                      navigate(`/staff/${id}`)
-                    }}>
-                      Open existing profile
-                    </Button>
-                  )}
-                </div>
-                <Button className="w-full gap-2" onClick={() => handleAddStaff(true)} disabled={addSaving}>
-                  {addSaving ? <><Loader2 className="h-4 w-4 animate-spin" />Creating…</> : "Yes — different person, create anyway"}
-                </Button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-6 py-5 space-y-4">
-                  {addError && (
-                    <p className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{addError}</p>
-                  )}
-
-                  <div className="space-y-1.5">
-                    <Label>Full name *</Label>
-                    <Input
-                      value={addForm.name}
-                      onChange={(e) => setAddForm((p) => ({ ...p, name: e.target.value }))}
-                      placeholder="e.g. James Okafor"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label className="flex items-center gap-1.5">
-                      <Briefcase className="h-3.5 w-3.5 text-muted-foreground" />
-                      Job role
-                    </Label>
-                    <RoleChipPicker
-                      value={addForm.jobRole}
-                      onChange={v => setAddForm(p => ({ ...p, jobRole: v }))}
-                    />
-                    {addForm.jobRole && (
-                      <p className="text-[11px] text-muted-foreground">
-                        Selected: <span className="font-medium text-foreground">{addForm.jobRole}</span>
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label>Email</Label>
-                      <Input
-                        type="email"
-                        value={addForm.email}
-                        onChange={(e) => setAddForm((p) => ({ ...p, email: e.target.value }))}
-                        placeholder="email@example.com"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Phone</Label>
-                      <Input
-                        type="tel"
-                        value={addForm.phone}
-                        onChange={(e) => setAddForm((p) => ({ ...p, phone: e.target.value }))}
-                        placeholder="+44 7700 000000"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label>Nationality</Label>
-                    <Input
-                      value={addForm.nationality}
-                      onChange={(e) => setAddForm((p) => ({ ...p, nationality: e.target.value }))}
-                      placeholder="e.g. British"
-                    />
-                  </div>
-
-                  <p className="rounded-lg bg-muted/50 px-3 py-2.5 text-xs text-muted-foreground">
-                    SIA licence, CSCS, Right to Work, documents and training are added from the staff member's profile page after creation.
-                  </p>
-              </div>
-
-              <div className="mx-auto flex w-full max-w-2xl gap-2 border-t px-6 py-4">
-                <Button variant="outline" className="flex-1" onClick={() => setAddPanel(false)}>
-                  Cancel
-                </Button>
-                <Button className="flex-1" onClick={() => handleAddStaff()} disabled={addSaving}>
-                  {addSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Adding…</> : "Add staff member"}
-                </Button>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* ── Ex-Staff panel ── */}
-      {exPanel && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-background">
-          <div className="border-b px-6 py-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="flex items-center gap-2 text-lg font-semibold">
-                  <Archive className="h-4 w-4 text-muted-foreground" />Ex-Staff
-                  {!exLoading && exStaff.length > 0 && (
-                    <span className="ml-1 inline-flex items-center justify-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                      {exStaff.length}
-                    </span>
-                  )}
-                </h2>
-                <p className="text-xs text-muted-foreground">Restore a returning employee back to Active Staff</p>
-              </div>
-              <button onClick={() => setExPanel(false)} className="rounded-md p-1.5 hover:bg-muted transition-colors">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            {!exLoading && exStaff.length > 0 && (
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={exSearch}
-                  onChange={e => setExSearch(e.target.value)}
-                  placeholder="Search ex-staff by name…"
-                  className="h-9 pl-9 text-sm"
-                />
-              </div>
-            )}
-          </div>
-
-          <div className="mx-auto w-full max-w-2xl flex-1 overflow-y-auto px-6 py-5">
-              {exError && (
-                <p className="mb-4 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">{exError}</p>
-              )}
-
-              {exLoading ? (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" /><span className="text-sm">Loading ex-staff…</span>
-                </div>
-              ) : exStaff.length === 0 ? (
-                /* empty state — no ex-staff at all */
-                <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed py-16 text-center">
-                  <UserX className="mb-4 h-12 w-12 text-muted-foreground/25" />
-                  <h3 className="font-semibold text-muted-foreground">No ex-staff found</h3>
-                  <p className="mt-1 max-w-xs text-sm text-muted-foreground/70">
-                    Staff moved out of Active Staff will appear here — nothing is ever permanently deleted.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  {/* Select-all + bulk action bar */}
-                  <div className="mb-3 flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={exStaff.length > 0 && exStaff.every(e => exSelectedIds.has(e.folderId))}
-                      onChange={toggleExSelectAll}
-                      className="h-4 w-4 rounded border-border"
-                    />
-                    <span className="text-xs text-muted-foreground">
-                      {exSelectedIds.size > 0 ? `${exSelectedIds.size} selected` : "Select all"}
-                    </span>
-                  </div>
-
-                  {/* Bulk action bar */}
-                  {exSelectedIds.size > 0 && (
-                    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2">
-                      {exBulkConfirm === null ? (
-                        <>
-                          <span className="text-xs font-medium text-primary mr-1">{exSelectedIds.size} selected</span>
-                          <button
-                            onClick={() => setExBulkConfirm("restore")}
-                            className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors"
-                          >
-                            <RotateCcw className="h-3.5 w-3.5" /> Restore Selected
-                          </button>
-                          <button
-                            onClick={() => setExBulkConfirm("delete")}
-                            className="flex items-center gap-1.5 rounded-md bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/20 transition-colors"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" /> Delete Selected
-                          </button>
-                          <button
-                            onClick={() => setExSelectedIds(new Set())}
-                            className="ml-auto flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                          >
-                            <X className="h-3.5 w-3.5" /> Clear
-                          </button>
-                        </>
-                      ) : exBulkConfirm === "restore" ? (
-                        <>
-                          <span className="text-xs font-medium text-primary">
-                            Restore {exSelectedIds.size} staff member{exSelectedIds.size > 1 ? "s" : ""} to Active?
-                          </span>
-                          <button
-                            onClick={bulkRestoreEx}
-                            disabled={exBulkWorking}
-                            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary/90 disabled:opacity-50 transition-colors"
-                          >
-                            {exBulkWorking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-                            {exBulkWorking ? "Restoring…" : "Yes, restore all"}
-                          </button>
-                          <button onClick={() => setExBulkConfirm(null)} className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted transition-colors">Cancel</button>
-                        </>
-                      ) : (
-                        <>
-                          <span className="text-xs font-medium text-destructive">
-                            Permanently delete {exSelectedIds.size} record{exSelectedIds.size > 1 ? "s" : ""}? Cannot be undone.
-                          </span>
-                          <button
-                            onClick={bulkDeleteEx}
-                            disabled={exBulkWorking}
-                            className="flex items-center gap-1.5 rounded-md bg-destructive px-3 py-1.5 text-xs font-semibold text-white hover:bg-destructive/90 disabled:opacity-50 transition-colors"
-                          >
-                            {exBulkWorking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                            {exBulkWorking ? "Deleting…" : "Yes, delete all"}
-                          </button>
-                          <button onClick={() => setExBulkConfirm(null)} className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted transition-colors">Cancel</button>
-                        </>
-                      )}
-                    </div>
-                  )}
-
-                  {exSearch.trim() && exStaff.filter(e => e.name.toLowerCase().includes(exSearch.toLowerCase().trim())).length === 0 ? (
-                    <p className="py-8 text-center text-sm text-muted-foreground">
-                      No ex-staff matching "{exSearch.trim()}"
-                    </p>
-                  ) : (
-                  <div className="space-y-2">
-                    {(exSearch.trim() ? exStaff.filter(e => e.name.toLowerCase().includes(exSearch.toLowerCase().trim())) : exStaff).map((e) => (
-                      <div key={e.folderId} className={`rounded-lg border bg-card px-4 py-3 space-y-2 transition-colors ${exSelectedIds.has(e.folderId) ? "border-primary/40 bg-primary/5" : ""}`}>
-                        <div className="flex items-center gap-3">
-                          <input
-                            type="checkbox"
-                            checked={exSelectedIds.has(e.folderId)}
-                            onChange={() => toggleExSelect(e.folderId)}
-                            onClick={(ev) => ev.stopPropagation()}
-                            className="h-4 w-4 rounded border-border shrink-0"
-                          />
-                          <InitialsAvatar name={e.name} status={e.overall} size="sm" />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-medium">{e.name}</p>
-                            <p className="truncate text-xs text-muted-foreground">
-                              {[e.nationality, e.gender].filter(Boolean).join(" · ") || "No details on file"}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <button onClick={() => restoreExStaff(e.folderId)} disabled={restoringId === e.folderId}
-                              className="flex items-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50">
-                              {restoringId === e.folderId
-                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                : <RotateCcw className="h-3.5 w-3.5" />}
-                              Restore
-                            </button>
-                            <button onClick={() => { setConfirmDeleteId(e.folderId); setConfirmDeleteText(""); setExError("") }}
-                              className="flex items-center gap-1.5 rounded-md bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20">
-                              <Trash2 className="h-3.5 w-3.5" />
-                              Delete
-                            </button>
-                          </div>
-                        </div>
-
-                        {confirmDeleteId === e.folderId && (
-                          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 space-y-2">
-                            <p className="text-xs text-destructive font-medium">
-                              Permanently delete {e.name}'s record? This cannot be undone, and BS7858/GDPR retention
-                              rules mean it will be blocked unless this record has been archived for 7+ years.
-                            </p>
-                            <p className="text-xs text-muted-foreground">Type <span className="font-semibold text-foreground">{e.name}</span> to confirm:</p>
-                            <div className="flex items-center gap-2">
-                              <Input value={confirmDeleteText} onChange={ev => setConfirmDeleteText(ev.target.value)}
-                                placeholder={e.name} className="h-8 text-xs" autoFocus />
-                              <button onClick={() => { setConfirmDeleteId(null); setConfirmDeleteText("") }}
-                                className="rounded px-2.5 py-1.5 text-xs border hover:bg-muted transition-colors shrink-0">Cancel</button>
-                              <button onClick={() => permanentDelete(e.folderId, confirmDeleteText)}
-                                disabled={permDeleting || confirmDeleteText.trim() !== e.name.trim()}
-                                className="rounded px-2.5 py-1.5 text-xs bg-destructive text-white hover:bg-destructive/90 transition-colors disabled:opacity-50 flex items-center gap-1 shrink-0">
-                                {permDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                                Yes, Delete
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  )}
-                </>
-              )}
-          </div>
-        </div>
-      )}
+      <ExStaffPanel exStaffPanel={exStaffPanel} />
     </div>
   )
 }
