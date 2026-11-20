@@ -7,8 +7,11 @@ import {
   ShieldCheck, AlertTriangle, Clock,
   Loader2, User as UserIcon, Upload, BadgeAlert, Flag, EyeOff, Eye,
   Paperclip, X, FileVideo, FileText, Image as ImageIcon,
-  MessageSquare, Package, Send, Pencil, Download,
+  MessageSquare, Package, Send, Pencil, Download, Trash2, Ban,
 } from "lucide-react"
+
+// Matches STAFF_DELETE_WINDOW_HOURS in routes/messages.js — the server enforces it.
+const MESSAGE_DELETE_WINDOW_MS = 48 * 60 * 60 * 1000
 import { Button } from "@/components/ui/button"
 import OnboardingWizard from "@/components/onboarding/OnboardingWizard"
 import { Section, Field } from "@/components/profile/ProfileShared"
@@ -109,9 +112,12 @@ export default function MyProfilePage() {
   // Messages
   const [messages, setMessages]       = useState<{
     id: string; message: string; sender_name: string; sender_role: string; created_at: string; is_read: boolean
+    deleted_at?: string | null
     attachment_id?: string; attachment_filename?: string; attachment_original_name?: string
     attachment_mime_type?: string; attachment_size?: number
   }[]>([])
+  const [confirmDeleteMsgId, setConfirmDeleteMsgId] = useState<string | null>(null)
+  const [deletingMsg, setDeletingMsg] = useState(false)
   const [msgDraft, setMsgDraft]       = useState("")
   const [msgSending, setMsgSending]   = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
@@ -246,6 +252,21 @@ export default function MyProfilePage() {
       toast.error(err instanceof ApiError ? err.message : "Failed to send.")
     } finally {
       setMsgSending(false)
+    }
+  }
+
+  async function deleteMyMessage(messageId: string) {
+    setDeletingMsg(true)
+    try {
+      await api.delete(`/api/my-messages/${messageId}`)
+      setMessages(prev => prev.map(m => m.id === messageId
+        ? { ...m, message: "", deleted_at: new Date().toISOString(), attachment_filename: undefined }
+        : m))
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't delete the message.")
+    } finally {
+      setDeletingMsg(false)
+      setConfirmDeleteMsgId(null)
     }
   }
 
@@ -906,8 +927,22 @@ export default function MyProfilePage() {
             {messages.map(m => {
               const isMe = m.sender_role === "staff"
               const isImage = m.attachment_mime_type?.startsWith("image/")
-              return (
+              const canDeleteMine = isMe && !m.deleted_at && Date.now() - new Date(m.created_at).getTime() < MESSAGE_DELETE_WINDOW_MS
+              if (m.deleted_at) return (
                 <div key={m.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                  <p className="inline-flex items-center gap-1.5 rounded-2xl border border-dashed px-4 py-2 text-xs italic text-muted-foreground">
+                    <Ban className="h-3.5 w-3.5" /> This message was deleted
+                  </p>
+                </div>
+              )
+              return (
+                <div key={m.id} className={`flex items-end gap-1.5 ${isMe ? "justify-end" : "justify-start"}`}>
+                  {canDeleteMine && (
+                    <button onClick={() => setConfirmDeleteMsgId(m.id)} title="Delete for everyone"
+                      className="mb-1 rounded p-1.5 text-muted-foreground/60 transition-colors hover:bg-destructive/10 hover:text-destructive">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                   <div className={`max-w-sm rounded-2xl px-4 py-2.5 text-sm shadow-sm ${isMe ? "bg-primary text-primary-foreground rounded-tr-sm" : "bg-card border text-foreground rounded-tl-sm"}`}>
                     <p className="text-[11px] font-semibold mb-1 opacity-60">{m.sender_name}</p>
                     <p className="leading-snug">{m.message}</p>
@@ -935,6 +970,18 @@ export default function MyProfilePage() {
             })}
             <div ref={msgEndRef} />
           </div>
+          {confirmDeleteMsgId && (
+            <div className="mx-4 mt-3 flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+              <p className="text-xs font-medium text-destructive">Delete this message for everyone?</p>
+              <div className="flex shrink-0 gap-2">
+                <button onClick={() => setConfirmDeleteMsgId(null)} className="rounded border px-2.5 py-1 text-xs transition-colors hover:bg-muted">Cancel</button>
+                <button onClick={() => deleteMyMessage(confirmDeleteMsgId)} disabled={deletingMsg}
+                  className="rounded bg-destructive px-2.5 py-1 text-xs text-white transition-colors hover:bg-destructive/90 disabled:opacity-50">
+                  {deletingMsg ? "Deleting…" : "Delete"}
+                </button>
+              </div>
+            </div>
+          )}
           <div className="border-t p-4 bg-background space-y-2">
             {msgFile && (
               <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs">
