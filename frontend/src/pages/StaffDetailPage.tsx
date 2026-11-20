@@ -3,9 +3,11 @@ import { motion } from "framer-motion"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
-import type { StaffMember, DiscRecord, TrainingItem, ExtraTrainingItem, TrainingRecord, EmploymentHistoryEntry } from "@/types/staff"
+import type {
+  StaffMember, TrainingItem, ExtraTrainingItem, TrainingRecord, EmploymentHistoryEntry,
+} from "@/types/staff"
 import { RoleChipPicker, parseRoles } from "@/components/ui/role-picker"
-import { daysUntil, fmtDate, discTypeLabels, discTypeCls } from "@/lib/utils"
+import { daysUntil, fmtDate } from "@/lib/utils"
 import { api, ApiError } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -13,17 +15,17 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { StatusBadge } from "@/components/ui/status-badge"
 import {
-  ArrowLeft, Phone, Mail, User, ShieldCheck, CreditCard, FileText,
-  Loader2, Upload, Eye, EyeOff, ShieldOff, CheckCircle2, AlertCircle, Clock, FileQuestion,
-  Fingerprint, Building2, GraduationCap, ClipboardList, UserCheck,
-  HeartPulse, Flame, Swords, HardHat, Camera, Briefcase, Car,
-  MapPin, Contact, BadgeAlert, Pencil, Trash2, Plus, X as XIcon,
-  KeyRound, Copy, RefreshCw, Check, UserX,
-  MessageSquare, Package, Send,
-  Paperclip, FileVideo, Image as ImageIcon, Download, Landmark, ShieldAlert,
+  ArrowLeft, Phone, Mail, User, ShieldCheck, CreditCard, FileText, Loader2, Upload, Eye, EyeOff,
+  ShieldOff, CheckCircle2, AlertCircle, Clock, FileQuestion, Fingerprint, Building2,
+  GraduationCap, ClipboardList, UserCheck, HeartPulse, Flame, Swords, HardHat, Camera, Briefcase,
+  Car, MapPin, Contact, BadgeAlert, Pencil, Trash2, Plus, X as XIcon, KeyRound, Copy, RefreshCw,
+  Check, UserX, MessageSquare, Package, Download, Landmark, ShieldAlert,
 } from "lucide-react"
 import { ConfidentialDocManagerRow, CONFIDENTIAL_STAFF_DOCS } from "@/components/profile/ProfileShared"
 import { usePermissions } from "@/hooks/usePermissions"
+import HrTab from "./staff-detail/HrTab"
+import ProvisionsTab from "./staff-detail/ProvisionsTab"
+import MessagesTab from "./staff-detail/MessagesTab"
 
 // ── Shared UI pieces ──────────────────────────────────────────────────────────
 
@@ -42,8 +44,7 @@ function DocStatusChip({ status }: { status: DocStatus }) {
     uploaded: { label: "On file",       cls: "bg-success/15 text-success border-success/30",           Icon: CheckCircle2 },
     expiring: { label: "Expiring soon", cls: "bg-warning/15 text-warning border-warning/30",           Icon: Clock },
     expired:  { label: "Expired",       cls: "bg-destructive/15 text-destructive border-destructive/30", Icon: AlertCircle },
-    missing:  { label: "Not uploaded",  cls: "bg-muted text-muted-foreground border-border",            Icon: FileQuestion },
-  } as const
+    missing:  { label: "Not uploaded",  cls: "bg-muted text-muted-foreground border-border",            Icon: FileQuestion } } as const
   const { label, cls, Icon } = cfg[status]
   return (
     <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}>
@@ -54,8 +55,7 @@ function DocStatusChip({ status }: { status: DocStatus }) {
 
 function DocRow({
   icon, label, status, uploadedDate, expiry, note, onEdit, viewUrl,
-  onDelete, confirmingDelete, onConfirmDelete, onCancelDelete, deleting,
-}: {
+  onDelete, confirmingDelete, onConfirmDelete, onCancelDelete, deleting }: {
   icon: React.ReactNode; label: string; status: DocStatus
   uploadedDate?: string; expiry?: string; note?: string
   onEdit?: () => void
@@ -219,7 +219,7 @@ export default function StaffDetailPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { user: me } = useAuth()
-  const { can } = usePermissions()
+  const { can, isDirector } = usePermissions()
   const [staff, setStaff]     = useState<StaffMember | null>(null)
   const [loading, setLoading]   = useState(true)
   const [photoUrl, setPhotoUrl]       = useState<string | null>(null)
@@ -237,39 +237,8 @@ export default function StaffDetailPage() {
   const [exMoving, setExMoving]   = useState(false)
   const [exError, setExError]     = useState("")
 
-  // Disciplinary records
-  const [discRecords, setDiscRecords]   = useState<DiscRecord[]>([])
-  const [discLoading, setDiscLoading]   = useState(false)
-  const [discForm, setDiscForm]         = useState(false)
-  const [discDraft, setDiscDraft]       = useState({ incident_date: "", type: "warning", description: "", action_taken: "" })
-  const [discSaving, setDiscSaving]     = useState(false)
-  const [discError, setDiscError]       = useState("")
-
-  // Messages
-  const [messages, setMessages]       = useState<{
-    id: string; message: string; sender_name: string; sender_role: string; created_at: string
-    attachment_id?: string; attachment_filename?: string; attachment_original_name?: string
-    attachment_mime_type?: string; attachment_size?: number
-  }[]>([])
-  const [msgLoading, setMsgLoading]   = useState(false)
-  const [msgDraft, setMsgDraft]       = useState("")
-  const [msgSending, setMsgSending]   = useState(false)
-  const [msgFile, setMsgFile]         = useState<File | null>(null)
-  const [confirmDeleteMsgId, setConfirmDeleteMsgId] = useState<string | null>(null)
-  const [deletingMsg, setDeletingMsg] = useState(false)
-  const msgFileInputRef               = useRef<HTMLInputElement>(null)
-  const msgEndRef                     = useRef<HTMLDivElement>(null)
-
-  // Provisions
-  const [provisions, setProvisions]       = useState<{id:string;item:string;provided:boolean;date_given:string|null;date_returned:string|null;notes:string|null}[]>([])
-  const [provLoading, setProvLoading]     = useState(false)
-  const [provForm, setProvForm]           = useState(false)
-  const [provDraft, setProvDraft]         = useState({ itemType: "Security Jacket", quantity: 1, provided: true, date_given: "", date_returned: "", notes: "" })
-  const [provSaving, setProvSaving]       = useState(false)
-
   // Contract
   const [contractExists, setContractExists]       = useState(false)
-  const [contractUploading, setContractUploading] = useState(false)
 
   // Training management
   const [trainingData, setTrainingData]   = useState<TrainingRecord>({})
@@ -353,12 +322,8 @@ export default function StaffDetailPage() {
       .catch(() => {})
   }, [id])
 
-  useEffect(() => {
-    if (tab === "hr")         loadDiscRecords()
-    if (tab === "messages")   loadMessages()
-    if (tab === "provisions") loadProvisions()
-    if (tab === "hr")         loadContractInfo()
-  }, [tab, id])
+  // Loaded up front, not on opening the HR tab — the ACS audit's contract check needs it too.
+  useEffect(() => { loadContractInfo() }, [id])
 
   // Deep-link support: /staff/:id?tab=messages (used by the notification bell)
   useEffect(() => {
@@ -402,8 +367,7 @@ export default function StaffDetailPage() {
       rtw_expiry:  staff.visa?.expiry ?? "",
       ec_name:     staff.emergencyContact?.name ?? "",
       ec_phone:    staff.emergencyContact?.phone ?? "",
-      ec_rel:      staff.emergencyContact?.relationship ?? "",
-    })
+      ec_rel:      staff.emergencyContact?.relationship ?? "" })
     setEditError("")
     setEditOpen(true)
   }
@@ -432,9 +396,7 @@ export default function StaffDetailPage() {
         emergencyContact: {
           name:         profileDraft.ec_name || undefined,
           phone:        profileDraft.ec_phone || undefined,
-          relationship: profileDraft.ec_rel || undefined,
-        },
-      }
+          relationship: profileDraft.ec_rel || undefined } }
       await api.put(`/api/staff/${id}`, body)
       await refreshStaffRecord()
       setEditOpen(false)
@@ -512,8 +474,7 @@ export default function StaffDetailPage() {
       date:      existing?.date ?? "",
       expiry:    existing?.expiry ?? "",
       number:    existing?.number ?? "",
-      provider:  existing?.provider ?? "",
-    })
+      provider:  existing?.provider ?? "" })
   }
 
   function saveStdEdit(key: keyof Omit<TrainingRecord, "extra">) {
@@ -522,8 +483,7 @@ export default function StaffDetailPage() {
       date:      (editDraft.date as string) || undefined,
       expiry:    (editDraft.expiry as string) || undefined,
       number:    (editDraft.number as string) || undefined,
-      provider:  (editDraft.provider as string) || undefined,
-    }
+      provider:  (editDraft.provider as string) || undefined }
     const updated = { ...trainingData, [key]: item }
     setTrainingData(updated); patchTraining(updated); setEditingKey(null)
   }
@@ -542,8 +502,7 @@ export default function StaffDetailPage() {
               date: (editDraft.date as string) || undefined, expiry: (editDraft.expiry as string) || undefined,
               number: (editDraft.number as string) || undefined, provider: (editDraft.provider as string) || undefined }
           : e
-      ),
-    }
+      ) }
     setTrainingData(updated); patchTraining(updated); setEditingKey(null)
   }
 
@@ -561,8 +520,7 @@ export default function StaffDetailPage() {
       date:      addDraft.date || undefined,
       expiry:    addDraft.expiry || undefined,
       number:    addDraft.number || undefined,
-      provider:  addDraft.provider || undefined,
-    }
+      provider:  addDraft.provider || undefined }
     const updated = { ...trainingData, extra: [...(trainingData.extra ?? []), newItem] }
     setTrainingData(updated); patchTraining(updated)
     setAddDraft({ label: "", completed: false, date: "", expiry: "", number: "", provider: "" })
@@ -605,8 +563,7 @@ export default function StaffDetailPage() {
     setDocSaving(true)
     const updatedDocs = {
       ...staff.documents,
-      [editingDocKey]: { uploaded: docDraft.uploaded, date: docDraft.date || undefined },
-    }
+      [editingDocKey]: { uploaded: docDraft.uploaded, date: docDraft.date || undefined } }
     await patchField({ documents: updatedDocs })
     setEditingDocKey(null)
     setDocSaving(false)
@@ -641,8 +598,7 @@ export default function StaffDetailPage() {
       confirmingDelete: confirmDeleteDocKey === docKey,
       onConfirmDelete: () => deleteDocFile(docKey),
       onCancelDelete: () => setConfirmDeleteDocKey(null),
-      deleting: deletingDoc,
-    }
+      deleting: deletingDoc }
   }
 
   async function deleteCertFile(courseKey: string) {
@@ -668,8 +624,7 @@ export default function StaffDetailPage() {
       setVettingDraft({
         type:          staff.dbs?.type ?? "",
         checkDate:     staff.dbs?.checkDate ?? "",
-        certificateNo: staff.dbs?.certificateNo ?? "",
-      })
+        certificateNo: staff.dbs?.certificateNo ?? "" })
     } else if (section === "driver") {
       setVettingDraft({
         fuelCardNumber: staff.driverAssignment?.fuelCardNumber ?? "",
@@ -679,14 +634,12 @@ export default function StaffDetailPage() {
         dbsDate:        staff.driverAssignment?.dbsDate ?? "",
         lastAssessment: staff.driverAssignment?.lastAssessment ?? "",
         status:         staff.driverAssignment?.status ?? "active",
-        notes:          staff.driverAssignment?.notes ?? "",
-      })
+        notes:          staff.driverAssignment?.notes ?? "" })
     } else if (section === "bs7858") {
       setVettingDraft({
         completed:       staff.bs7858?.completed ?? false,
         completionDate:  staff.bs7858?.completionDate ?? "",
-        reviewer:        staff.bs7858?.reviewer ?? "",
-      })
+        reviewer:        staff.bs7858?.reviewer ?? "" })
     } else {
       const ref = staff.references?.[section]
       setVettingDraft({
@@ -694,8 +647,7 @@ export default function StaffDetailPage() {
         company:     ref?.company ?? "",
         email:       ref?.email ?? "",
         phone:       ref?.phone ?? "",
-        status:      ref?.status ?? "Not Started",
-      })
+        status:      ref?.status ?? "Not Started" })
     }
   }
 
@@ -708,17 +660,13 @@ export default function StaffDetailPage() {
           dbs: {
             type:          (vettingDraft.type as string) || undefined,
             checkDate:     (vettingDraft.checkDate as string) || undefined,
-            certificateNo: (vettingDraft.certificateNo as string) || undefined,
-          },
-        })
+            certificateNo: (vettingDraft.certificateNo as string) || undefined } })
       } else if (editingVetting === "bs7858") {
         await patchField({
           bs7858: {
             completed:      vettingDraft.completed as boolean,
             completionDate: (vettingDraft.completionDate as string) || undefined,
-            reviewer:       (vettingDraft.reviewer as string) || undefined,
-          },
-        })
+            reviewer:       (vettingDraft.reviewer as string) || undefined } })
       } else if (editingVetting === "driver") {
         await patchField({
           driverAssignment: {
@@ -729,9 +677,7 @@ export default function StaffDetailPage() {
             dbsDate:        (vettingDraft.dbsDate as string) || undefined,
             lastAssessment: (vettingDraft.lastAssessment as string) || undefined,
             status:         (vettingDraft.status as "active" | "suspended" | "on_leave") || "active",
-            notes:          (vettingDraft.notes as string) || undefined,
-          },
-        })
+            notes:          (vettingDraft.notes as string) || undefined } })
       } else {
         await patchField({
           references: {
@@ -741,10 +687,7 @@ export default function StaffDetailPage() {
               company: (vettingDraft.company as string) || undefined,
               email:   (vettingDraft.email as string) || undefined,
               phone:   (vettingDraft.phone as string) || undefined,
-              status:  (vettingDraft.status as string) || undefined,
-            },
-          },
-        })
+              status:  (vettingDraft.status as string) || undefined } } })
       }
       setEditingVetting(null)
     } catch (err) {
@@ -755,162 +698,12 @@ export default function StaffDetailPage() {
     }
   }
 
-  async function loadDiscRecords() {
-    if (!id) return
-    setDiscLoading(true)
-    try {
-      const d = await api.get<{ ok: boolean; records: DiscRecord[] }>(`/api/staff/${id}/disciplinary`)
-      if (d.ok) setDiscRecords(d.records)
-    } finally {
-      setDiscLoading(false)
-    }
-  }
-
-  async function addDiscRecord() {
-    if (!discDraft.incident_date || !discDraft.description.trim()) {
-      setDiscError("Date and description are required.")
-      return
-    }
-    setDiscSaving(true); setDiscError("")
-    try {
-      await api.post(`/api/staff/${id}/disciplinary`, discDraft)
-      setDiscForm(false)
-      setDiscDraft({ incident_date: "", type: "warning", description: "", action_taken: "" })
-      await loadDiscRecords()
-    } catch (err) {
-      setDiscError(err instanceof ApiError ? err.message : "Failed to save.")
-    } finally {
-      setDiscSaving(false)
-    }
-  }
-
-  async function deleteDiscRecord(recordId: string) {
-    await api.delete(`/api/disciplinary/${recordId}`)
-    await loadDiscRecords()
-  }
-
-  async function loadMessages() {
-    if (!id) return
-    setMsgLoading(true)
-    try {
-      const d = await api.get<{ ok: boolean; messages: typeof messages }>(`/api/staff/${id}/messages`)
-      if (d.ok) {
-        setMessages(d.messages)
-        setTimeout(() => msgEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100)
-      }
-    } finally {
-      setMsgLoading(false)
-    }
-  }
-
-  async function sendMessage() {
-    if (!msgDraft.trim() && !msgFile) return
-    setMsgSending(true)
-    try {
-      const d = await api.post<{ ok: boolean; message: { id: string } }>(`/api/staff/${id}/messages`, { message: msgDraft.trim() || `📎 ${msgFile?.name}` })
-      if (msgFile) {
-        const buf = await msgFile.arrayBuffer()
-        const attRes = await fetch(`/api/messages/${d.message.id}/attachment`, {
-          method: "POST",
-          headers: { "Content-Type": msgFile.type || "application/octet-stream", "x-original-name": encodeURIComponent(msgFile.name) },
-          credentials: "include",
-          body: buf,
-        })
-        const attD = await attRes.json()
-        if (!attD.ok) toast.error(attD.error ?? "Message sent, but the attachment failed to upload.")
-      }
-      setMsgDraft(""); setMsgFile(null)
-      await loadMessages()
-    } finally {
-      setMsgSending(false)
-    }
-  }
-
-  function pickMsgFile(file: File | null) {
-    if (!file) return
-    const allowed = ["image/jpeg","image/png","image/gif","image/webp","video/mp4","video/quicktime","video/webm","application/pdf","application/msword","application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
-    if (!allowed.includes(file.type)) { toast.error("Only images, videos, PDFs, and Word docs are allowed."); return }
-    if (file.size > 100 * 1024 * 1024) { toast.error("File too large (max 100 MB)."); return }
-    setMsgFile(file)
-  }
-
-  async function deleteMessage(messageId: string) {
-    setDeletingMsg(true)
-    try {
-      await api.delete(`/api/messages/${messageId}`)
-      setMessages(prev => prev.filter(m => m.id !== messageId))
-      toast.success("Message removed")
-    } finally {
-      setDeletingMsg(false)
-      setConfirmDeleteMsgId(null)
-    }
-  }
-
-  function msgAttachIcon(mime?: string) {
-    if (!mime) return <FileText className="h-3.5 w-3.5 shrink-0" />
-    if (mime.startsWith("video/")) return <FileVideo className="h-3.5 w-3.5 shrink-0" />
-    if (mime.startsWith("image/")) return <ImageIcon className="h-3.5 w-3.5 shrink-0" />
-    return <FileText className="h-3.5 w-3.5 shrink-0" />
-  }
-
-  async function loadProvisions() {
-    if (!id) return
-    setProvLoading(true)
-    try {
-      const d = await api.get<{ ok: boolean; provisions: any[] }>(`/api/staff/${id}/provisions`)
-      if (d.ok) setProvisions(d.provisions)
-    } finally {
-      setProvLoading(false)
-    }
-  }
-
-  async function addProvision() {
-    setProvSaving(true)
-    try {
-      const itemStr = `${provDraft.itemType} × ${provDraft.quantity}`
-      const d = await api.post<{ ok: boolean; error?: string }>(`/api/staff/${id}/provisions`, { item: itemStr, provided: provDraft.provided, date_given: provDraft.date_given, date_returned: provDraft.date_returned, notes: provDraft.notes })
-      if (!d.ok) { toast.error(d.error ?? "Failed to save."); return }
-      setProvForm(false)
-      setProvDraft({ itemType: "Security Jacket", quantity: 1, provided: true, date_given: "", date_returned: "", notes: "" })
-      await loadProvisions()
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Failed to save.")
-    } finally {
-      setProvSaving(false)
-    }
-  }
-
   async function loadContractInfo() {
     if (!id) return
     try {
       const d = await api.get<{ ok: boolean; exists: boolean }>(`/api/staff/${id}/contract/info`)
       if (d.ok) setContractExists(d.exists)
     } catch {}
-  }
-
-  async function uploadContract(file: File) {
-    setContractUploading(true)
-    try {
-      const d = await api.post<{ ok: boolean; error?: string }>(`/api/staff/${id}/contract`, new Blob([await file.arrayBuffer()], { type: file.type || "application/pdf" }))
-      if (!d.ok) { toast.error(d.error ?? "Upload failed."); return }
-      toast.success("Contract uploaded.")
-      setContractExists(true)
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Upload failed.")
-    } finally {
-      setContractUploading(false)
-    }
-  }
-
-  async function deleteContract() {
-    await api.delete(`/api/staff/${id}/contract`)
-    setContractExists(false)
-    toast.success("Contract removed.")
-  }
-
-  async function deleteProvision(provId: string) {
-    await api.delete(`/api/provisions/${provId}`)
-    await loadProvisions()
   }
 
   async function addHistoryEntry() {
@@ -980,8 +773,7 @@ export default function StaffDetailPage() {
     passportOnFile:    !!(docs.passport?.uploaded),
     addressProof:      !!(docs.proofOfAddress1?.uploaded),
     assignmentInstr:   !!(docs.assignmentInstructions?.uploaded),
-    emergencyContact:  !!(staff.emergencyContact?.name),
-  }
+    emergencyContact:  !!(staff.emergencyContact?.name) }
 
   const acsScore = Object.values(acs).filter(Boolean).length
   const acsTotal = Object.values(acs).length
@@ -2260,389 +2052,15 @@ export default function StaffDetailPage() {
         </motion.div>
       )}
 
-      {/* ════════ HR RECORDS ════════ */}
-      {tab === "hr" && (
-        <motion.div key="hr" className="space-y-4" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}>
-
-          {/* ── Disciplinary Records ── */}
-          <Card>
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <BadgeAlert className="h-4 w-4 text-destructive" />Disciplinary Records
-                </CardTitle>
-                {canEdit && (
-                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => { setDiscForm(true); setDiscError("") }}>
-                    <Plus className="h-3 w-3" />Add Record
-                  </Button>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent className="px-4 pb-3 space-y-3">
-
-              {/* Add form */}
-              {discForm && (
-                <div className="rounded-lg border bg-destructive/5 border-destructive/20 p-4 space-y-3">
-                  <p className="text-xs font-semibold text-destructive uppercase tracking-wide">New Disciplinary Record</p>
-                  {discError && <p className="text-xs text-destructive bg-destructive/10 rounded px-2 py-1">{discError}</p>}
-                  <div className="grid sm:grid-cols-2 gap-3">
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-0.5">Incident date *</p>
-                      <input type="date" value={discDraft.incident_date}
-                        onChange={e => setDiscDraft(p => ({ ...p, incident_date: e.target.value }))}
-                        className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-0.5">Type *</p>
-                      <select value={discDraft.type}
-                        onChange={e => setDiscDraft(p => ({ ...p, type: e.target.value }))}
-                        className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring">
-                        <option value="warning">Verbal / Written Warning</option>
-                        <option value="final_warning">Final Written Warning</option>
-                        <option value="suspension">Suspension</option>
-                        <option value="termination">Termination</option>
-                        <option value="fraud">Fraud / False Information</option>
-                        <option value="misconduct">Gross Misconduct</option>
-                        <option value="other">Other</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-0.5">Description of incident *</p>
-                    <textarea value={discDraft.description} rows={3}
-                      onChange={e => setDiscDraft(p => ({ ...p, description: e.target.value }))}
-                      placeholder="What happened?"
-                      className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring resize-none" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-0.5">Action taken</p>
-                    <input type="text" value={discDraft.action_taken}
-                      onChange={e => setDiscDraft(p => ({ ...p, action_taken: e.target.value }))}
-                      placeholder="e.g. Formal warning issued, contract terminated"
-                      className="w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
-                  </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" className="h-7 text-xs" onClick={addDiscRecord} disabled={discSaving}>
-                      {discSaving ? "Saving…" : "Save Record"}
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setDiscForm(false); setDiscError("") }}>Cancel</Button>
-                  </div>
-                </div>
-              )}
-
-              {/* Records list */}
-              {discLoading ? (
-                <div className="flex items-center gap-2 py-4 text-muted-foreground text-sm">
-                  <Loader2 className="h-4 w-4 animate-spin" />Loading records…
-                </div>
-              ) : discRecords.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-2">No disciplinary records on file.</p>
-              ) : (
-                <div className="space-y-3">
-                  {discRecords.map(rec => {
-                    return (
-                      <div key={rec.id} className="rounded-lg border bg-muted/20 p-3 space-y-1.5">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${discTypeCls[rec.type] ?? discTypeCls.other}`}>
-                              {discTypeLabels[rec.type] ?? rec.type}
-                            </span>
-                            <span className="text-xs text-muted-foreground">{fmtDate(rec.incident_date)}</span>
-                          </div>
-                          {me?.role === "director" && (
-                            <button onClick={() => deleteDiscRecord(rec.id)}
-                              className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0" title="Delete">
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                        </div>
-                        <p className="text-sm">{rec.description}</p>
-                        {rec.action_taken && (
-                          <p className="text-xs text-muted-foreground">Action: {rec.action_taken}</p>
-                        )}
-                        {rec.issued_by_name && (
-                          <p className="text-xs text-muted-foreground">Issued by: {rec.issued_by_name}</p>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* ── Contract Upload ── */}
-          <Card>
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-primary" /> Contract / Assignment Instructions
-                </CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent className="px-4 pb-4 space-y-3">
-              {contractExists ? (
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-lg border bg-success/5 border-success/20 px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
-                    <span className="text-sm font-medium">Contract on file</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <a href={`/api/staff/${id}/contract`} target="_blank" rel="noopener noreferrer">
-                      <Button size="sm" variant="outline" className="gap-1.5 h-7 text-xs">
-                        <Eye className="h-3 w-3" /> View
-                      </Button>
-                    </a>
-                    {canEdit && (
-                      <label className="inline-flex cursor-pointer items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-medium hover:bg-muted transition-colors h-7">
-                        <Upload className="h-3 w-3" /> Replace
-                        <input type="file" className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                          onChange={e => { const f = e.target.files?.[0]; if (f) uploadContract(f) }} />
-                      </label>
-                    )}
-                    {canDelete && (
-                      <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive hover:text-destructive" onClick={deleteContract}>
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-lg border border-dashed bg-muted/10 px-4 py-6 text-center space-y-2">
-                  <FileText className="h-8 w-8 text-muted-foreground/30 mx-auto" />
-                  <p className="text-sm text-muted-foreground">No contract on file for this staff member.</p>
-                  {canEdit && (
-                    <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors">
-                      {contractUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                      Upload Contract
-                      <input type="file" className="hidden" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                        onChange={e => { const f = e.target.files?.[0]; if (f) uploadContract(f) }} />
-                    </label>
-                  )}
-                </div>
-              )}
-              <p className="text-xs text-muted-foreground">Accepted: PDF, Word documents, or images.</p>
-            </CardContent>
-          </Card>
-
-        </motion.div>
+      {tab === "hr" && id && (
+        <HrTab staffId={id} canEdit={canEdit} canDelete={canDelete} isDirector={isDirector}
+          contractExists={contractExists} setContractExists={setContractExists} />
       )}
 
-      {/* ── Provisions tab ── */}
-      {tab === "provisions" && (
-        <motion.div key="provisions" className="space-y-4" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}>
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Package className="h-4 w-4" /> Uniform & Equipment
-                </CardTitle>
-                <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setProvForm(p => !p)}>
-                  <Plus className="h-3.5 w-3.5" /> Add Item
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {provForm && (
-                <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
-                  <div className="grid sm:grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label>Item</Label>
-                      <select value={provDraft.itemType}
-                        onChange={e => setProvDraft(p => ({ ...p, itemType: e.target.value }))}
-                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-                        <option>Security Jacket</option>
-                        <option>Fleece</option>
-                        <option>Rain Pant</option>
-                        <option>T-Shirt</option>
-                        <option>Trouser</option>
-                        <option>Hi-Vis Vest</option>
-                        <option>ID Badge</option>
-                        <option>Radio</option>
-                        <option>Torch</option>
-                        <option>Boots</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label>Quantity</Label>
-                      <Input type="number" min={1} max={20} value={provDraft.quantity}
-                        onChange={e => setProvDraft(p => ({ ...p, quantity: Math.max(1, parseInt(e.target.value) || 1) }))} />
-                    </div>
-                  </div>
-                  <div className="grid sm:grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <Label>Status</Label>
-                      <select value={provDraft.provided ? "yes" : "no"}
-                        onChange={e => setProvDraft(p => ({ ...p, provided: e.target.value === "yes" }))}
-                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring">
-                        <option value="yes">Provided / Given</option>
-                        <option value="no">Not Provided</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label>Date given</Label>
-                      <Input type="date" value={provDraft.date_given}
-                        onChange={e => setProvDraft(p => ({ ...p, date_given: e.target.value }))} />
-                    </div>
-                    <div className="space-y-1">
-                      <Label>Date returned</Label>
-                      <Input type="date" value={provDraft.date_returned}
-                        onChange={e => setProvDraft(p => ({ ...p, date_returned: e.target.value }))} />
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <Label>Notes</Label>
-                    <Input placeholder="e.g. Size L, serial number, condition"
-                      value={provDraft.notes} onChange={e => setProvDraft(p => ({ ...p, notes: e.target.value }))} />
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <Button size="sm" variant="outline" onClick={() => setProvForm(false)}>Cancel</Button>
-                    <Button size="sm" disabled={provSaving} onClick={addProvision}>
-                      {provSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null} Save
-                    </Button>
-                  </div>
-                </div>
-              )}
-              {provLoading && <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
-              {!provLoading && provisions.length === 0 && (
-                <p className="text-sm text-muted-foreground py-4 text-center">No items recorded yet.</p>
-              )}
-              {provisions.map(p => (
-                <div key={p.id} className="flex items-start justify-between gap-3 rounded-lg border bg-muted/10 px-3 py-2.5">
-                  <div className="space-y-0.5 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium">{p.item}</span>
-                      <span className={`text-xs rounded-full px-2 py-0.5 font-medium ${p.provided ? "bg-success/15 text-success" : "bg-destructive/15 text-destructive"}`}>
-                        {p.provided ? "Provided" : "Not Provided"}
-                      </span>
-                    </div>
-                    {p.date_given && <p className="text-xs text-muted-foreground">Given: {fmtDate(p.date_given)}</p>}
-                    {p.date_returned && <p className="text-xs text-muted-foreground">Returned: {fmtDate(p.date_returned)}</p>}
-                    {p.notes && <p className="text-xs text-muted-foreground">{p.notes}</p>}
-                  </div>
-                  {canDelete && (
-                    <button onClick={() => deleteProvision(p.id)}
-                      className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </motion.div>
-      )}
+      {tab === "provisions" && id && <ProvisionsTab staffId={id} canDelete={canDelete} />}
 
       {/* ── Messages tab ── */}
-      {tab === "messages" && (
-        <motion.div key="messages" className="space-y-4" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}>
-          <Card className="flex flex-col" style={{ minHeight: "480px" }}>
-            <CardHeader className="pb-2 border-b">
-              <CardTitle className="text-base flex items-center gap-2">
-                <MessageSquare className="h-4 w-4" /> Messages with {staff.name}
-              </CardTitle>
-              <p className="text-xs text-muted-foreground">Messages are private between management and this staff member.</p>
-            </CardHeader>
-            <CardContent className="flex flex-col flex-1 p-0">
-              {/* Message list */}
-              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2" style={{ maxHeight: "360px" }}>
-                {msgLoading && <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
-                {!msgLoading && messages.length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-8">No messages yet. Send the first one below.</p>
-                )}
-                {messages.map(m => {
-                  const isStaff = m.sender_role === "staff"
-                  const isImage = m.attachment_mime_type?.startsWith("image/")
-                  return (
-                    <div key={m.id} className={`group flex items-end gap-1.5 ${isStaff ? "justify-start" : "justify-end"}`}>
-                      {!isStaff && canDelete && (
-                        <button onClick={() => setConfirmDeleteMsgId(m.id)}
-                          className="mb-1 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive hover:bg-destructive/10 group-hover:opacity-100">
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      )}
-                      <div className={`max-w-xs rounded-2xl px-3.5 py-2 text-sm shadow-sm ${isStaff ? "bg-muted text-foreground rounded-tl-sm" : "bg-primary text-primary-foreground rounded-tr-sm"}`}>
-                        <p className="text-[11px] font-medium mb-0.5 opacity-70">{m.sender_name}</p>
-                        <p>{m.message}</p>
-                        {m.attachment_filename && (
-                          isImage ? (
-                            <a href={`/api/message-attachments/${m.attachment_filename}`} target="_blank" rel="noopener noreferrer" className="mt-1.5 block">
-                              <img src={`/api/message-attachments/${m.attachment_filename}`} alt={m.attachment_original_name}
-                                className="max-h-48 w-full rounded-lg object-cover" />
-                            </a>
-                          ) : (
-                            <a href={`/api/message-attachments/${m.attachment_filename}`} target="_blank" rel="noopener noreferrer" download={m.attachment_original_name}
-                              className={`mt-1.5 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs ${isStaff ? "bg-background/60" : "bg-white/15"}`}>
-                              {msgAttachIcon(m.attachment_mime_type)}
-                              <span className="flex-1 truncate">{m.attachment_original_name}</span>
-                              <Download className="h-3 w-3 shrink-0" />
-                            </a>
-                          )
-                        )}
-                        <p className={`text-[10px] mt-0.5 opacity-60 text-right`}>
-                          {new Date(m.created_at).toLocaleDateString("en-GB", { day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit" })}
-                        </p>
-                      </div>
-                      {isStaff && canDelete && (
-                        <button onClick={() => setConfirmDeleteMsgId(m.id)}
-                          className="mb-1 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive hover:bg-destructive/10 group-hover:opacity-100">
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      )}
-                    </div>
-                  )
-                })}
-                <div ref={msgEndRef} />
-              </div>
-              {confirmDeleteMsgId && (
-                <div className="mx-4 mb-2 flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
-                  <p className="text-xs font-medium text-destructive">Remove this message for both sides?</p>
-                  <div className="flex shrink-0 gap-2">
-                    <button onClick={() => setConfirmDeleteMsgId(null)} className="rounded px-2.5 py-1 text-xs border hover:bg-muted transition-colors">Cancel</button>
-                    <button onClick={() => deleteMessage(confirmDeleteMsgId)} disabled={deletingMsg}
-                      className="rounded bg-destructive px-2.5 py-1 text-xs text-white hover:bg-destructive/90 transition-colors disabled:opacity-50">
-                      {deletingMsg ? "Removing…" : "Yes, remove"}
-                    </button>
-                  </div>
-                </div>
-              )}
-              {/* Compose */}
-              <div className="border-t px-4 py-3 space-y-2">
-                {msgFile && (
-                  <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs">
-                    {msgAttachIcon(msgFile.type)}
-                    <span className="flex-1 truncate">{msgFile.name}</span>
-                    <span className="text-muted-foreground shrink-0">{(msgFile.size / 1024 / 1024).toFixed(1)} MB</span>
-                    <button onClick={() => setMsgFile(null)} className="text-muted-foreground hover:text-destructive">
-                      <XIcon className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                )}
-                <div className="flex gap-2">
-                  <input ref={msgFileInputRef} type="file" hidden
-                    accept="image/*,video/mp4,video/quicktime,video/webm,application/pdf,.doc,.docx"
-                    onChange={e => { pickMsgFile(e.target.files?.[0] ?? null); e.target.value = "" }} />
-                  <button onClick={() => msgFileInputRef.current?.click()}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground hover:bg-muted transition-colors" title="Attach file">
-                    <Paperclip className="h-4 w-4" />
-                  </button>
-                  <input
-                    value={msgDraft}
-                    onChange={e => setMsgDraft(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
-                    placeholder={`Message ${staff.name}…`}
-                    className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                  />
-                  <Button size="sm" disabled={msgSending || (!msgDraft.trim() && !msgFile)} onClick={sendMessage} className="gap-1.5">
-                    {msgSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                    Send
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
-      )}
+      {tab === "messages" && id && <MessagesTab staffId={id} staffName={staff.name} canDelete={canDelete} />}
 
       {/* ── Edit Profile slide-over ── */}
       {editOpen && (

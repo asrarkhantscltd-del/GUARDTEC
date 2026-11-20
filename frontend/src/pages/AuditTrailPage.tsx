@@ -25,6 +25,7 @@ const ACTION_LABELS: Record<string, string> = {
   STAFF_UPDATED: "Updated staff record",
   STAFF_ARCHIVED: "Moved staff to Ex-Staff",
   STAFF_PERMANENTLY_DELETED: "Permanently deleted staff record",
+  MESSAGE_DELETED_BY_STAFF: "Staff deleted a message they sent",
   SITE_CREATED: "Created site",
   SITE_UPDATED: "Updated site",
   SITE_DELETED: "Deleted site",

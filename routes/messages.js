@@ -16,6 +16,7 @@ module.exports = function registerMessagesRoutes(deps) {
     deliverPush = deps.deliverPush,
     hasStaffPermission = deps.hasStaffPermission,
     loadAllStaff = deps.loadAllStaff,
+    logAuditEvent = deps.logAuditEvent,
     pgPool = deps.pgPool,
     requireLogin = deps.requireLogin,
     requireOwnAgencyOrPermission = deps.requireOwnAgencyOrPermission,
@@ -49,14 +50,15 @@ module.exports = function registerMessagesRoutes(deps) {
   // request input — so building the WHERE clause with it is safe.
   function messagesSelectQuery(ownerColumn) {
     return `
-    SELECT sm.id, sm.message, sm.is_read, sm.created_at,
+    SELECT sm.id, CASE WHEN sm.deleted_at IS NULL THEN sm.message ELSE '' END AS message,
+           sm.is_read, sm.created_at, sm.deleted_at,
            u.full_name AS sender_name, u.role AS sender_role,
            ma.id AS attachment_id, ma.filename AS attachment_filename,
            ma.original_name AS attachment_original_name,
            ma.mime_type AS attachment_mime_type, ma.size_bytes AS attachment_size
     FROM staff_messages sm
     JOIN users u ON u.id = sm.sender_id
-    LEFT JOIN message_attachments ma ON ma.message_id = sm.id
+    LEFT JOIN message_attachments ma ON ma.message_id = sm.id AND sm.deleted_at IS NULL
     WHERE sm.${ownerColumn} = $1
     ORDER BY sm.created_at ASC
   `;
@@ -99,7 +101,8 @@ module.exports = function registerMessagesRoutes(deps) {
       SELECT sm.employee_id,
              MAX(sm.created_at) AS last_at,
              COUNT(*) FILTER (WHERE sm.is_read = FALSE AND u.role = 'staff') AS unread,
-             (ARRAY_AGG(sm.message ORDER BY sm.created_at DESC))[1] AS last_message,
+             (ARRAY_AGG(CASE WHEN sm.deleted_at IS NULL THEN sm.message ELSE 'This message was deleted' END
+                        ORDER BY sm.created_at DESC))[1] AS last_message,
              (ARRAY_AGG(u.role ORDER BY sm.created_at DESC))[1] AS last_sender_role
       FROM staff_messages sm
       JOIN users u ON u.id = sm.sender_id
@@ -301,10 +304,12 @@ module.exports = function registerMessagesRoutes(deps) {
     try {
       var safe = path.basename(req.params.filename);
       var owner = await pgPool.query(
-        'SELECT sm.employee_id, sm.agency_id FROM message_attachments ma JOIN staff_messages sm ON sm.id = ma.message_id WHERE ma.filename = $1',
+        'SELECT sm.employee_id, sm.agency_id, sm.deleted_at FROM message_attachments ma JOIN staff_messages sm ON sm.id = ma.message_id WHERE ma.filename = $1',
         [safe]
       );
       if (!owner.rows.length) return res.status(404).end();
+      // A deleted message's file stays on disk as evidence, but only a Director can still open it.
+      if (owner.rows[0].deleted_at && req.user.role !== 'director') return res.status(404).end();
       if (!await canAccessMessageOwner(req, res, owner.rows[0])) return;
       var filePath = path.join(MESSAGE_ATTACH_DIR, safe);
       if (!fs.existsSync(filePath)) return res.status(404).end();
@@ -314,9 +319,41 @@ module.exports = function registerMessagesRoutes(deps) {
     }
   });
 
-  // Delete a message (and its attachment, if any). Management-only — deliberately
-  // not exposed to staff, so a message can't be used to hide something and then
-  // erased before a manager has a chance to review it.
+  // Staff "delete for everyone" on their OWN message, within 48h — WhatsApp-style.
+  // Soft delete: both sides see "This message was deleted", but the row (and any
+  // attachment) is kept and the original text goes to the Audit Trail, so a
+  // message can never be used to hide something and then erased as evidence.
+  var STAFF_DELETE_WINDOW_HOURS = 48;
+  app.delete('/api/my-messages/:messageId', requireLogin, requireRole('staff'), async function(req, res) {
+    try {
+      if (!/^[0-9a-f-]{36}$/i.test(req.params.messageId)) return res.status(404).json({ ok: false, error: 'Message not found.' });
+      if (!req.user.staff_id) return res.status(404).json({ ok: false, error: 'Message not found.' });
+      var empId = await resolveEmpId(req.user.staff_id);
+      var r = await pgPool.query(
+        `SELECT sm.id, sm.message, sm.sender_id, sm.created_at, sm.deleted_at, e.name AS emp_name,
+                (SELECT string_agg(original_name, ', ') FROM message_attachments WHERE message_id = sm.id) AS attachments
+         FROM staff_messages sm JOIN employees e ON e.id = sm.employee_id
+         WHERE sm.id = $1 AND sm.employee_id = $2`,
+        [req.params.messageId, empId]
+      );
+      var m = r.rows[0];
+      if (!m) return res.status(404).json({ ok: false, error: 'Message not found.' });
+      if (m.sender_id !== req.user.id) return res.status(403).json({ ok: false, error: 'You can only delete messages you sent.' });
+      if (m.deleted_at) return res.json({ ok: true });
+      if (Date.now() - new Date(m.created_at).getTime() > STAFF_DELETE_WINDOW_HOURS * 3600 * 1000) {
+        return res.status(403).json({ ok: false, error: 'Messages can only be deleted within ' + STAFF_DELETE_WINDOW_HOURS + ' hours of sending.' });
+      }
+      await pgPool.query('UPDATE staff_messages SET deleted_at = NOW(), deleted_by = $2 WHERE id = $1', [m.id, req.user.id]);
+      logAuditEvent(req, 'MESSAGE_DELETED_BY_STAFF', 'staff_message', m.id, m.emp_name, {
+        original_message: m.message, attachments: m.attachments || null, sent_at: m.created_at,
+      });
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // Management hard delete (message + attachment) — unchanged.
   app.delete('/api/messages/:messageId', requireLogin, requirePermission('delete_staff'), async function(req, res) {
     try {
       var attRes = await pgPool.query('SELECT filename FROM message_attachments WHERE message_id = $1', [req.params.messageId]);
