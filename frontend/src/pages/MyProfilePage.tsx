@@ -584,6 +584,18 @@ export default function MyProfilePage() {
             <p className="text-sm text-muted-foreground text-center py-8">Your compliance overview will appear here once your details are on file.</p>
           )}
 
+          <div className="rounded-xl border bg-card p-4 space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+              <ShieldCheck className="h-3.5 w-3.5" /> DBS Certificate
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Upload a scan or photo of your DBS certificate. You can replace it any time; only your manager can remove it.
+            </p>
+            <SelfUploadDocRow label="DBS certificate" docKey="dbsCertificate" staffId={profile.id}
+              uploaded={profile.documents?.dbsCertificate?.uploaded} date={profile.documents?.dbsCertificate?.date}
+              onChanged={load} />
+          </div>
+
           {/* Driver licence & qualifications — only for staff carrying the "Driver" role */}
           {parseRoles(profile.jobRole).includes("Driver") && (
             <div className="rounded-xl border bg-card p-4 space-y-3">
