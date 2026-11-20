@@ -2,8 +2,7 @@ import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
-import { useAuth } from "@/contexts/AuthContext"
-import { daysUntil, fmtDate, downloadExport } from "@/lib/utils"
+import { daysUntil, fmtDate, downloadExport, initials } from "@/lib/utils"
 import type { StaffMember } from "@/types/staff"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -19,6 +18,7 @@ import { makeStagger } from "@/lib/motion"
 import { api, ApiError } from "@/lib/api"
 import { runBulk, reportBulk } from "@/lib/bulk"
 import { RoleChipPicker, parseRoles } from "@/components/ui/role-picker"
+import { usePermissions } from "@/hooks/usePermissions"
 
 const stagger = makeStagger(0.05, 0.35)
 
@@ -85,7 +85,7 @@ function DocChip({ label, date }: { label: string; date?: string }) {
 }
 
 function InitialsAvatar({ name, status, size = "md" }: { name: string; status: string; size?: "sm" | "md" | "lg" }) {
-  const initials = name.split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase()
+  const avatarText = initials(name)
   const bg: Record<string, string> = {
     green:   "bg-success/20 text-success border border-success/30",
     amber:   "bg-warning/20 text-warning border border-warning/30",
@@ -95,7 +95,7 @@ function InitialsAvatar({ name, status, size = "md" }: { name: string; status: s
   const sz = size === "lg" ? "h-16 w-16 text-xl" : size === "sm" ? "h-8 w-8 text-xs" : "h-11 w-11 text-sm"
   return (
     <div className={`rounded-full flex items-center justify-center font-semibold shrink-0 ${sz} ${bg[status] ?? bg.unknown}`}>
-      {initials}
+      {avatarText}
     </div>
   )
 }
@@ -287,9 +287,9 @@ export default function StaffPage() {
   }
 
   // Quick edit/delete from the Overview rows
-  const { user: me } = useAuth()
-  const canEdit   = me?.role === "director" || !!me?.permissions?.edit_staff
-  const canDelete = me?.role === "director" || !!me?.permissions?.delete_staff
+  const { can } = usePermissions()
+  const canEdit   = can("edit_staff")
+  const canDelete = can("delete_staff")
   const [quickDeleteId, setQuickDeleteId] = useState<string | null>(null)
   const [quickDeleting, setQuickDeleting] = useState(false)
 

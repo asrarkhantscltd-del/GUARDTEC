@@ -23,6 +23,7 @@ import {
   Paperclip, FileVideo, Image as ImageIcon, Download, Landmark, ShieldAlert,
 } from "lucide-react"
 import { ConfidentialDocManagerRow, CONFIDENTIAL_STAFF_DOCS } from "@/components/profile/ProfileShared"
+import { usePermissions } from "@/hooks/usePermissions"
 
 // ── Shared UI pieces ──────────────────────────────────────────────────────────
 
@@ -218,6 +219,7 @@ export default function StaffDetailPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { user: me } = useAuth()
+  const { can } = usePermissions()
   const [staff, setStaff]     = useState<StaffMember | null>(null)
   const [loading, setLoading]   = useState(true)
   const [photoUrl, setPhotoUrl]       = useState<string | null>(null)
@@ -375,8 +377,8 @@ export default function StaffDetailPage() {
   }, [searchParams, staff])
 
   const canManagePortalAccess = me?.role === "director" || me?.role === "ops_manager"
-  const canEdit   = me?.role === "director" || !!me?.permissions?.edit_staff
-  const canDelete = me?.role === "director" || !!me?.permissions?.delete_staff
+  const canEdit   = can("edit_staff")
+  const canDelete = can("delete_staff")
 
   function openEdit() {
     if (!staff) return
@@ -948,10 +950,9 @@ export default function StaffDetailPage() {
   const training = trainingData
   const dob = staff.dob || staff.dateOfBirth
 
-  // Office-based login roles (Director/Ops Manager/HR Manager/Office Manager/
-  // Accounts) are never deployed as a guard, so SIA/CSCS/training checkpoints
-  // don't apply to them — auto-pass rather than flag as missing.
-  const isOfficeExempt = ["director", "ops_manager", "hr_manager", "office_manager", "accounts", "media", "fleet_manager"].includes(staff.linkedRole ?? "")
+  // Office-based login roles are never deployed as a guard, so SIA/CSCS/training
+  // checkpoints don't apply to them — auto-pass rather than flag as missing.
+  const isOfficeExempt = !!staff.officeExempt
 
   // ACS audit — computed pass/fail for each point
   const acs = {

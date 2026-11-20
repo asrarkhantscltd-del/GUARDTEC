@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { canPreviewInBrowser } from "@/lib/docPreview"
 import { toast } from "sonner"
-import { useAuth } from "@/contexts/AuthContext"
 import { api, ApiError } from "@/lib/api"
 import { initials, AV_COLORS } from "@/lib/utils"
 import {
@@ -15,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { usePermissions } from "@/hooks/usePermissions"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -430,8 +430,8 @@ function typeInfo(type: string) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function SitesPage() {
-  const { user: me } = useAuth()
-  const canDelete = me?.role === "director" || !!me?.permissions?.delete_sites
+  const { can } = usePermissions()
+  const canDelete = can("delete_sites")
   const [sites, setSites]         = useState<Site[]>([])
   const [loading, setLoading]     = useState(true)
   const [filter, setFilter]       = useState<"all" | "active" | "inactive">("all")
