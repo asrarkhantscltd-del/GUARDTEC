@@ -3,16 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { MessageSquare, Search, Loader2, PenSquare, X, CornerUpLeft } from "lucide-react"
 import { api } from "@/lib/api"
 import { initials } from "@/lib/utils"
-
-interface Conversation {
-  staffId: string
-  name: string
-  jobRole: string | null
-  lastMessage: string
-  lastAt: string
-  lastFromStaff: boolean
-  unread: number
-}
+import { useInbox } from "@/hooks/useInboxUnread"
 
 function when(iso: string) {
   const d = new Date(iso)
@@ -24,23 +15,12 @@ function when(iso: string) {
 
 export default function MessagesPage() {
   const navigate = useNavigate()
-  const [convos, setConvos] = useState<Conversation[] | null>(null)
+  const { conversations: convos, isLoading: convosLoading } = useInbox()
   const [search, setSearch] = useState("")
   const [filter, setFilter] = useState<"all" | "unread">("all")
   const [composing, setComposing] = useState(false)
   const [allStaff, setAllStaff] = useState<{ id: string; name: string; jobRole?: string }[]>([])
   const [pickSearch, setPickSearch] = useState("")
-
-  useEffect(() => {
-    function load() {
-      api.get<{ ok: boolean; conversations: Conversation[] }>("/api/messages/inbox")
-        .then(d => setConvos(d?.conversations ?? []))
-        .catch(() => setConvos([]))
-    }
-    load()
-    const t = setInterval(load, 30000)
-    return () => clearInterval(t)
-  }, [])
 
   useEffect(() => {
     if (!composing || allStaff.length) return
@@ -97,7 +77,7 @@ export default function MessagesPage() {
 
       {/* Conversation list */}
       <div className="overflow-hidden rounded-xl border border-border bg-card">
-        {convos === null ? (
+        {convosLoading ? (
           <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />Loading conversations…
           </div>
