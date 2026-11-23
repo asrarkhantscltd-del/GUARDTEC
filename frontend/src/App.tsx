@@ -38,6 +38,7 @@ import AgencyPortalStaffPage from "@/pages/AgencyPortalStaffPage"
 import AgencyPortalDeploymentsPage from "@/pages/AgencyPortalDeploymentsPage"
 import AgencyPortalMessagesPage from "@/pages/AgencyPortalMessagesPage"
 import AcknowledgmentFormPage from "@/pages/AcknowledgmentFormPage"
+import EventBookOnPage from "@/pages/EventBookOnPage"
 import CustomFormFillPage from "@/pages/CustomFormFillPage"
 import PurchaseOrdersPage from "@/pages/PurchaseOrdersPage"
 import SuppliersPage from "@/pages/SuppliersPage"
@@ -177,6 +178,7 @@ export default function App() {
               page ever assumes req.user; see each component's own header
               comment on why. */}
           <Route path="/acknowledge/:token" element={<AcknowledgmentFormPage />} />
+          <Route path="/event-book-on/:token" element={<EventBookOnPage />} />
           <Route path="/custom-forms/:formId/fill" element={<CustomFormFillPage />} />
           <Route path="/compliance-calendar/shared/:token" element={<PublicComplianceCalendarPage />} />
           <Route path="/supplier-evaluation/:token" element={<PublicSupplierEvaluationPage />} />
