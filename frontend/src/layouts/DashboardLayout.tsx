@@ -20,6 +20,8 @@ import { useState, useEffect, useRef } from "react"
 import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
 import ChangePasswordModal from "@/components/ChangePasswordModal"
 import { usePermissions } from "@/hooks/usePermissions"
+import { useNotifications } from "@/hooks/useNotifications"
+import { useInboxUnread } from "@/hooks/useInboxUnread"
 
 interface NavItem {
   label: string
@@ -72,10 +74,7 @@ export default function DashboardLayout() {
   const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const photoInputRef = useRef<HTMLInputElement>(null)
-  const [notifications, setNotifications] = useState<{
-    id: string; type: string; actor_name: string; summary: string
-    link_staff_id?: string; link_tab?: string; link_incident_id?: string; link_agency_id?: string; created_at: string
-  }[]>([])
+  const { notifications, dismiss: dismissNotif, dismissAll: dismissAllNotifs } = useNotifications()
   const [showAlerts, setShowAlerts] = useState(false)
   // Push notifications — managers/directors only for now. `null` while the
   // existing-subscription check is still in flight, so the toggle doesn't
@@ -131,41 +130,15 @@ export default function DashboardLayout() {
       .catch(() => {})
   }, [])
 
-  useEffect(() => {
-    function fetchNotifs() {
-      api.get<{ ok: boolean; notifications: typeof notifications }>("/api/notifications")
-        .then(d => { if (d?.ok) setNotifications(d.notifications ?? []) })
-        .catch(() => {})
-    }
-    fetchNotifs()
-    const id = setInterval(fetchNotifs, 30000)
-    return () => clearInterval(id)
-  }, [])
-
-  // Unread staff messages — drives the highlighted Messages entry in the
-  // sidebar and header so replies from staff are impossible to miss.
-  const [msgUnread, setMsgUnread] = useState(0)
   const canMessage = can("staff")
-  useEffect(() => {
-    if (!canMessage) return
-    function fetchInbox() {
-      api.get<{ ok: boolean; totalUnread: number }>("/api/messages/inbox")
-        .then(d => { if (d?.ok) setMsgUnread(d.totalUnread ?? 0) })
-        .catch(() => {})
-    }
-    fetchInbox()
-    const t = setInterval(fetchInbox, 30000)
-    return () => clearInterval(t)
-  }, [canMessage, location.pathname])
+  const msgUnread = useInboxUnread(canMessage)
 
   function clearAllNotifications() {
-    setNotifications([])
-    api.post('/api/notifications/seen-all').catch(() => {})
+    dismissAllNotifs()
   }
 
   function goToNotification(n: { id: string; type: string; link_staff_id?: string; link_tab?: string; link_incident_id?: string; link_agency_id?: string }) {
-    setNotifications(prev => prev.filter(x => x.id !== n.id))
-    api.post(`/api/notifications/${n.id}/seen`).catch(() => {})
+    dismissNotif(n.id)
     setShowAlerts(false)
     if (n.type === "incident_report") navigate("/incident-reports")
     else if (n.type === "profile_submission") navigate("/pending-review")

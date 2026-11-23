@@ -7,6 +7,7 @@ import { LogOut, Camera, Loader2, Sun, Moon, MessageSquare, BellRing, BellOff, K
 import { useState, useEffect } from "react"
 import { api } from "@/lib/api"
 import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
+import { useMyMessagesUnread } from "@/hooks/useMyMessagesUnread"
 import { toast } from "sonner"
 import ChangePasswordModal from "@/components/ChangePasswordModal"
 import { initials } from "@/lib/utils"
@@ -17,7 +18,7 @@ export default function StaffLayout() {
   const navigate = useNavigate()
   const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
-  const [unreadMsgs, setUnreadMsgs] = useState(0)
+  const unreadMsgs = useMyMessagesUnread()
   // Push notifications — so a message from a manager still reaches this
   // staff member even with the app fully closed. `null` while the
   // existing-subscription check is in flight.
@@ -56,16 +57,6 @@ export default function StaffLayout() {
       .catch(() => {})
   }, [])
 
-  useEffect(() => {
-    function fetchUnread() {
-      api.get<{ ok: boolean; unread: number }>("/api/my-messages?peek=1")
-        .then(d => { if (d?.ok) setUnreadMsgs(d.unread ?? 0) })
-        .catch(() => {})
-    }
-    fetchUnread()
-    const id = setInterval(fetchUnread, 30000)
-    return () => clearInterval(id)
-  }, [])
 
   async function handleMyPhotoUpload(file: File | null) {
     if (!file) return
@@ -105,7 +96,7 @@ export default function StaffLayout() {
         <div className="ml-auto flex items-center gap-3">
           {/* Messages — labelled, highlighted button that opens the Messages tab directly */}
           <button
-            onClick={() => { setUnreadMsgs(0); navigate("/?tab=messages") }}
+            onClick={() => navigate("/?tab=messages")}
             title="Messages from your manager"
             className={`relative inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
               unreadMsgs > 0
