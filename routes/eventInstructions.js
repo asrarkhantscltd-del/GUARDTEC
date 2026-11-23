@@ -87,11 +87,27 @@ module.exports = function registerEventInstructionsRoutes(deps) {
       var status = b.status === 'published' ? 'published' : 'draft';
       var requirements = Array.isArray(b.requirements) ? b.requirements : [];
 
+      // Event date range (standalone events run across multiple days). from <= to.
+      // Legacy event_date is kept in sync with the range start so older readers
+      // (e.g. the signed-acknowledgment document) still show a sensible date.
+      var dateFrom = b.event_date_from || b.event_date || null;
+      var dateTo = b.event_date_to || b.event_date_from || b.event_date || null;
+      if (dateFrom && dateTo && String(dateTo) < String(dateFrom)) {
+        return res.status(400).json({ ok: false, error: 'Event end date cannot be before the start date.' });
+      }
+
+      // Manager is an optional named owner for standalone events — must be a real user.
+      var managerId = b.manager_id ? String(b.manager_id).trim() : null;
+      if (managerId) {
+        var mgr = await pgPool.query('SELECT id FROM users WHERE id = $1', [managerId]);
+        if (!mgr.rows.length) return res.status(400).json({ ok: false, error: 'Unknown manager_id.' });
+      }
+
       var r = await pgPool.query(
         `INSERT INTO event_instructions
-         (site_id, event_date, title, instructions_html, requirements, document_file_url, document_mime_type, created_by, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [siteId || null, b.event_date || null, title, b.instructions_html || null,
+         (site_id, event_date, event_date_from, event_date_to, manager_id, title, instructions_html, requirements, document_file_url, document_mime_type, created_by, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+        [siteId || null, dateFrom, dateFrom, dateTo, managerId, title, b.instructions_html || null,
          JSON.stringify(requirements), b.document_file_url || null, b.document_mime_type || null,
          req.user.id, status]
       );
@@ -121,7 +137,14 @@ module.exports = function registerEventInstructionsRoutes(deps) {
         (conditions.length ? ' WHERE ' + conditions.join(' AND ') : '') +
         ' ORDER BY created_at DESC';
       var result = await pgPool.query(sql, params);
-      var instructions = await Promise.all(result.rows.map(async function(row) { row.site = row.site_id ? await getSiteById(row.site_id) : null; return row; }));
+      var instructions = await Promise.all(result.rows.map(async function(row) {
+        row.site = row.site_id ? await getSiteById(row.site_id) : null;
+        if (row.manager_id) {
+          var m = await pgPool.query('SELECT full_name, username FROM users WHERE id = $1', [row.manager_id]);
+          row.manager_name = m.rows.length ? (m.rows[0].full_name || m.rows[0].username) : null;
+        }
+        return row;
+      }));
       res.json({ ok: true, instructions: instructions });
     } catch (e) {
       res.status(500).json({ ok: false, error: e.message });
@@ -134,6 +157,10 @@ module.exports = function registerEventInstructionsRoutes(deps) {
       if (!r.rows.length) return res.status(404).json({ ok: false, error: 'Instruction not found.' });
       var instruction = r.rows[0];
       instruction.site = instruction.site_id ? await getSiteById(instruction.site_id) : null;
+      if (instruction.manager_id) {
+        var mgrRow = await pgPool.query('SELECT full_name, username FROM users WHERE id = $1', [instruction.manager_id]);
+        instruction.manager_name = mgrRow.rows.length ? (mgrRow.rows[0].full_name || mgrRow.rows[0].username) : null;
+      }
 
       var formsResult = await pgPool.query(
         `SELECT id, respondent_type, respondent_id, respondent_name_snapshot, instruction_version,
@@ -247,7 +274,21 @@ module.exports = function registerEventInstructionsRoutes(deps) {
       }
 
       var title            = b.title !== undefined ? String(b.title).trim() : current.title;
-      var eventDate         = b.event_date !== undefined ? (b.event_date || null) : current.event_date;
+      var dateFrom          = b.event_date_from !== undefined ? (b.event_date_from || null) : current.event_date_from;
+      var dateTo            = b.event_date_to !== undefined ? (b.event_date_to || null) : current.event_date_to;
+      if (dateFrom && dateTo && String(dateTo) < String(dateFrom)) {
+        return res.status(400).json({ ok: false, error: 'Event end date cannot be before the start date.' });
+      }
+      // Keep legacy event_date in sync with the range start.
+      var eventDate         = dateFrom || (b.event_date !== undefined ? (b.event_date || null) : current.event_date);
+      var managerId         = current.manager_id;
+      if (b.manager_id !== undefined) {
+        managerId = b.manager_id ? String(b.manager_id).trim() : null;
+        if (managerId) {
+          var mgrRow = await pgPool.query('SELECT id FROM users WHERE id = $1', [managerId]);
+          if (!mgrRow.rows.length) return res.status(400).json({ ok: false, error: 'Unknown manager_id.' });
+        }
+      }
       var instructionsHtml  = b.instructions_html !== undefined ? b.instructions_html : current.instructions_html;
       var requirements      = b.requirements !== undefined ? (Array.isArray(b.requirements) ? b.requirements : []) : current.requirements;
       var documentFileUrl   = b.document_file_url !== undefined ? b.document_file_url : current.document_file_url;
@@ -262,10 +303,11 @@ module.exports = function registerEventInstructionsRoutes(deps) {
 
       var r = await pgPool.query(
         `UPDATE event_instructions
-       SET title = $1, site_id = $2, event_date = $3, instructions_html = $4, requirements = $5,
-           document_file_url = $6, document_mime_type = $7, status = $8, version = $9
-       WHERE id = $10 RETURNING *`,
-        [title, siteIdVal, eventDate, instructionsHtml, JSON.stringify(requirements),
+       SET title = $1, site_id = $2, event_date = $3, event_date_from = $4, event_date_to = $5,
+           manager_id = $6, instructions_html = $7, requirements = $8,
+           document_file_url = $9, document_mime_type = $10, status = $11, version = $12
+       WHERE id = $13 RETURNING *`,
+        [title, siteIdVal, eventDate, dateFrom, dateTo, managerId, instructionsHtml, JSON.stringify(requirements),
          documentFileUrl, documentMimeType, status, version, req.params.id]
       );
       res.json({ ok: true, instruction: r.rows[0] });

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 // ("optional base64 signature image" — plan §2.2). The always-required proof
 // of identity is the typed full legal name in SignatureSection, not this pad,
 // so an empty pad is a valid submission.
-export function DigitalSignaturePad({ onChange }: { onChange: (dataUrl: string | null) => void }) {
+export function DigitalSignaturePad({ onChange, emptyHint }: { onChange: (dataUrl: string | null) => void; emptyHint?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const drawingRef = useRef(false)
   const hasInkRef = useRef(false)
@@ -112,7 +112,7 @@ export function DigitalSignaturePad({ onChange }: { onChange: (dataUrl: string |
       />
       <div className="mt-2 flex items-center justify-between">
         <p className="text-xs text-muted-foreground">
-          {hasInk ? "Signature captured" : "Optional — draw your signature above with a mouse, stylus, or finger"}
+          {hasInk ? "Signature captured" : (emptyHint ?? "Optional — draw your signature above with a mouse, stylus, or finger")}
         </p>
         <Button type="button" variant="outline" size="sm" onClick={handleClear} disabled={!hasInk}>
           <Eraser className="h-3.5 w-3.5" /> Clear

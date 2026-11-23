@@ -80,6 +80,9 @@ app.use(function(req, res, next) {
   if (req.path.indexOf('/api/public/compliance-calendar/') === 0) return next();
   // Public supplier evaluation link — same token-is-the-boundary model.
   if (req.path.indexOf('/api/public/supplier-evaluation/') === 0) return next();
+  // Public event book-on link — the per-staff token in the URL is the boundary,
+  // no login session exists for external event guards.
+  if (req.path.indexOf('/api/event-book-on/') === 0) return next();
   var cookieToken = req.cookies && req.cookies.csrf_token;
   var headerToken = req.headers['x-csrf-token'];
   if (!cookieToken || !headerToken || cookieToken !== headerToken) {
@@ -110,6 +113,7 @@ require('./routes/recycleBin')(deps);
 require('./routes/fleet')(deps);
 require('./routes/agencies')(deps);
 require('./routes/eventInstructions')(deps);
+require('./routes/eventBookOn')(deps);
 require('./routes/customForms')(deps);
 require('./routes/incidentReports')(deps);
 require('./routes/messages')(deps);
