@@ -7,8 +7,10 @@ import { LogOut, Camera, Loader2, Sun, Moon, MessageSquare, BellRing, BellOff, K
 import { useState, useEffect } from "react"
 import { api } from "@/lib/api"
 import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
+import { useMyMessagesUnread } from "@/hooks/useMyMessagesUnread"
 import { toast } from "sonner"
 import ChangePasswordModal from "@/components/ChangePasswordModal"
+import { initials } from "@/lib/utils"
 
 export default function StaffLayout() {
   const { user, logout } = useAuth()
@@ -16,7 +18,7 @@ export default function StaffLayout() {
   const navigate = useNavigate()
   const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
-  const [unreadMsgs, setUnreadMsgs] = useState(0)
+  const unreadMsgs = useMyMessagesUnread()
   // Push notifications — so a message from a manager still reaches this
   // staff member even with the app fully closed. `null` while the
   // existing-subscription check is in flight.
@@ -55,16 +57,6 @@ export default function StaffLayout() {
       .catch(() => {})
   }, [])
 
-  useEffect(() => {
-    function fetchUnread() {
-      api.get<{ ok: boolean; unread: number }>("/api/my-messages?peek=1")
-        .then(d => { if (d?.ok) setUnreadMsgs(d.unread ?? 0) })
-        .catch(() => {})
-    }
-    fetchUnread()
-    const id = setInterval(fetchUnread, 30000)
-    return () => clearInterval(id)
-  }, [])
 
   async function handleMyPhotoUpload(file: File | null) {
     if (!file) return
@@ -87,7 +79,7 @@ export default function StaffLayout() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    <div className="flex h-dvh flex-col overflow-hidden bg-background">
       <header className="flex h-[calc(4rem+env(safe-area-inset-top))] items-center gap-4 border-b border-sidebar-border bg-sidebar text-sidebar-foreground px-4 pt-[env(safe-area-inset-top)] md:px-8">
         <img
           src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
@@ -101,10 +93,10 @@ export default function StaffLayout() {
           <p className="font-display text-[9px] leading-tight tracking-[0.2em] opacity-40 uppercase">Staff Portal</p>
         </div>
 
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-1.5 sm:gap-3">
           {/* Messages — labelled, highlighted button that opens the Messages tab directly */}
           <button
-            onClick={() => { setUnreadMsgs(0); navigate("/?tab=messages") }}
+            onClick={() => navigate("/?tab=messages")}
             title="Messages from your manager"
             className={`relative inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
               unreadMsgs > 0
@@ -128,7 +120,7 @@ export default function StaffLayout() {
             {myPhotoUrl
               ? <img src={myPhotoUrl} alt="Profile" className="h-8 w-8 rounded-full object-cover" />
               : <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-xs font-bold text-white">
-                  {user?.full_name?.split(" ").filter(Boolean).map(w => w[0]).slice(0, 2).join("").toUpperCase()}
+                  {initials(user?.full_name ?? "")}
                 </div>}
             <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
               {uploadingPhoto ? <Loader2 className="h-3 w-3 text-white animate-spin" /> : <Camera className="h-3 w-3 text-white" />}
@@ -151,7 +143,7 @@ export default function StaffLayout() {
             {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
           <Button variant="ghost" size="icon-sm" onClick={() => setShowChangePassword(true)}
-            className="text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground" title="Change password">
+            className="hidden sm:flex text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground" title="Change password">
             <KeyRound className="h-4 w-4" />
           </Button>
           <Button variant="ghost" size="icon-sm" onClick={handleLogout}
@@ -161,7 +153,7 @@ export default function StaffLayout() {
         </div>
       </header>
 
-      <main className="w-full flex-1 px-4 pt-8 pb-[calc(2rem+env(safe-area-inset-bottom))] md:px-6">
+      <main className="w-full flex-1 overflow-y-auto px-4 pt-8 pb-[calc(2rem+env(safe-area-inset-bottom))] md:px-6">
         <OfflineBanner />
         <Outlet />
       </main>

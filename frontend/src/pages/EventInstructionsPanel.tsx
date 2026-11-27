@@ -20,6 +20,7 @@ import { useAuth } from "@/contexts/AuthContext"
 // below, snake_case, straight from the real GET/POST/PATCH
 // /api/event-instructions* handlers.
 import type { EventInstructionRequirement, EventInstructionStatus, AcknowledgmentRespondentType } from "@/types/agency"
+import EventBookOnManager from "@/pages/event-book-on/EventBookOnManager"
 
 interface Site { id: string; name: string }
 interface AgencyOption { id: string; name: string }
@@ -33,6 +34,10 @@ interface EventInstructionRow {
   site_id?: string
   site?: Site | null
   event_date?: string
+  event_date_from?: string
+  event_date_to?: string
+  manager_id?: string
+  manager_name?: string
   title: string
   instructions_html?: string
   requirements?: EventInstructionRequirement[]
@@ -63,7 +68,7 @@ interface GeneratedLink {
 }
 
 const BLANK_FORM = {
-  title: "", site_id: "", event_date: "", instructions_html: "",
+  title: "", site_id: "", event_date_from: "", event_date_to: "", manager_id: "", instructions_html: "",
   status: "draft" as EventInstructionStatus,
   requirements: [] as EventInstructionRequirement[],
 }
@@ -161,6 +166,9 @@ export default function EventInstructionsPanel() {
   const [formDocUrl, setFormDocUrl] = useState<string | undefined>(undefined)
   const [docUploading, setDocUploading] = useState(false)
   const docInputRef = useRef<HTMLInputElement>(null)
+  // On create the record has no id yet, so a chosen document is held here and
+  // uploaded automatically right after the instruction is saved — one Save.
+  const [pendingDocFile, setPendingDocFile] = useState<File | null>(null)
 
   // Archive (soft-delete) confirm
   const [confirmArchiveId, setConfirmArchiveId] = useState<string | null>(null)
@@ -172,6 +180,9 @@ export default function EventInstructionsPanel() {
   // Permanent delete — only ever offered on an already-archived instruction
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  // Event book-on management (external guards, per-day selfie + SIA)
+  const [bookOnInstruction, setBookOnInstruction] = useState<EventInstructionRow | null>(null)
 
   // Links / manage panel
   const [linksInstruction, setLinksInstruction] = useState<EventInstructionRow | null>(null)
@@ -223,6 +234,8 @@ export default function EventInstructionsPanel() {
   useEffect(() => { loadInstructions() }, [statusFilter]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     api.get<{ sites: Site[] }>("/api/sites").then(d => setSites(d.sites ?? [])).catch(() => {})
+    api.get<{ ok: boolean; managers: ManagerOption[] }>("/api/manager-directory")
+      .then(d => setManagers(d.managers ?? [])).catch(() => {})
   }, [])
 
   // The backend has no default archived-exclusion, so the "all" tab filters
@@ -235,22 +248,24 @@ export default function EventInstructionsPanel() {
   // ── Create/edit instruction ──────────────────────────────────────────────
   function openCreate() {
     setEditingId(null); setForm(BLANK_FORM); setBumpVersion(false); setFormError("")
-    setFormDocUrl(undefined); setFormOpen(true)
+    setFormDocUrl(undefined); setPendingDocFile(null); setFormOpen(true)
   }
   function openEdit(instr: EventInstructionRow) {
     setEditingId(instr.id)
     setForm({
       title: instr.title,
       site_id: instr.site_id ?? "",
-      event_date: instr.event_date ? instr.event_date.slice(0, 10) : "",
+      event_date_from: instr.event_date_from ? instr.event_date_from.slice(0, 10) : (instr.event_date ? instr.event_date.slice(0, 10) : ""),
+      event_date_to: instr.event_date_to ? instr.event_date_to.slice(0, 10) : (instr.event_date ? instr.event_date.slice(0, 10) : ""),
+      manager_id: instr.manager_id ?? "",
       instructions_html: instr.instructions_html ?? "",
       status: instr.status,
       requirements: instr.requirements ?? [],
     })
     setBumpVersion(false); setFormError("")
-    setFormDocUrl(instr.document_file_url); setFormOpen(true)
+    setFormDocUrl(instr.document_file_url); setPendingDocFile(null); setFormOpen(true)
   }
-  function closeForm() { setFormOpen(false); setEditingId(null); setFormError("") }
+  function closeForm() { setFormOpen(false); setEditingId(null); setFormError(""); setPendingDocFile(null) }
 
   function addRequirement() {
     setForm(p => ({ ...p, requirements: [...p.requirements, { title: "", description: "", mandatory: true }] }))
@@ -264,11 +279,17 @@ export default function EventInstructionsPanel() {
 
   async function saveInstruction() {
     if (!form.title.trim()) { setFormError("Title is required."); return }
+    const standalone = !form.site_id
+    if (standalone && form.event_date_from && form.event_date_to && form.event_date_to < form.event_date_from) {
+      setFormError("Event end date cannot be before the start date."); return
+    }
     setSaving(true); setFormError("")
     const body = {
       title: form.title.trim(),
       site_id: form.site_id || undefined,
-      event_date: form.event_date || undefined,
+      event_date_from: form.event_date_from || undefined,
+      event_date_to: form.event_date_to || undefined,
+      manager_id: standalone ? (form.manager_id || undefined) : undefined,
       instructions_html: form.instructions_html || undefined,
       requirements: form.requirements.filter(r => r.title.trim()),
       status: form.status,
@@ -277,17 +298,21 @@ export default function EventInstructionsPanel() {
     try {
       if (editingId) {
         const res = await api.patch<{ ok: boolean; instruction: EventInstructionRow }>(`/api/event-instructions/${editingId}`, body)
+        if (pendingDocFile) await uploadDoc(editingId, pendingDocFile)
         setInstructions(prev => prev.map(i => (i.id === editingId ? res.instruction : i)))
         toast.success("Instruction updated")
         closeForm()
       } else {
         const res = await api.post<{ ok: boolean; instruction: EventInstructionRow }>("/api/event-instructions", body)
-        setInstructions(prev => [res.instruction, ...prev])
-        // Don't close — switch straight into edit mode so the document
-        // attachment control (which needs an id) unlocks immediately.
-        setEditingId(res.instruction.id)
-        setFormDocUrl(res.instruction.document_file_url)
-        toast.success("Instruction created — you can now attach a document below")
+        let created = res.instruction
+        // Attach the held document straight away so create is a single step.
+        if (pendingDocFile) {
+          const up = await uploadDoc(created.id, pendingDocFile)
+          if (up) created = up
+        }
+        setInstructions(prev => [created, ...prev])
+        toast.success("Instruction created")
+        closeForm()
       }
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : "Network error")
@@ -296,16 +321,26 @@ export default function EventInstructionsPanel() {
     }
   }
 
+  // Low-level document upload — returns the updated instruction (or null on
+  // failure). Shared by the in-create auto-upload and the edit-mode control.
+  async function uploadDoc(id: string, file: File): Promise<EventInstructionRow | null> {
+    const res = await api.post<{ ok: boolean; instruction: EventInstructionRow }>(
+      `/api/event-instructions/${id}/document`, file
+    )
+    return res.instruction
+  }
+
   async function handleDocFile(file: File) {
-    if (!editingId) return
+    // Create mode: no id yet — hold the file, it uploads when you press Save.
+    if (!editingId) { setPendingDocFile(file); if (docInputRef.current) docInputRef.current.value = ""; return }
     setDocUploading(true)
     try {
-      const res = await api.post<{ ok: boolean; instruction: EventInstructionRow }>(
-        `/api/event-instructions/${editingId}/document`, file
-      )
-      setFormDocUrl(res.instruction.document_file_url)
-      setInstructions(prev => prev.map(i => (i.id === editingId ? res.instruction : i)))
-      toast.success("Document attached")
+      const updated = await uploadDoc(editingId, file)
+      if (updated) {
+        setFormDocUrl(updated.document_file_url)
+        setInstructions(prev => prev.map(i => (i.id === editingId ? updated : i)))
+        toast.success("Document attached")
+      }
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Network error — please try again")
     } finally {
@@ -495,9 +530,17 @@ export default function EventInstructionsPanel() {
                       <MapPin className="h-3 w-3" />{instr.site.name}
                     </p>
                   )}
-                  {instr.event_date && (
+                  {(instr.event_date_from || instr.event_date) && (
                     <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-                      <CalendarDays className="h-3 w-3" />{fmtDate(instr.event_date)}
+                      <CalendarDays className="h-3 w-3" />
+                      {instr.event_date_from && instr.event_date_to && instr.event_date_to !== instr.event_date_from
+                        ? `${fmtDate(instr.event_date_from)} – ${fmtDate(instr.event_date_to)}`
+                        : fmtDate(instr.event_date_from || instr.event_date!)}
+                    </p>
+                  )}
+                  {instr.manager_name && (
+                    <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                      <UserCog className="h-3 w-3" />{instr.manager_name}
                     </p>
                   )}
                 </div>
@@ -517,6 +560,12 @@ export default function EventInstructionsPanel() {
                   className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 transition-colors">
                   <Link2 className="h-3.5 w-3.5" />Links
                 </button>
+                {!instr.site_id && instr.status !== "archived" && (
+                  <button onClick={() => setBookOnInstruction(instr)}
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2.5 py-1.5 text-xs font-medium text-emerald-600 hover:bg-emerald-500/10 transition-colors dark:text-emerald-400">
+                    <ShieldCheck className="h-3.5 w-3.5" />Book-on
+                  </button>
+                )}
                 {instr.status === "archived" ? (
                   <>
                     <button onClick={() => restoreInstruction(instr.id)} disabled={restoringId === instr.id}
@@ -589,20 +638,49 @@ export default function EventInstructionsPanel() {
                   placeholder="e.g. Westfield Site — Event Day Briefing" />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>Linked site (optional)</Label>
-                  <select value={form.site_id} onChange={e => setForm(p => ({ ...p, site_id: e.target.value }))}
-                    className="h-9 w-full rounded-md border bg-background px-3 text-sm">
-                    <option value="">Standalone (no site)</option>
-                    {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </div>
+              <div className="space-y-1.5">
+                <Label>Linked site (optional)</Label>
+                <select value={form.site_id} onChange={e => setForm(p => ({ ...p, site_id: e.target.value }))}
+                  className="h-9 w-full rounded-md border bg-background px-3 text-sm">
+                  <option value="">Standalone (no site)</option>
+                  {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+
+              {/* Standalone events run across one or more days and have a named
+                  manager who owns book-on. Site-linked instructions keep a
+                  single optional event date. */}
+              {form.site_id ? (
                 <div className="space-y-1.5">
                   <Label>Event date</Label>
-                  <Input type="date" value={form.event_date} onChange={e => setForm(p => ({ ...p, event_date: e.target.value }))} />
+                  <Input type="date" value={form.event_date_from}
+                    onChange={e => setForm(p => ({ ...p, event_date_from: e.target.value, event_date_to: e.target.value }))} />
                 </div>
-              </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>Event starts (From)</Label>
+                      <Input type="date" value={form.event_date_from}
+                        onChange={e => setForm(p => ({ ...p, event_date_from: e.target.value, event_date_to: p.event_date_to && p.event_date_to >= e.target.value ? p.event_date_to : e.target.value }))} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Event ends (Till)</Label>
+                      <Input type="date" value={form.event_date_to} min={form.event_date_from || undefined}
+                        onChange={e => setForm(p => ({ ...p, event_date_to: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Event manager (optional)</Label>
+                    <select value={form.manager_id} onChange={e => setForm(p => ({ ...p, manager_id: e.target.value }))}
+                      className="h-9 w-full rounded-md border bg-background px-3 text-sm">
+                      <option value="">No manager assigned</option>
+                      {managers.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+                    </select>
+                    <p className="text-xs text-muted-foreground">Gets notified when event staff book on.</p>
+                  </div>
+                </>
+              )}
 
               <div className="space-y-1.5">
                 <Label>Instructions</Label>
@@ -614,34 +692,29 @@ export default function EventInstructionsPanel() {
 
               <div className="space-y-1.5">
                 <Label>Document attachment</Label>
-                {editingId ? (
-                  <div className="flex items-start gap-3 rounded-lg border bg-muted/20 px-4 py-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium">Instructions document</div>
-                      <div className="mt-0.5 text-xs text-muted-foreground">
-                        {formDocUrl ? "Attached" : "PDF, JPG or PNG — the full briefing document, if any"}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {formDocUrl && (
-                        <a href={`/api/event-instructions/${editingId}/document`} target="_blank" rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
-                          <Download className="h-3 w-3" /> View
-                        </a>
-                      )}
-                      <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted ${docUploading ? "pointer-events-none opacity-50" : ""}`}>
-                        {docUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                        {docUploading ? "Uploading…" : formDocUrl ? "Replace" : "Upload"}
-                        <input ref={docInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
-                          onChange={e => { const f = e.target.files?.[0]; if (f) handleDocFile(f) }} />
-                      </label>
+                <div className="flex items-start gap-3 rounded-lg border bg-muted/20 px-4 py-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium">Instructions document</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      {pendingDocFile ? `Selected: ${pendingDocFile.name} — uploads on Save`
+                        : formDocUrl ? "Attached" : "PDF, JPG or PNG — the full briefing document, if any"}
                     </div>
                   </div>
-                ) : (
-                  <p className="rounded-lg bg-muted/50 px-3 py-2.5 text-xs text-muted-foreground">
-                    Create the instruction first — the upload control appears here immediately after.
-                  </p>
-                )}
+                  <div className="flex shrink-0 items-center gap-2">
+                    {formDocUrl && editingId && !pendingDocFile && (
+                      <a href={`/api/event-instructions/${editingId}/document`} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                        <Download className="h-3 w-3" /> View
+                      </a>
+                    )}
+                    <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted ${docUploading ? "pointer-events-none opacity-50" : ""}`}>
+                      {docUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                      {docUploading ? "Uploading…" : (pendingDocFile || formDocUrl) ? "Replace" : "Choose file"}
+                      <input ref={docInputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+                        onChange={e => { const f = e.target.files?.[0]; if (f) handleDocFile(f) }} />
+                    </label>
+                  </div>
+                </div>
               </div>
 
               <div className="space-y-2">
@@ -888,6 +961,16 @@ export default function EventInstructionsPanel() {
               )}
             </div>
         </div>
+      )}
+
+      {bookOnInstruction && (
+        <EventBookOnManager
+          instructionId={bookOnInstruction.id}
+          title={bookOnInstruction.title}
+          eventFrom={bookOnInstruction.event_date_from}
+          eventTo={bookOnInstruction.event_date_to}
+          onClose={() => setBookOnInstruction(null)}
+        />
       )}
     </div>
   )
