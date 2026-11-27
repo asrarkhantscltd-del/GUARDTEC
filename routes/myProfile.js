@@ -107,6 +107,28 @@ module.exports = function registerMyProfileRoutes(deps) {
     }
   });
 
+  // Staff: update their own basic contact details directly (no approval queue).
+  // Only allows the three safe-to-self-edit field groups: address/phone,
+  // emergency contact, and bank details. Vetting fields (SIA, CSCS, visa,
+  // employment history) remain wizard-only and require manager approval.
+  app.put('/api/me/personal', requireLogin, requireRole('staff'), async function(req, res) {
+    try {
+      var all = loadAllStaff();
+      var emp = all.find(function(e){ return e.id === req.user.staff_id; });
+      if (!emp) return res.status(404).json({ ok: false, error: 'Profile not found' });
+
+      var b = req.body || {};
+      ['phone', 'address', 'emergencyContact', 'bankDetails'].forEach(function(field) {
+        if (b[field] !== undefined) emp[field] = b[field];
+      });
+
+      await saveStaff(emp, emp._folderPath);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   // Autosaves the onboarding wizard's in-progress answers so a reload, crash,
   // or the earlier document-status desync bug (fixed alongside this) doesn't
   // wipe an entire session's typing — everything from Personal Details through
