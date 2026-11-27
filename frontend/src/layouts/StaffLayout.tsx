@@ -79,7 +79,7 @@ export default function StaffLayout() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    <div className="flex h-dvh flex-col overflow-hidden bg-background">
       <header className="flex h-[calc(4rem+env(safe-area-inset-top))] items-center gap-4 border-b border-sidebar-border bg-sidebar text-sidebar-foreground px-4 pt-[env(safe-area-inset-top)] md:px-8">
         <img
           src={isDark ? "/logo-on-dark.svg" : "/logo-on-light.svg"}
@@ -153,7 +153,7 @@ export default function StaffLayout() {
         </div>
       </header>
 
-      <main className="w-full flex-1 px-4 pt-8 pb-[calc(2rem+env(safe-area-inset-bottom))] md:px-6">
+      <main className="w-full flex-1 overflow-y-auto px-4 pt-8 pb-[calc(2rem+env(safe-area-inset-bottom))] md:px-6">
         <OfflineBanner />
         <Outlet />
       </main>
