@@ -25,6 +25,7 @@ import RecycleBinPage from "@/pages/RecycleBinPage"
 import PendingReviewPage from "@/pages/PendingReviewPage"
 import IncidentReportsPage from "@/pages/IncidentReportsPage"
 import MyProfilePage from "@/pages/MyProfilePage"
+import StaffAccountSettingsPage from "@/pages/StaffAccountSettingsPage"
 import MessagesPage from "@/pages/MessagesPage"
 import AgenciesListPage from "@/pages/AgenciesListPage"
 import AgencyDetailPage from "@/pages/AgencyDetailPage"
@@ -81,6 +82,7 @@ function AuthenticatedApp() {
       <Routes>
         <Route element={<StaffLayout />}>
           <Route index element={<MyProfilePage />} />
+          <Route path="account-settings" element={<StaffAccountSettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

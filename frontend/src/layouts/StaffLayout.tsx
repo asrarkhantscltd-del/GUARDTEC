@@ -3,13 +3,10 @@ import { OfflineBanner } from "@/components/OfflineBanner"
 import { useAuth } from "@/contexts/AuthContext"
 import { useTheme } from "@/contexts/ThemeContext"
 import { Button } from "@/components/ui/button"
-import { LogOut, Camera, Loader2, Sun, Moon, MessageSquare, BellRing, BellOff, KeyRound } from "lucide-react"
+import { LogOut, Sun, Moon, MessageSquare } from "lucide-react"
 import { useState, useEffect } from "react"
 import { api } from "@/lib/api"
-import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
 import { useMyMessagesUnread } from "@/hooks/useMyMessagesUnread"
-import { toast } from "sonner"
-import ChangePasswordModal from "@/components/ChangePasswordModal"
 import { initials } from "@/lib/utils"
 
 export default function StaffLayout() {
@@ -17,61 +14,13 @@ export default function StaffLayout() {
   const { isDark, toggleTheme } = useTheme()
   const navigate = useNavigate()
   const [myPhotoUrl, setMyPhotoUrl] = useState<string | null>(null)
-  const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const unreadMsgs = useMyMessagesUnread()
-  // Push notifications — so a message from a manager still reaches this
-  // staff member even with the app fully closed. `null` while the
-  // existing-subscription check is in flight.
-  const [pushOn, setPushOn] = useState<boolean | null>(null)
-  const [pushBusy, setPushBusy] = useState(false)
-  const [showChangePassword, setShowChangePassword] = useState(false)
-  const canUsePush = pushSupported()
-
-  useEffect(() => {
-    if (!canUsePush) return
-    getExistingSubscription().then(sub => setPushOn(!!sub)).catch(() => setPushOn(false))
-  }, [canUsePush])
-
-  async function togglePush() {
-    setPushBusy(true)
-    try {
-      if (pushOn) {
-        await disablePush()
-        setPushOn(false)
-        toast.success("Push notifications turned off")
-      } else {
-        await enablePush()
-        setPushOn(true)
-        toast.success("Push notifications enabled — you'll get alerts even when this tab is closed")
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't update push notifications")
-    } finally {
-      setPushBusy(false)
-    }
-  }
 
   useEffect(() => {
     api.getBlob("/api/me/photo")
       .then(blob => { if (blob) setMyPhotoUrl(URL.createObjectURL(blob)) })
       .catch(() => {})
   }, [])
-
-
-  async function handleMyPhotoUpload(file: File | null) {
-    if (!file) return
-    setUploadingPhoto(true)
-    try {
-      await api.post("/api/me/photo", file)
-      const blob = await api.getBlob("/api/me/photo")
-      if (blob) {
-        if (myPhotoUrl) URL.revokeObjectURL(myPhotoUrl)
-        setMyPhotoUrl(URL.createObjectURL(blob))
-      }
-    } finally {
-      setUploadingPhoto(false)
-    }
-  }
 
   async function handleLogout() {
     await logout()
@@ -114,37 +63,22 @@ export default function StaffLayout() {
 
           <div className="hidden text-right sm:block">
             <p className="text-sm font-medium leading-tight">{user?.full_name}</p>
-            <p className="text-[11px] leading-tight opacity-40">My Profile</p>
+            <p className="text-[11px] leading-tight opacity-40">My Account</p>
           </div>
-          <label className="relative h-8 w-8 shrink-0 cursor-pointer group" title="Change profile photo">
+
+          {/* Avatar — tap to open Account Settings */}
+          <button onClick={() => navigate("/account-settings")} title="Account Settings"
+            className="relative h-8 w-8 shrink-0 rounded-full ring-2 ring-transparent hover:ring-primary/50 transition-all">
             {myPhotoUrl
               ? <img src={myPhotoUrl} alt="Profile" className="h-8 w-8 rounded-full object-cover" />
               : <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-xs font-bold text-white">
                   {initials(user?.full_name ?? "")}
                 </div>}
-            <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-              {uploadingPhoto ? <Loader2 className="h-3 w-3 text-white animate-spin" /> : <Camera className="h-3 w-3 text-white" />}
-            </div>
-            <input type="file" accept="image/*" className="hidden"
-              disabled={uploadingPhoto}
-              onChange={e => handleMyPhotoUpload(e.target.files?.[0] ?? null)} />
-          </label>
-          {canUsePush && pushOn !== null && (
-            <Button variant="ghost" size="icon-sm" onClick={togglePush} disabled={pushBusy}
-              title={pushOn ? "Turn off push notifications on this device" : "Get notified even when this tab is closed"}
-              className="text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground">
-              {pushBusy
-                ? <Loader2 className="h-4 w-4 animate-spin" />
-                : pushOn ? <BellRing className="h-4 w-4 text-primary" /> : <BellOff className="h-4 w-4" />}
-            </Button>
-          )}
+          </button>
+
           <Button variant="ghost" size="icon-sm" onClick={toggleTheme} title={isDark ? "Light mode" : "Dark mode"}
             className="text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground">
             {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </Button>
-          <Button variant="ghost" size="icon-sm" onClick={() => setShowChangePassword(true)}
-            className="hidden sm:flex text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground" title="Change password">
-            <KeyRound className="h-4 w-4" />
           </Button>
           <Button variant="ghost" size="icon-sm" onClick={handleLogout}
             className="text-sidebar-foreground/70 hover:bg-destructive/10 hover:text-destructive" title="Sign out">
@@ -157,7 +91,6 @@ export default function StaffLayout() {
         <OfflineBanner />
         <Outlet />
       </main>
-      {showChangePassword && <ChangePasswordModal onClose={() => setShowChangePassword(false)} />}
     </div>
   )
 }
