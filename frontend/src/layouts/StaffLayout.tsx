@@ -93,7 +93,7 @@ export default function StaffLayout() {
           <p className="font-display text-[9px] leading-tight tracking-[0.2em] opacity-40 uppercase">Staff Portal</p>
         </div>
 
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-1.5 sm:gap-3">
           {/* Messages — labelled, highlighted button that opens the Messages tab directly */}
           <button
             onClick={() => navigate("/?tab=messages")}
@@ -143,7 +143,7 @@ export default function StaffLayout() {
             {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
           <Button variant="ghost" size="icon-sm" onClick={() => setShowChangePassword(true)}
-            className="text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground" title="Change password">
+            className="hidden sm:flex text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground" title="Change password">
             <KeyRound className="h-4 w-4" />
           </Button>
           <Button variant="ghost" size="icon-sm" onClick={handleLogout}
