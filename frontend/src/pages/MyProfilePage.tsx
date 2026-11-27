@@ -1005,9 +1005,9 @@ export default function MyProfilePage() {
                 onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMyMessage() } }}
                 placeholder="Type a reply…"
                 className="flex-1 h-10 rounded-lg border border-input bg-muted/30 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
-              <Button disabled={msgSending || (!msgDraft.trim() && !msgFile)} onClick={sendMyMessage} className="gap-1.5 h-10 px-5">
+              <Button disabled={msgSending || (!msgDraft.trim() && !msgFile)} onClick={sendMyMessage} className="gap-1.5 h-10 px-3 sm:px-5">
                 {msgSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                Send
+                <span className="hidden sm:inline">Send</span>
               </Button>
             </div>
           </div>
