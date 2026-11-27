@@ -86,7 +86,7 @@ export default function StaffLayout() {
           alt="GuardTec"
           className="h-10 w-auto"
         />
-        <div>
+        <div className="hidden sm:block">
           <p className="font-display text-sm font-bold leading-tight tracking-wider uppercase">
             Guard<span className="text-primary">Tec</span>
           </p>
