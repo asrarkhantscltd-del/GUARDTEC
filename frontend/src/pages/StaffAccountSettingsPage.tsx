@@ -6,7 +6,7 @@ import { api, ApiError } from "@/lib/api"
 import { pushSupported, getExistingSubscription, enablePush, disablePush } from "@/lib/push"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import { ArrowLeft, Camera, Loader2, KeyRound, BellRing, Sun, Moon, User } from "lucide-react"
+import { ArrowLeft, Camera, Loader2, KeyRound, BellRing, Sun, Moon, User, MapPin, Phone, AlertCircle, Building2, Save } from "lucide-react"
 import { initials } from "@/lib/utils"
 
 export default function StaffAccountSettingsPage() {
@@ -21,6 +21,14 @@ export default function StaffAccountSettingsPage() {
   const [pushOn, setPushOn] = useState<boolean | null>(null)
   const [pushBusy, setPushBusy] = useState(false)
   const canUsePush = pushSupported()
+
+  const [personal, setPersonal] = useState({
+    phone: "", address: "",
+    emergencyContact: { name: "", phone: "", relationship: "" },
+    bankDetails: { accountHolderName: "", bankName: "", sortCode: "", accountNumber: "" },
+  })
+  const [personalSaving, setPersonalSaving] = useState(false)
+  const [personalLoaded, setPersonalLoaded] = useState(false)
 
   const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
@@ -38,6 +46,53 @@ export default function StaffAccountSettingsPage() {
     if (!canUsePush) return
     getExistingSubscription().then(sub => setPushOn(!!sub)).catch(() => setPushOn(false))
   }, [canUsePush])
+
+  useEffect(() => {
+    api.get<{ ok: boolean; profile?: {
+      phone?: string; address?: string;
+      emergencyContact?: { name?: string; phone?: string; relationship?: string };
+      bankDetails?: { accountHolderName?: string; bankName?: string; sortCode?: string; accountNumber?: string };
+    }}>("/api/my-profile").then(data => {
+      if (!data?.ok || !data.profile) return
+      const p = data.profile
+      setPersonal({
+        phone: p.phone ?? "",
+        address: p.address ?? "",
+        emergencyContact: {
+          name: p.emergencyContact?.name ?? "",
+          phone: p.emergencyContact?.phone ?? "",
+          relationship: p.emergencyContact?.relationship ?? "",
+        },
+        bankDetails: {
+          accountHolderName: p.bankDetails?.accountHolderName ?? "",
+          bankName: p.bankDetails?.bankName ?? "",
+          sortCode: p.bankDetails?.sortCode ?? "",
+          accountNumber: p.bankDetails?.accountNumber ?? "",
+        },
+      })
+      setPersonalLoaded(true)
+    }).catch(() => setPersonalLoaded(true))
+  }, [])
+
+  function setEc(field: string, value: string) {
+    setPersonal(p => ({ ...p, emergencyContact: { ...p.emergencyContact, [field]: value } }))
+  }
+  function setBd(field: string, value: string) {
+    setPersonal(p => ({ ...p, bankDetails: { ...p.bankDetails, [field]: value } }))
+  }
+
+  async function handleSavePersonal(e: React.FormEvent) {
+    e.preventDefault()
+    setPersonalSaving(true)
+    try {
+      await api.put("/api/me/personal", personal)
+      toast.success("Personal details saved")
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Failed to save personal details")
+    } finally {
+      setPersonalSaving(false)
+    }
+  }
 
   async function handlePhotoUpload(file: File | null) {
     if (!file) return
@@ -127,6 +182,110 @@ export default function StaffAccountSettingsPage() {
             </button>
           </div>
         </div>
+      </section>
+
+      {/* Personal Details */}
+      <section className="rounded-xl border bg-card p-5 space-y-4">
+        <h2 className="text-sm font-semibold flex items-center gap-2">
+          <MapPin className="h-4 w-4 text-primary" /> Personal Details
+        </h2>
+        {!personalLoaded
+          ? <p className="text-sm text-muted-foreground">Loading…</p>
+          : (
+          <form onSubmit={handleSavePersonal} className="space-y-5">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  <Phone className="h-3 w-3" /> Phone / Mobile
+                </label>
+                <input type="tel" value={personal.phone}
+                  onChange={e => setPersonal(p => ({ ...p, phone: e.target.value }))}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  placeholder="+44 7700 000000" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Address</label>
+                <textarea value={personal.address}
+                  onChange={e => setPersonal(p => ({ ...p, address: e.target.value }))}
+                  rows={2}
+                  className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  placeholder="Your current home address" />
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <AlertCircle className="h-3 w-3" /> Emergency Contact
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Name</label>
+                  <input value={personal.emergencyContact.name}
+                    onChange={e => setEc("name", e.target.value)}
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    placeholder="Full name" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Phone</label>
+                  <input type="tel" value={personal.emergencyContact.phone}
+                    onChange={e => setEc("phone", e.target.value)}
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    placeholder="+44 7700 000000" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Relationship</label>
+                  <input value={personal.emergencyContact.relationship}
+                    onChange={e => setEc("relationship", e.target.value)}
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    placeholder="e.g. Spouse, Parent" />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <Building2 className="h-3 w-3" /> Bank Details
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Account holder name</label>
+                  <input value={personal.bankDetails.accountHolderName}
+                    onChange={e => setBd("accountHolderName", e.target.value)}
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    placeholder="Full name on account" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Bank name</label>
+                  <input value={personal.bankDetails.bankName}
+                    onChange={e => setBd("bankName", e.target.value)}
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    placeholder="e.g. Barclays, Lloyds" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Sort code</label>
+                  <input value={personal.bankDetails.sortCode}
+                    onChange={e => setBd("sortCode", e.target.value)}
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    placeholder="12-34-56" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted-foreground">Account number</label>
+                  <input value={personal.bankDetails.accountNumber}
+                    onChange={e => setBd("accountNumber", e.target.value)}
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    placeholder="12345678" />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-1">
+              <Button type="submit" size="sm" disabled={personalSaving} className="gap-1.5">
+                {personalSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                {personalSaving ? "Saving…" : "Save Details"}
+              </Button>
+            </div>
+          </form>
+        )}
       </section>
 
       {/* Change Password */}
